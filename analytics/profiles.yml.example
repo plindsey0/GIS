@@ -1,0 +1,12 @@
+vahomemath_gis:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DBT_HOST', 'localhost') }}"
+      port: "{{ env_var('DBT_PORT', '5432') | int }}"
+      user: "{{ env_var('DBT_USER', 'gis') }}"
+      password: "{{ env_var('DBT_PASSWORD', 'gis') }}"
+      dbname: "{{ env_var('DBT_DATABASE', 'gis') }}"
+      schema: gis_analytics
+      threads: 4

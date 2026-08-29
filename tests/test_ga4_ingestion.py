@@ -115,7 +115,7 @@ def test_all_fixed_reports_ingest_and_retain_rights_provenance(session: Session)
         GA4AcquisitionObservation,
         GA4EventObservation,
     ):
-        observation = session.scalar(select(model))
+        observation: Any = session.scalar(select(model))
         assert observation is not None
         assert observation.rights_policy_id is not None
         assert observation.ingestion_run_id == run.id

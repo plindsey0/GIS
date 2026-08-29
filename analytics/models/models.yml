@@ -1,0 +1,123 @@
+version: 2
+
+models:
+  - name: stg_gsc_search_observations
+    description: Current GSC observations with provider grain and provenance preserved.
+    columns:
+      - name: observation_id
+        tests: [not_null, unique]
+  - name: stg_ga4_landing_pages
+    description: Current GA4 landing-page aggregates using the property reporting date.
+    columns:
+      - name: observation_id
+        tests: [not_null, unique]
+  - name: stg_ga4_acquisition
+    description: Current GA4 traffic-acquisition aggregates with provider channel fields.
+    columns:
+      - name: observation_id
+        tests: [not_null, unique]
+  - name: stg_ga4_events
+    description: Current GA4 aggregate event report rows, distinct from exact GIS events.
+    columns:
+      - name: observation_id
+        tests: [not_null, unique]
+  - name: stg_sessions
+    description: Exact first-party sessions with site-local analytical dates.
+    columns:
+      - name: session_id
+        tests: [not_null, unique]
+  - name: stg_events
+    description: Exact first-party events with occurrence and receipt timestamps.
+    columns:
+      - name: event_row_id
+        tests: [not_null, unique]
+  - name: stg_calculator_runs
+    description: Exact calculator lifecycle records and bucketed attributes.
+    columns:
+      - name: calculator_run_id
+        tests: [not_null, unique]
+  - name: stg_conversions
+    description: Exact canonical conversions with source-event relationships.
+    columns:
+      - name: conversion_row_id
+        tests: [not_null, unique]
+  - name: int_page_identity
+    description: Lightweight tenant/site path identity across GSC, GA4, and first-party telemetry.
+  - name: int_session_entry
+    description: First-party session entry with page key and deterministic first-touch GIS channel.
+    columns:
+      - name: gis_channel
+        tests:
+          - accepted_values:
+              arguments:
+                values: [organic_search, paid_search, direct, referral, social, email, other, unknown]
+  - name: int_calculator_funnel
+    description: Exact run-level calculator, CTA, lead, and conversion lifecycle.
+  - name: int_conversion_funnel
+    description: Conversions enriched with session entry page and channel.
+  - name: int_search_page_daily
+    description: GSC page totals preferring page grain, with query/page fallback by site-date.
+  - name: int_behavior_page_daily
+    description: Page-keyed GA4 and exact first-party behavior without forced reconciliation.
+  - name: mart_site_daily
+    description: Executive site/day performance preserving each evidence system separately.
+    columns: &daily_keys
+      - name: tenant_id
+        tests: [not_null]
+      - name: site_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+  - name: mart_page_daily
+    description: Page/day search, behavior, calculator, and conversion performance.
+    columns: *daily_keys
+  - name: mart_keyword_daily
+    description: GSC-observed query visibility; it does not represent external search volume.
+    columns: *daily_keys
+  - name: mart_keyword_page_daily
+    description: GSC query-to-page visibility and weighted position.
+    columns: *daily_keys
+  - name: mart_acquisition_daily
+    description: GA4 provider acquisition rows plus separate first-party channel rows.
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: site_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: gis_channel
+        tests:
+          - accepted_values:
+              arguments:
+                values: [organic_search, paid_search, direct, referral, social, email, other, unknown]
+  - name: mart_calculator_performance
+    description: Exact first-party calculator lifecycle metrics by site/date/type.
+    columns: *daily_keys
+  - name: mart_conversion_daily
+    description: Canonical conversions by type and currency; currencies are never combined.
+    columns: *daily_keys
+  - name: mart_search_funnel
+    description: Observable page/day cross-source funnel; cross-source ratios are reconciliation indicators.
+    columns: *daily_keys
+  - name: mart_data_reconciliation
+    description: Site/day source presence, deltas, ratios, and simple quality status.
+    columns: *daily_keys
+
+unit_tests:
+  - name: search_funnel_preserves_cross_source_counts
+    description: Proves the documented fictional acceptance arithmetic without asserting equality.
+    model: mart_search_funnel
+    given:
+      - input: ref('int_search_page_daily')
+        rows:
+          - {tenant_id: 00000000-0000-0000-0000-000000000001, site_id: 00000000-0000-0000-0000-000000000002, date: '2026-08-20', page_key: page1, normalized_path: /va-loan-calculator, impressions: 10000, clicks: 500, avg_position: 4, ctr: 0.05}
+      - input: ref('int_behavior_page_daily')
+        rows:
+          - {tenant_id: 00000000-0000-0000-0000-000000000001, site_id: 00000000-0000-0000-0000-000000000002, date: '2026-08-20', page_key: page1, ga4_sessions: 450, ga4_engaged_sessions: 300, ga4_engagement_rate: 0.6666666667, ga4_key_events: 15, first_party_sessions: 420, calculator_starts: 180, calculator_completions: 120, cta_clicks: 35, lead_form_completions: 15, conversions: 12}
+      - input: ref('int_page_identity')
+        rows:
+          - {tenant_id: 00000000-0000-0000-0000-000000000001, site_id: 00000000-0000-0000-0000-000000000002, page_key: page1, normalized_path: /va-loan-calculator, normalized_host: vahomemath.com, gsc_page_url: 'https://VAHomeMath.com/va-loan-calculator/?x=1', ga4_landing_page: /va-loan-calculator/, first_party_path: /va-loan-calculator, source_count: 3}
+    expect:
+      rows:
+        - {tenant_id: 00000000-0000-0000-0000-000000000001, site_id: 00000000-0000-0000-0000-000000000002, date: '2026-08-20', page_key: page1, normalized_path: /va-loan-calculator, normalized_host: vahomemath.com, impressions: 10000, search_clicks: 500, ga4_landing_sessions: 450, first_party_sessions: 420, calculator_starts: 180, calculator_completions: 120, cta_clicks: 35, lead_form_completions: 15, conversions: 12, search_ctr: '0.05000000000000000000', click_to_ga4_session_ratio: '0.90000000000000000000', ga4_to_first_party_session_ratio: '0.93333333333333333333', calculator_start_rate: '0.42857142857142857143', calculator_completion_rate: '0.66666666666666666667', lead_rate: '0.03571428571428571429', session_conversion_rate: '0.02857142857142857143'}

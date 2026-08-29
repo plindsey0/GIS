@@ -17,6 +17,18 @@ if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 
 target_metadata = Base.metadata
+DBT_MANAGED_SCHEMAS = {"gis_staging", "gis_intermediate", "gis_analytics"}
+
+
+def include_name(
+    name: str | None,
+    type_: str,
+    parent_names: dict[str, str | None],
+) -> bool:
+    """Keep dbt-owned relations outside Alembic's schema-drift boundary."""
+    if type_ == "schema":
+        return name not in DBT_MANAGED_SCHEMAS
+    return parent_names.get("schema_name") not in DBT_MANAGED_SCHEMAS
 
 
 def run_migrations_offline() -> None:
@@ -26,6 +38,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         include_schemas=True,
+        include_name=include_name,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -42,6 +55,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             include_schemas=True,
+            include_name=include_name,
         )
         with context.begin_transaction():
             context.run_migrations()

@@ -37,4 +37,8 @@ jobs:
       - run: pytest
       - run: alembic upgrade head
       - run: alembic check
+      - run: cp analytics/profiles.yml.example analytics/profiles.yml
+      - run: dbt debug --project-dir analytics --profiles-dir analytics
+      - run: dbt build --project-dir analytics --profiles-dir analytics
+      - run: dbt docs generate --project-dir analytics --profiles-dir analytics
       - run: python -m build
