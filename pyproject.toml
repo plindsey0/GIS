@@ -4,22 +4,25 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vahomemath-gis"
-version = "0.3.0"
+version = "0.4.0"
 description = "VAHomeMath Growth Intelligence System data platform"
 requires-python = ">=3.9"
 dependencies = [
   "alembic>=1.13,<2",
+  "fastapi>=0.115,<1",
   "google-auth>=2.35,<3",
   "psycopg[binary]>=3.1,<4",
   "requests>=2.32,<3",
   "sqlalchemy>=2.0,<3",
   "tzdata>=2024.1",
+  "uvicorn>=0.30,<1",
 ]
 
 [project.optional-dependencies]
 dev = [
   "build>=1.2,<2",
   "mypy>=1.10,<2",
+  "httpx>=0.27,<1",
   "pytest>=8,<9",
   "ruff>=0.6,<1",
   "types-requests>=2.32,<3",
@@ -29,6 +32,7 @@ dev = [
 gis-ga4 = "gis.integrations.ga4.cli:main"
 gis-gsc = "gis.integrations.gsc.cli:main"
 gis-seed = "gis.seed:main"
+gis-telemetry = "gis.telemetry.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gis"]

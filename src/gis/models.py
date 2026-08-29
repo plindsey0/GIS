@@ -322,6 +322,7 @@ class DataSourceConnection(Base, TimestampMixin):
             name="fk_connection_rights_policy_tenant",
         ),
         UniqueConstraint("tenant_id", "id", name="uq_connection_tenant_id"),
+        UniqueConstraint("tenant_id", "site_id", "id", name="uq_connection_tenant_site_id"),
         Index("ix_connection_tenant_site", "tenant_id", "site_id"),
         Index("ix_data_source_connection_tenant_id", "tenant_id"),
         Index("ix_data_source_connection_data_source_id", "data_source_id"),
@@ -689,3 +690,243 @@ class GA4EventObservation(GA4ObservationMixin, Base):
     total_users: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
     event_count_per_active_user: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
     key_events: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+
+
+class ProductSession(Base, TimestampMixin):
+    __tablename__ = "session"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"],
+            [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"],
+            name="fk_session_site_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "data_source_connection_id"],
+            [
+                f"{SCHEMA}.data_source_connection.tenant_id",
+                f"{SCHEMA}.data_source_connection.site_id",
+                f"{SCHEMA}.data_source_connection.id",
+            ],
+            name="fk_session_connection_scope",
+        ),
+        UniqueConstraint("tenant_id", "site_id", "session_key", name="uq_session_scope_key"),
+        UniqueConstraint("tenant_id", "site_id", "id", name="uq_session_scope_id"),
+        CheckConstraint("ended_at IS NULL OR ended_at >= started_at", name="ck_session_end_time"),
+        Index("ix_session_tenant_site_started", "tenant_id", "site_id", "started_at"),
+        Index("ix_session_anonymous_visitor", "anonymous_visitor_key"),
+        Index("ix_session_landing_path", "landing_path"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    session_key: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    landing_url: Mapped[Optional[str]] = mapped_column(String(2048))
+    landing_path: Mapped[Optional[str]] = mapped_column(String(2048))
+    referrer_url: Mapped[Optional[str]] = mapped_column(String(2048))
+    initial_utm_source: Mapped[Optional[str]] = mapped_column(String(255))
+    initial_utm_medium: Mapped[Optional[str]] = mapped_column(String(255))
+    initial_utm_campaign: Mapped[Optional[str]] = mapped_column(String(255))
+    initial_utm_term: Mapped[Optional[str]] = mapped_column(String(255))
+    initial_utm_content: Mapped[Optional[str]] = mapped_column(String(255))
+    initial_gclid: Mapped[Optional[str]] = mapped_column(String(512))
+    initial_msclkid: Mapped[Optional[str]] = mapped_column(String(512))
+    initial_referrer_domain: Mapped[Optional[str]] = mapped_column(String(253))
+    device_category: Mapped[Optional[str]] = mapped_column(String(64))
+    browser_family: Mapped[Optional[str]] = mapped_column(String(128))
+    os_family: Mapped[Optional[str]] = mapped_column(String(128))
+    country_code: Mapped[Optional[str]] = mapped_column(String(2))
+    region_code: Mapped[Optional[str]] = mapped_column(String(16))
+    anonymous_visitor_key: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+
+
+class CalculatorRun(Base, TimestampMixin):
+    __tablename__ = "calculator_run"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"],
+            [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"],
+            name="fk_calculator_run_site_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "session_id"],
+            [f"{SCHEMA}.session.tenant_id", f"{SCHEMA}.session.site_id", f"{SCHEMA}.session.id"],
+            name="fk_calculator_run_session_scope",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "data_source_connection_id"],
+            [
+                f"{SCHEMA}.data_source_connection.tenant_id",
+                f"{SCHEMA}.data_source_connection.site_id",
+                f"{SCHEMA}.data_source_connection.id",
+            ],
+            name="fk_calculator_run_connection_scope",
+        ),
+        UniqueConstraint(
+            "tenant_id", "site_id", "calculator_run_key", name="uq_calculator_run_scope_key"
+        ),
+        UniqueConstraint("tenant_id", "site_id", "id", name="uq_calculator_run_scope_id"),
+        CheckConstraint(
+            "completed_at IS NULL OR completed_at >= started_at", name="ck_calculator_run_times"
+        ),
+        CheckConstraint("recalculation_count >= 0", name="ck_calculator_run_recalculation_count"),
+        Index("ix_calculator_run_tenant_site_started", "tenant_id", "site_id", "started_at"),
+        Index("ix_calculator_run_type", "calculator_type"),
+        Index("ix_calculator_run_session", "session_id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    calculator_run_key: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    calculator_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    initial_page_path: Mapped[Optional[str]] = mapped_column(String(2048))
+    input_schema_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    result_schema_version: Mapped[Optional[str]] = mapped_column(String(100))
+    input_bucket_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    result_bucket_data: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    recalculation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class ProductEvent(Base):
+    __tablename__ = "event"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"],
+            [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"],
+            name="fk_event_site_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "session_id"],
+            [f"{SCHEMA}.session.tenant_id", f"{SCHEMA}.session.site_id", f"{SCHEMA}.session.id"],
+            name="fk_event_session_scope",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "calculator_run_id"],
+            [
+                f"{SCHEMA}.calculator_run.tenant_id",
+                f"{SCHEMA}.calculator_run.site_id",
+                f"{SCHEMA}.calculator_run.id",
+            ],
+            name="fk_event_calculator_run_scope",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "data_source_connection_id"],
+            [
+                f"{SCHEMA}.data_source_connection.tenant_id",
+                f"{SCHEMA}.data_source_connection.site_id",
+                f"{SCHEMA}.data_source_connection.id",
+            ],
+            name="fk_event_connection_scope",
+        ),
+        UniqueConstraint("tenant_id", "site_id", "event_id", name="uq_event_scope_id"),
+        UniqueConstraint("tenant_id", "site_id", "id", name="uq_event_internal_scope_id"),
+        CheckConstraint("event_version > 0", name="ck_event_version_positive"),
+        Index("ix_event_tenant_site_occurred", "tenant_id", "site_id", "occurred_at"),
+        Index("ix_event_session_occurred", "session_id", "occurred_at"),
+        Index("ix_event_name_occurred", "event_name", "occurred_at"),
+        Index("ix_event_page_path", "page_path"),
+        Index("ix_event_calculator_run", "calculator_run_id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    calculator_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    event_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    page_url: Mapped[Optional[str]] = mapped_column(String(2048))
+    page_path: Mapped[Optional[str]] = mapped_column(String(2048))
+    event_properties: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    sequence_number: Mapped[Optional[int]] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Conversion(Base):
+    __tablename__ = "conversion"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"],
+            [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"],
+            name="fk_conversion_site_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "session_id"],
+            [f"{SCHEMA}.session.tenant_id", f"{SCHEMA}.session.site_id", f"{SCHEMA}.session.id"],
+            name="fk_conversion_session_scope",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "calculator_run_id"],
+            [
+                f"{SCHEMA}.calculator_run.tenant_id",
+                f"{SCHEMA}.calculator_run.site_id",
+                f"{SCHEMA}.calculator_run.id",
+            ],
+            name="fk_conversion_calculator_run_scope",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "source_event_id"],
+            [f"{SCHEMA}.event.tenant_id", f"{SCHEMA}.event.site_id", f"{SCHEMA}.event.id"],
+            name="fk_conversion_source_event_scope",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "data_source_connection_id"],
+            [
+                f"{SCHEMA}.data_source_connection.tenant_id",
+                f"{SCHEMA}.data_source_connection.site_id",
+                f"{SCHEMA}.data_source_connection.id",
+            ],
+            name="fk_conversion_connection_scope",
+        ),
+        UniqueConstraint("tenant_id", "site_id", "conversion_id", name="uq_conversion_scope_id"),
+        Index("ix_conversion_tenant_site_occurred", "tenant_id", "site_id", "occurred_at"),
+        Index("ix_conversion_type_occurred", "conversion_type", "occurred_at"),
+        Index("ix_conversion_session", "session_id"),
+        Index("ix_conversion_calculator_run", "calculator_run_id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    calculator_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    conversion_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    conversion_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    conversion_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 6))
+    currency: Mapped[Optional[str]] = mapped_column(String(3))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
