@@ -105,6 +105,28 @@ models:
     columns: *daily_keys
 
 unit_tests:
+  - name: reconciliation_distinguishes_ga4_presence_from_organic_sessions
+    description: GA4 presence is independent of organic traffic, including GA4-only dates.
+    model: mart_data_reconciliation
+    given:
+      - input: ref('int_search_page_daily')
+        rows:
+          - {tenant_id: 00000000-0000-0000-0000-000000000001, site_id: 00000000-0000-0000-0000-000000000002, date: '2026-08-26', clicks: 5}
+          - {tenant_id: 00000000-0000-0000-0000-000000000001, site_id: 00000000-0000-0000-0000-000000000002, date: '2026-08-29', clicks: 3}
+      - input: ref('stg_ga4_acquisition')
+        rows:
+          - {tenant_id: 00000000-0000-0000-0000-000000000001, site_id: 00000000-0000-0000-0000-000000000002, observed_date: '2026-08-26', provider_channel: Organic Search, source: google, medium: organic, sessions: 4}
+          - {tenant_id: 00000000-0000-0000-0000-000000000001, site_id: 00000000-0000-0000-0000-000000000002, observed_date: '2026-08-27', provider_channel: Direct, source: '(direct)', medium: '(none)', sessions: 19}
+          - {tenant_id: 00000000-0000-0000-0000-000000000001, site_id: 00000000-0000-0000-0000-000000000002, observed_date: '2026-08-28', provider_channel: Direct, source: '(direct)', medium: '(none)', sessions: 11}
+      - input: ref('int_session_entry')
+        rows:
+          - {tenant_id: 00000000-0000-0000-0000-000000000001, site_id: 00000000-0000-0000-0000-000000000002, analytical_date: '2026-08-27', gis_channel: direct}
+    expect:
+      rows:
+        - {date: '2026-08-26', gsc_clicks: 5, ga4_organic_sessions: '4.000000', first_party_organic_sessions: 0, gsc_data_present: true, ga4_data_present: true, first_party_data_present: false}
+        - {date: '2026-08-27', gsc_clicks: 0, ga4_organic_sessions: 0, first_party_organic_sessions: 0, gsc_data_present: false, ga4_data_present: true, first_party_data_present: false}
+        - {date: '2026-08-28', gsc_clicks: 0, ga4_organic_sessions: 0, first_party_organic_sessions: 0, gsc_data_present: false, ga4_data_present: true, first_party_data_present: false}
+        - {date: '2026-08-29', gsc_clicks: 3, ga4_organic_sessions: 0, first_party_organic_sessions: 0, gsc_data_present: true, ga4_data_present: false, first_party_data_present: false}
   - name: search_funnel_preserves_cross_source_counts
     description: Proves the documented fictional acceptance arithmetic without asserting equality.
     model: mart_search_funnel

@@ -42,3 +42,6 @@ The first-party telemetry API is documented in
 events, calculator runs, and conversions independently from GA4 aggregates.
 
 See [the analytics guide](docs/gis/analytics.md) for dbt setup, models, metrics, and mart contracts.
+
+The Metabase Growth Dashboard is reproducibly provisioned from checked-in SQL and configuration.
+See [the dashboard guide](docs/gis/growth-dashboard.md) for local startup and operator semantics.
