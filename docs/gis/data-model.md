@@ -14,6 +14,9 @@ erDiagram
     DATA_SOURCE_CONNECTION ||--o{ INGESTION_RUN : executes
     TENANT ||--o{ INGESTION_RUN : owns
     SITE o|--o{ INGESTION_RUN : scopes
+    INGESTION_RUN ||--o{ GSC_SEARCH_OBSERVATION : records
+    DATA_SOURCE_CONNECTION ||--o{ GSC_SEARCH_OBSERVATION : sources
+    DATA_RIGHTS_POLICY ||--o{ GSC_SEARCH_OBSERVATION : governs
 ```
 
 ## Tables
@@ -44,6 +47,16 @@ The optional rights policy overrides the source default.
 
 `ingestion_run` records collection executions with status, counts, cursor, errors, and timing.
 Successful, partial, and failed runs all remain historical records.
+
+`gis_raw.gsc_search_observation` stores typed Search Analytics dimensions and metrics. Its
+`observation_key` is SHA-256 over tenant, site, connection, reporting date, search type,
+collection grain, query, page, country, device, and search appearance. Metrics and ingestion
+timestamps are deliberately excluded. A partial unique index permits one current row per key;
+older provider revisions have a non-null `effective_end`. Query and page values remain faithful
+text, while SHA-256 companion columns support selective lookup without indexing large text.
+
+`observed_date` is Google's Pacific-time reporting date. `observed_at` is that reporting day's
+Pacific midnight converted to UTC. `ingested_at` is the actual GIS storage time.
 
 ## Future typed observations
 

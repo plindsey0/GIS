@@ -3,6 +3,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Optional
 
 from sqlalchemy import (
@@ -16,6 +17,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -26,6 +28,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 
 SCHEMA = "gis_core"
+RAW_SCHEMA = "gis_raw"
 
 
 class TenantStatus(str, enum.Enum):
@@ -377,6 +380,8 @@ class IngestionRun(Base):
         Index("ix_ingestion_tenant_site", "tenant_id", "site_id"),
         Index("ix_ingestion_connection_started", "data_source_connection_id", "started_at"),
         Index("ix_ingestion_status", "status"),
+        UniqueConstraint("tenant_id", "id", name="uq_ingestion_run_tenant_id"),
+        UniqueConstraint("tenant_id", "site_id", "id", name="uq_ingestion_run_tenant_site_id"),
         {"schema": SCHEMA},
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -398,6 +403,103 @@ class IngestionRun(Base):
     error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_summary: Mapped[Optional[str]] = mapped_column(Text)
     source_cursor: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class GSCSearchObservation(Base):
+    """Versioned Google Search Console Search Analytics observation."""
+
+    __tablename__ = "gsc_search_observation"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"],
+            [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"],
+            name="fk_gsc_observation_site_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "data_source_connection_id"],
+            [
+                f"{SCHEMA}.data_source_connection.tenant_id",
+                f"{SCHEMA}.data_source_connection.id",
+            ],
+            name="fk_gsc_observation_connection_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "ingestion_run_id"],
+            [
+                f"{SCHEMA}.ingestion_run.tenant_id",
+                f"{SCHEMA}.ingestion_run.site_id",
+                f"{SCHEMA}.ingestion_run.id",
+            ],
+            name="fk_gsc_observation_run_tenant_site",
+        ),
+        CheckConstraint("clicks >= 0", name="ck_gsc_clicks_nonnegative"),
+        CheckConstraint("impressions >= 0", name="ck_gsc_impressions_nonnegative"),
+        CheckConstraint("ctr >= 0", name="ck_gsc_ctr_nonnegative"),
+        CheckConstraint("position >= 0", name="ck_gsc_position_nonnegative"),
+        CheckConstraint(
+            "effective_end IS NULL OR effective_end >= effective_start",
+            name="ck_gsc_effective_window",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name="ck_gsc_confidence",
+        ),
+        Index("ix_gsc_tenant_site_date", "tenant_id", "site_id", "observed_date"),
+        Index("ix_gsc_connection_date", "data_source_connection_id", "observed_date"),
+        Index("ix_gsc_observed_date", "observed_date"),
+        Index("ix_gsc_page_hash", "page_hash"),
+        Index("ix_gsc_query_hash", "query_hash"),
+        Index("ix_gsc_observation_key", "observation_key"),
+        Index("ix_gsc_ingestion_run", "ingestion_run_id"),
+        Index(
+            "uq_gsc_current_observation",
+            "observation_key",
+            unique=True,
+            postgresql_where=text("effective_end IS NULL"),
+        ),
+        {"schema": RAW_SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    ingestion_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.data_rights_policy.id"),
+        nullable=False,
+    )
+    source_record_id: Mapped[Optional[str]] = mapped_column(String(512))
+    observation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    collection_grain: Mapped[str] = mapped_column(String(32), nullable=False)
+    observed_date: Mapped[date] = mapped_column(Date, nullable=False)
+    query: Mapped[Optional[str]] = mapped_column(Text)
+    query_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    page: Mapped[Optional[str]] = mapped_column(Text)
+    page_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    country: Mapped[Optional[str]] = mapped_column(String(16))
+    device: Mapped[Optional[str]] = mapped_column(String(32))
+    search_appearance: Mapped[Optional[str]] = mapped_column(String(255))
+    search_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    clicks: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    impressions: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    ctr: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    position: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    effective_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    confidence: Mapped[Optional[float]] = mapped_column(Float)
+    quality_flag: Mapped[QualityFlag] = mapped_column(
+        enum_type(QualityFlag, "quality_flag"), nullable=False, default=QualityFlag.VALID
+    )
+    raw_payload_reference: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

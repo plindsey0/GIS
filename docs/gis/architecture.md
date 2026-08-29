@@ -2,9 +2,9 @@
 
 ## Purpose
 
-GIS is the decision-intelligence layer above VAHomeMath's operational systems. Epic 1 only
-creates the durable PostgreSQL foundation. Future epics will add typed observations and
-decision objects; this epic does not ingest provider data or expose user-facing behavior.
+GIS is the decision-intelligence layer above VAHomeMath's operational systems. Epic 1 created
+the durable PostgreSQL foundation. Epic 2 validates it with typed, historical Google Search
+Console Search Analytics collection without introducing user-facing behavior.
 
 VAHomeMath is the first tenant and site, but no table assumes it is the only one. UUIDs are
 internal identifiers; slugs and provider identifiers are stable lookup attributes rather than
@@ -12,10 +12,9 @@ primary keys.
 
 ## Namespaces
 
-Core relational objects live in the PostgreSQL `gis_core` schema. `gis_raw` and
-`gis_analytics` are reserved architectural names, but are intentionally not created until a
-future epic has concrete objects for them. This keeps the initial migration small and avoids
-empty namespace sprawl.
+Core relational objects live in `gis_core`. Provider observations live in `gis_raw`, first used
+by `gsc_search_observation`. `gis_analytics` remains reserved until a future epic has concrete
+analytical objects.
 
 ## Ownership and integrity
 
@@ -46,6 +45,11 @@ columns. They should not create a universal observation table, ORM inheritance h
 entity-attribute-value model. Add indexes based on actual query shapes, commonly tenant/site,
 observation time, source connection, and batch.
 
+GSC facts are versioned rather than overwritten. A stable logical key identifies a
+tenant/site/connection/date/grain/dimension combination. When Google revises metrics, the
+collector closes the current effective interval and appends a new version. Identical reruns do
+nothing, while every collection attempt still has its own `ingestion_run`.
+
 Raw payload references point to managed external storage; payloads and credentials do not
 belong in ordinary relational credential fields. `credential_reference` stores a secret-manager
 reference only.
@@ -56,3 +60,14 @@ All event timestamps use PostgreSQL `timestamp with time zone` and applications 
 UTC. `site.timezone` separately retains the IANA business timezone. Provider-specific,
 non-secret connection settings may use `configuration_json`; stable ownership and policy
 concepts remain relational.
+
+## GSC data flow
+
+```mermaid
+flowchart TD
+    GSC[Google Search Console] --> CLIENT[GSC provider client]
+    CLIENT --> CONNECTION[DataSourceConnection]
+    CONNECTION --> RUN[IngestionRun]
+    RUN --> NORMALIZE[Normalization and validation]
+    NORMALIZE --> RAW[gis_raw.gsc_search_observation]
+```
