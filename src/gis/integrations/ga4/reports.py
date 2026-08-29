@@ -67,6 +67,6 @@ REPORTS = {
             "deviceCategory",
             "country",
         ),
-        ("eventCount", "totalUsers", "eventCountPerActiveUser", "keyEvents"),
+        ("eventCount", "totalUsers", "eventCountPerUser", "keyEvents"),
     ),
 }

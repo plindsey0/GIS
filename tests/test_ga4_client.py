@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -76,14 +77,15 @@ def test_validate_property_checks_metadata_and_report_access() -> None:
 
 
 class FakeSession:
-    def __init__(self, statuses: list[int]) -> None:
+    def __init__(self, statuses: list[int], bodies: list[bytes] | None = None) -> None:
         self.statuses = statuses
+        self.bodies = bodies or [b"{}"] * len(statuses)
         self.calls = 0
 
     def request(self, *args: Any, **kwargs: Any) -> Response:
         response = Response()
         response.status_code = self.statuses[self.calls]
-        response._content = b"{}"
+        response._content = self.bodies[self.calls]
         self.calls += 1
         return response
 
@@ -101,3 +103,46 @@ def test_transport_does_not_retry_permanent_errors() -> None:
     with pytest.raises(GA4PermanentError, match="403"):
         transport.run_report("properties/123", {})
     assert auth_session.calls == 1
+
+
+def test_transport_includes_bounded_provider_error_detail() -> None:
+    body = (
+        b'{"error":{"code":400,"status":"INVALID_ARGUMENT","message":'
+        b'"Field eventCountPerActiveUser is not a valid metric."}}'
+    )
+    auth_session = FakeSession([400], [body])
+    transport = GoogleGA4Transport(auth_session, sleeper=lambda _: None)  # type: ignore[arg-type]
+    with pytest.raises(GA4PermanentError) as caught:
+        transport.run_report("properties/123", {})
+    message = str(caught.value)
+    assert message == (
+        "GA4 HTTP 400: INVALID_ARGUMENT: Field eventCountPerActiveUser is not a valid metric."
+    )
+    assert len(message) < 600
+
+
+def test_transport_falls_back_when_provider_error_is_malformed() -> None:
+    auth_session = FakeSession([400], [b"not-json"])
+    transport = GoogleGA4Transport(auth_session, sleeper=lambda _: None)  # type: ignore[arg-type]
+    with pytest.raises(GA4PermanentError, match=r"^GA4 HTTP 400$"):
+        transport.run_report("properties/123", {})
+
+
+def test_event_report_requests_valid_count_per_user_metric() -> None:
+    assert REPORTS[GA4Dataset.EVENTS].metrics == (
+        "eventCount",
+        "totalUsers",
+        "eventCountPerUser",
+        "keyEvents",
+    )
+
+
+def test_active_code_and_dbt_do_not_reference_invalid_metric() -> None:
+    active_files = [*Path("src").rglob("*.py")]
+    active_files.extend(Path("analytics/models").rglob("*.sql"))
+    active_files.extend(Path("analytics/models").rglob("*.yml"))
+    active_files.extend(Path("analytics/macros").rglob("*.sql"))
+    active_files.extend(Path("analytics/tests").rglob("*.sql"))
+    contents = "\n".join(path.read_text() for path in active_files)
+    assert "eventCountPerActiveUser" not in contents
+    assert "event_count_per_active_user" not in contents

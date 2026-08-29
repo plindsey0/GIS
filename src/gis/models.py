@@ -673,7 +673,7 @@ class GA4EventObservation(GA4ObservationMixin, Base):
                 for name in (
                     "event_count",
                     "total_users",
-                    "event_count_per_active_user",
+                    "event_count_per_user",
                     "key_events",
                 )
             ),
@@ -688,7 +688,7 @@ class GA4EventObservation(GA4ObservationMixin, Base):
     country: Mapped[str] = mapped_column(String(255), nullable=False)
     event_count: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
     total_users: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
-    event_count_per_active_user: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    event_count_per_user: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
     key_events: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
 
 

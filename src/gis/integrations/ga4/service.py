@@ -385,7 +385,7 @@ def _observation_values(
         "country": dimensions["country"],
         "event_count": metrics["eventCount"],
         "total_users": metrics["totalUsers"],
-        "event_count_per_active_user": metrics["eventCountPerActiveUser"],
+        "event_count_per_user": metrics["eventCountPerUser"],
         "key_events": metrics["keyEvents"],
     }
 
@@ -426,7 +426,7 @@ def _metrics_equal(current: Any, row: NormalizedGA4Row, report: ReportSpec) -> b
         "eventCount": "event_count",
         "keyEvents": "key_events",
         "totalUsers": "total_users",
-        "eventCountPerActiveUser": "event_count_per_active_user",
+        "eventCountPerUser": "event_count_per_user",
     }
     return all(getattr(current, field_names[name]) == row.metrics[name] for name in report.metrics)
 
