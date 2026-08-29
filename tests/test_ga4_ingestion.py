@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -119,6 +120,22 @@ def test_all_fixed_reports_ingest_and_retain_rights_provenance(session: Session)
         assert observation is not None
         assert observation.rights_policy_id is not None
         assert observation.ingestion_run_id == run.id
+    event_observation = session.scalar(select(GA4EventObservation))
+    assert event_observation is not None
+    assert event_observation.event_count_per_user == Decimal("1.25")
+
+
+def test_event_normalization_maps_count_per_user() -> None:
+    report = REPORTS[GA4Dataset.EVENTS]
+    normalized = normalize_row(
+        provider_row(GA4Dataset.EVENTS, "2.75"),
+        report,
+        tenant_id=uuid4(),
+        site_id=uuid4(),
+        connection_id=uuid4(),
+        requested_date=date(2026, 8, 20),
+    )
+    assert normalized.metrics["eventCountPerUser"] == Decimal("2.75")
 
 
 def test_identical_rerun_is_idempotent_and_changed_metrics_create_revision(

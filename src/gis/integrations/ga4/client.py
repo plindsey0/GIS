@@ -78,7 +78,11 @@ class GoogleGA4Transport:
                 self._backoff(attempt)
                 continue
             if response.status_code >= 400:
-                raise GA4PermanentError(f"GA4 HTTP {response.status_code}")
+                message = f"GA4 HTTP {response.status_code}"
+                detail = _provider_error_detail(response)
+                if detail:
+                    message = f"{message}: {detail}"
+                raise GA4PermanentError(message)
             return response
         raise GA4TransientError("GA4 request retries exhausted") from last_error
 
@@ -169,3 +173,25 @@ def _json_object(response: Response) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise GA4PermanentError("GA4 returned a non-object response")
     return payload
+
+
+def _provider_error_detail(response: Response, *, limit: int = 500) -> str | None:
+    """Extract a bounded Google error summary without exposing request data."""
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("error"), dict):
+        return None
+    error = payload["error"]
+    provider_message = error.get("message")
+    provider_status = error.get("status")
+    parts = []
+    if isinstance(provider_status, str) and provider_status.strip():
+        parts.append(" ".join(provider_status.split()))
+    if isinstance(provider_message, str) and provider_message.strip():
+        parts.append(" ".join(provider_message.split()))
+    if not parts:
+        return None
+    detail = ": ".join(parts)
+    return detail if len(detail) <= limit else f"{detail[: limit - 1]}…"
