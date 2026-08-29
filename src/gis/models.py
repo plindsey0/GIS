@@ -503,3 +503,189 @@ class GSCSearchObservation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+def _ga4_table_args(prefix: str, extras: tuple[Any, ...]) -> tuple[Any, ...]:
+    return (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"],
+            [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"],
+            name=f"fk_{prefix}_site_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "data_source_connection_id"],
+            [
+                f"{SCHEMA}.data_source_connection.tenant_id",
+                f"{SCHEMA}.data_source_connection.id",
+            ],
+            name=f"fk_{prefix}_connection_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "ingestion_run_id"],
+            [
+                f"{SCHEMA}.ingestion_run.tenant_id",
+                f"{SCHEMA}.ingestion_run.site_id",
+                f"{SCHEMA}.ingestion_run.id",
+            ],
+            name=f"fk_{prefix}_run_tenant_site",
+        ),
+        CheckConstraint(
+            "effective_end IS NULL OR effective_end >= effective_start",
+            name=f"ck_{prefix}_effective_window",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name=f"ck_{prefix}_confidence",
+        ),
+        Index(f"ix_{prefix}_tenant_site_date", "tenant_id", "site_id", "observed_date"),
+        Index(f"ix_{prefix}_connection_date", "data_source_connection_id", "observed_date"),
+        Index(f"ix_{prefix}_observation_key", "observation_key"),
+        Index(f"ix_{prefix}_ingestion_run", "ingestion_run_id"),
+        Index(
+            f"uq_{prefix}_current_observation",
+            "observation_key",
+            unique=True,
+            postgresql_where=text("effective_end IS NULL"),
+        ),
+        *extras,
+        {"schema": RAW_SCHEMA},
+    )
+
+
+class GA4ObservationMixin:
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    ingestion_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.data_rights_policy.id"),
+        nullable=False,
+    )
+    source_record_id: Mapped[Optional[str]] = mapped_column(String(512))
+    observation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    effective_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    confidence: Mapped[Optional[float]] = mapped_column(Float)
+    quality_flag: Mapped[QualityFlag] = mapped_column(
+        enum_type(QualityFlag, "quality_flag"), nullable=False, default=QualityFlag.VALID
+    )
+    raw_payload_reference: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class GA4LandingPageObservation(GA4ObservationMixin, Base):
+    __tablename__ = "ga4_landing_page_observation"
+    __table_args__ = _ga4_table_args(
+        "ga4_landing",
+        (
+            Index("ix_ga4_landing_page_hash", "landing_page_hash"),
+            *(
+                CheckConstraint(f"{name} >= 0", name=f"ck_ga4_landing_{name}_nonnegative")
+                for name in (
+                    "sessions",
+                    "active_users",
+                    "new_users",
+                    "engaged_sessions",
+                    "engagement_rate",
+                    "average_session_duration",
+                    "event_count",
+                    "key_events",
+                )
+            ),
+            CheckConstraint("engagement_rate <= 1", name="ck_ga4_landing_engagement_rate_max"),
+        ),
+    )
+    landing_page: Mapped[str] = mapped_column(Text, nullable=False)
+    landing_page_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    session_default_channel_group: Mapped[str] = mapped_column(String(255), nullable=False)
+    session_source: Mapped[str] = mapped_column(Text, nullable=False)
+    session_medium: Mapped[str] = mapped_column(Text, nullable=False)
+    device_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    country: Mapped[str] = mapped_column(String(255), nullable=False)
+    sessions: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    active_users: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    new_users: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    engaged_sessions: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    engagement_rate: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    average_session_duration: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    event_count: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    key_events: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+
+
+class GA4AcquisitionObservation(GA4ObservationMixin, Base):
+    __tablename__ = "ga4_acquisition_observation"
+    __table_args__ = _ga4_table_args(
+        "ga4_acquisition",
+        (
+            Index("ix_ga4_acquisition_channel", "session_default_channel_group"),
+            Index("ix_ga4_acquisition_source_hash", "source_hash"),
+            Index("ix_ga4_acquisition_medium_hash", "medium_hash"),
+            *(
+                CheckConstraint(f"{name} >= 0", name=f"ck_ga4_acquisition_{name}_nonnegative")
+                for name in (
+                    "sessions",
+                    "active_users",
+                    "new_users",
+                    "engaged_sessions",
+                    "engagement_rate",
+                    "event_count",
+                    "key_events",
+                )
+            ),
+            CheckConstraint("engagement_rate <= 1", name="ck_ga4_acquisition_engagement_rate_max"),
+        ),
+    )
+    session_default_channel_group: Mapped[str] = mapped_column(String(255), nullable=False)
+    session_source: Mapped[str] = mapped_column(Text, nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    session_medium: Mapped[str] = mapped_column(Text, nullable=False)
+    medium_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    session_campaign: Mapped[str] = mapped_column(Text, nullable=False)
+    device_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    country: Mapped[str] = mapped_column(String(255), nullable=False)
+    sessions: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    active_users: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    new_users: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    engaged_sessions: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    engagement_rate: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    event_count: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    key_events: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+
+
+class GA4EventObservation(GA4ObservationMixin, Base):
+    __tablename__ = "ga4_event_observation"
+    __table_args__ = _ga4_table_args(
+        "ga4_event",
+        (
+            Index("ix_ga4_event_name_hash", "event_name_hash"),
+            *(
+                CheckConstraint(f"{name} >= 0", name=f"ck_ga4_event_{name}_nonnegative")
+                for name in (
+                    "event_count",
+                    "total_users",
+                    "event_count_per_active_user",
+                    "key_events",
+                )
+            ),
+        ),
+    )
+    event_name: Mapped[str] = mapped_column(Text, nullable=False)
+    event_name_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    landing_page: Mapped[str] = mapped_column(Text, nullable=False)
+    page_path: Mapped[str] = mapped_column(Text, nullable=False)
+    session_default_channel_group: Mapped[str] = mapped_column(String(255), nullable=False)
+    device_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    country: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_count: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    total_users: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
+    event_count_per_active_user: Mapped[Decimal] = mapped_column(Numeric(20, 12), nullable=False)
+    key_events: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)

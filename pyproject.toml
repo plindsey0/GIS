@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vahomemath-gis"
-version = "0.2.0"
+version = "0.3.0"
 description = "VAHomeMath Growth Intelligence System data platform"
 requires-python = ">=3.9"
 dependencies = [
@@ -26,6 +26,7 @@ dev = [
 ]
 
 [project.scripts]
+gis-ga4 = "gis.integrations.ga4.cli:main"
 gis-gsc = "gis.integrations.gsc.cli:main"
 gis-seed = "gis.seed:main"
 

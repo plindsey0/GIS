@@ -17,6 +17,9 @@ erDiagram
     INGESTION_RUN ||--o{ GSC_SEARCH_OBSERVATION : records
     DATA_SOURCE_CONNECTION ||--o{ GSC_SEARCH_OBSERVATION : sources
     DATA_RIGHTS_POLICY ||--o{ GSC_SEARCH_OBSERVATION : governs
+    INGESTION_RUN ||--o{ GA4_LANDING_PAGE_OBSERVATION : records
+    INGESTION_RUN ||--o{ GA4_ACQUISITION_OBSERVATION : records
+    INGESTION_RUN ||--o{ GA4_EVENT_OBSERVATION : records
 ```
 
 ## Tables
@@ -57,6 +60,12 @@ text, while SHA-256 companion columns support selective lookup without indexing 
 
 `observed_date` is Google's Pacific-time reporting date. `observed_at` is that reporting day's
 Pacific midnight converted to UTC. `ingested_at` is the actual GIS storage time.
+
+The three `gis_raw.ga4_*_observation` tables store typed landing-page, traffic-acquisition, and
+event aggregates. They share tenant/site/connection/run/rights provenance and immutable effective
+windows. Their `observed_date` uses the GA4 property's timezone and `observed_at` is that local
+midnight converted to UTC. Stable keys include the complete report dimension tuple but exclude
+metrics, so corrected provider values append a revision instead of changing identity.
 
 ## Future typed observations
 

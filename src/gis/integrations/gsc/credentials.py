@@ -44,11 +44,14 @@ def resolve_credential(reference: str | None) -> dict[str, Any]:
     return value
 
 
-def build_credentials(auth_mode: str, info: dict[str, Any]) -> Credentials:
+def build_credentials(
+    auth_mode: str, info: dict[str, Any], scopes: list[str] | None = None
+) -> Credentials:
+    requested_scopes = scopes or [READONLY_SCOPE]
     if auth_mode == "service_account":
         try:
             return service_account.Credentials.from_service_account_info(  # type: ignore[no-any-return,no-untyped-call]
-                info, scopes=[READONLY_SCOPE]
+                info, scopes=requested_scopes
             )
         except (ValueError, KeyError) as error:
             raise CredentialResolutionError("invalid service-account credential JSON") from error
@@ -64,12 +67,14 @@ def build_credentials(auth_mode: str, info: dict[str, Any]) -> Credentials:
             token_uri=str(info.get("token_uri", "https://oauth2.googleapis.com/token")),
             client_id=str(info["client_id"]),
             client_secret=str(info["client_secret"]),
-            scopes=[READONLY_SCOPE],
+            scopes=requested_scopes,
         )
     raise GSCConfigurationError("unsupported auth_mode")
 
 
-def authorized_session(auth_mode: str, reference: str | None) -> AuthorizedSession:
+def authorized_session(
+    auth_mode: str, reference: str | None, scopes: list[str] | None = None
+) -> AuthorizedSession:
     return AuthorizedSession(  # type: ignore[no-untyped-call]
-        build_credentials(auth_mode, resolve_credential(reference))
+        build_credentials(auth_mode, resolve_credential(reference), scopes)
     )
