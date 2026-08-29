@@ -1,0 +1,26 @@
+{
+  "collection": "GIS Operations",
+  "dashboard": {
+    "name": "Growth Dashboard — P0",
+    "description": "Operational growth, search, behavior, conversion, and source-quality views. Missing source coverage is not a zero.",
+    "parameters": [
+      {"id": "tenant_id", "name": "Tenant ID", "slug": "tenant_id", "type": "string/=", "sectionId": "string"},
+      {"id": "site_id", "name": "Site ID", "slug": "site_id", "type": "string/=", "sectionId": "string"},
+      {"id": "start_date", "name": "Start date", "slug": "start_date", "type": "date/single", "sectionId": "date"},
+      {"id": "end_date", "name": "End date", "slug": "end_date", "type": "date/single", "sectionId": "date"}
+    ]
+  },
+  "cards": [
+    {"name": "A1 · GSC Impressions", "file": "questions/kpi_gsc_impressions.sql", "display": "scalar", "row": 0, "col": 0, "size_x": 8, "size_y": 3},
+    {"name": "A2 · GA4 Sessions", "file": "questions/kpi_ga4_sessions.sql", "display": "scalar", "row": 0, "col": 8, "size_x": 8, "size_y": 3},
+    {"name": "A3 · First-Party Sessions", "file": "questions/kpi_first_party_sessions.sql", "display": "scalar", "row": 0, "col": 16, "size_x": 8, "size_y": 3},
+    {"name": "A · Executive Overview", "file": "questions/executive_overview.sql", "display": "table", "row": 3, "col": 0, "size_x": 24, "size_y": 7},
+    {"name": "B · Search Performance", "file": "questions/search_performance.sql", "display": "line", "visualization_settings": {"graph.dimensions": ["date"], "graph.metrics": ["impressions", "clicks"]}, "row": 10, "col": 0, "size_x": 24, "size_y": 7},
+    {"name": "C · Page Performance", "file": "questions/page_performance.sql", "display": "table", "row": 17, "col": 0, "size_x": 24, "size_y": 8},
+    {"name": "D · Keyword / Query Performance", "file": "questions/keyword_performance.sql", "display": "table", "row": 25, "col": 0, "size_x": 24, "size_y": 8},
+    {"name": "E · Acquisition", "file": "questions/acquisition.sql", "display": "table", "row": 33, "col": 0, "size_x": 24, "size_y": 8},
+    {"name": "F · Calculator Performance", "file": "questions/calculator_performance.sql", "display": "table", "row": 41, "col": 0, "size_x": 24, "size_y": 7},
+    {"name": "G · Conversion Performance", "file": "questions/conversion_performance.sql", "display": "table", "row": 48, "col": 0, "size_x": 24, "size_y": 7},
+    {"name": "H · Data Quality / Reconciliation", "file": "questions/data_quality.sql", "display": "table", "row": 55, "col": 0, "size_x": 24, "size_y": 8}
+  ]
+}

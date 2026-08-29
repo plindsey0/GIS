@@ -64,6 +64,19 @@ dbt docs generate --project-dir analytics --profiles-dir analytics
 Use `DBT_PORT=55433` when following the alternate Compose-port example. dbt owns only the three
 derived analytical schemas; run Alembic migrations before dbt. Generated dbt artifacts are ignored.
 
+## Growth Dashboard
+
+After the analytical models build, set local Metabase admin credentials in `.env` and run:
+
+```bash
+set -a && source .env && set +a
+docker compose up -d metabase
+python dashboard/provision.py
+```
+
+Open `http://localhost:3030`. See [Growth Dashboard](growth-dashboard.md) for architecture,
+filters, source mappings, missing-data semantics, security, and troubleshooting.
+
 If port 5432 is already in use, start with `GIS_DB_PORT=55433 docker compose up -d db`
 and update the port in `.env` before loading it.
 
