@@ -60,6 +60,11 @@ aggregate tables. This preserves domain-specific relational types while allowing
 models to join GSC acquisition intent with GA4 behavior through tenant, site, date, and normalized
 page dimensions.
 
+First-party telemetry uses transactional HTTP ingestion rather than scheduled provider pulls.
+Canonical `session`, `event`, `calculator_run`, and `conversion` entities live in `gis_core` and
+carry connection and rights provenance without creating an `ingestion_run` per request. See
+[first-party telemetry](first-party-telemetry.md).
+
 ## Time and configuration
 
 All event timestamps use PostgreSQL `timestamp with time zone` and applications should write

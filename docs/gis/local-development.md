@@ -36,6 +36,20 @@ gis-ga4 sync --connection <connection-uuid> --recent-days 3 --dataset all
 See [GA4 integration](ga4-integration.md) for OAuth, explicit backfills, report definitions, and
 recovery behavior. No GA4 credential is required for the automated test suite.
 
+## First-party telemetry API
+
+```bash
+export TELEMETRY_WRITE_CREDENTIAL='{"write_key":"local-development-only"}'
+gis-telemetry configure --tenant vahomemath --site vahomemath \
+  --credential-reference env:TELEMETRY_WRITE_CREDENTIAL
+uvicorn gis.api.app:app --host 127.0.0.1 --port 8000
+gis-telemetry send --write-key local-development-only \
+  --event page_view --page-path /va-loan-calculator/
+```
+
+Production browser code should send to a VAHomeMath same-origin server route, which forwards to
+GIS with the private write key. See [first-party telemetry](first-party-telemetry.md).
+
 If port 5432 is already in use, start with `GIS_DB_PORT=55433 docker compose up -d db`
 and update the port in `.env` before loading it.
 

@@ -20,6 +20,11 @@ erDiagram
     INGESTION_RUN ||--o{ GA4_LANDING_PAGE_OBSERVATION : records
     INGESTION_RUN ||--o{ GA4_ACQUISITION_OBSERVATION : records
     INGESTION_RUN ||--o{ GA4_EVENT_OBSERVATION : records
+    SITE ||--o{ SESSION : receives
+    SESSION ||--o{ EVENT : contains
+    SESSION ||--o{ CALCULATOR_RUN : contains
+    CALCULATOR_RUN o|--o{ EVENT : relates
+    EVENT o|--o| CONVERSION : produces
 ```
 
 ## Tables
@@ -66,6 +71,12 @@ event aggregates. They share tenant/site/connection/run/rights provenance and im
 windows. Their `observed_date` uses the GA4 property's timezone and `observed_at` is that local
 midnight converted to UTC. Stable keys include the complete report dimension tuple but exclude
 metrics, so corrected provider values append a revision instead of changing identity.
+
+Canonical `session`, `event`, `calculator_run`, and `conversion` tables store exact first-party
+product behavior in `gis_core`. Composite foreign keys prevent tenant/site/connection mismatches.
+Externally generated UUIDs make sessions, events, runs, and conversions idempotent within their
+tenant/site scope. JSONB is limited to validated event-specific properties and bucketed calculator
+attributes; frequently queried identity, time, path, taxonomy, and relationship fields are typed.
 
 ## Future typed observations
 
