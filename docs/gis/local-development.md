@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Docker with Compose
-- Python 3.9 or newer
+- Python 3.9 or newer (Python 3.12 is used in CI and recommended)
 
 No credentials are committed. The Compose password is development-only.
 
@@ -33,6 +33,25 @@ schema change. No provider credentials are seeded. All sources receive a conserv
 This repository currently has no web application process to start; it is a database foundation.
 Future application packages should consume `gis.db.session_factory` and add their own run command.
 
+## Google Search Console
+
+After placing service-account JSON in an environment variable and granting that account access
+to the exact Search Console property:
+
+```bash
+export GSC_SERVICE_ACCOUNT_JSON="$(< /secure/path/gsc-service-account.json)"
+gis-gsc configure \
+  --tenant vahomemath \
+  --site vahomemath \
+  --property-uri sc-domain:vahomemath.com \
+  --credential-reference env:GSC_SERVICE_ACCOUNT_JSON
+gis-gsc validate --connection <connection-uuid>
+gis-gsc sync --connection <connection-uuid> --recent-days 3
+```
+
+The secret value is never stored in PostgreSQL. See [GSC integration](gsc-integration.md) for
+OAuth credentials, URL-prefix properties, optional dimensions, and backfills.
+
 ## Migrations
 
 ```bash
@@ -58,6 +77,7 @@ Then run:
 ```bash
 source .venv/bin/activate
 ruff check .
+ruff format --check .
 mypy
 pytest
 python -m build

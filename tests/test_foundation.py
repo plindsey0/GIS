@@ -199,3 +199,6 @@ def test_migration_created_foundation_tables(session: Session) -> None:
         "data_source_connection",
         "ingestion_run",
     } <= tables
+    assert "gsc_search_observation" in inspect(session.connection()).get_table_names(
+        schema="gis_raw"
+    )
