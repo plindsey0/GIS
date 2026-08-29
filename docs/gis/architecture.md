@@ -4,7 +4,8 @@
 
 GIS is the decision-intelligence layer above VAHomeMath's operational systems. Epic 1 created
 the durable PostgreSQL foundation. Epic 2 validates it with typed, historical Google Search
-Console Search Analytics collection without introducing user-facing behavior.
+Console Search Analytics collection and Epic 3 adds aggregate GA4 behavioral reporting without
+introducing user-facing behavior.
 
 VAHomeMath is the first tenant and site, but no table assumes it is the only one. UUIDs are
 internal identifiers; slugs and provider identifiers are stable lookup attributes rather than
@@ -13,7 +14,7 @@ primary keys.
 ## Namespaces
 
 Core relational objects live in `gis_core`. Provider observations live in `gis_raw`, first used
-by `gsc_search_observation`. `gis_analytics` remains reserved until a future epic has concrete
+by GSC and GA4 observation tables. `gis_analytics` remains reserved until a future epic has concrete
 analytical objects.
 
 ## Ownership and integrity
@@ -54,6 +55,11 @@ Raw payload references point to managed external storage; payloads and credentia
 belong in ordinary relational credential fields. `credential_reference` stores a secret-manager
 reference only.
 
+GA4 follows the same revision convention with separate landing-page, acquisition, and event
+aggregate tables. This preserves domain-specific relational types while allowing later analytical
+models to join GSC acquisition intent with GA4 behavior through tenant, site, date, and normalized
+page dimensions.
+
 ## Time and configuration
 
 All event timestamps use PostgreSQL `timestamp with time zone` and applications should write
@@ -71,3 +77,8 @@ flowchart TD
     RUN --> NORMALIZE[Normalization and validation]
     NORMALIZE --> RAW[gis_raw.gsc_search_observation]
 ```
+
+## GA4 data flow
+
+See [the GA4 integration guide](ga4-integration.md) for the report catalog, authentication,
+timezone behavior, versioning, and operational limits.

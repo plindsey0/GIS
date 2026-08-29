@@ -2,7 +2,7 @@
 
 This repository contains the PostgreSQL data platform for the VAHomeMath Growth Intelligence
 System (GIS). It provides multi-tenant ownership, source provenance, data-rights metadata,
-ingestion-run history, and versioned Google Search Console Search Analytics ingestion.
+ingestion-run history, versioned Google Search Console data, and aggregate GA4 ingestion.
 
 See [local development](docs/gis/local-development.md) for setup commands and
 [the architecture](docs/gis/architecture.md) for design context.
@@ -20,3 +20,16 @@ gis-gsc sync --connection <connection-uuid> --recent-days 3
 ```
 
 See [the GSC integration guide](docs/gis/gsc-integration.md) before live collection.
+
+GA4 uses the same connection lifecycle with an explicit numeric property ID:
+
+```bash
+gis-ga4 configure --tenant vahomemath --site vahomemath \
+  --property-id 123456789 \
+  --credential-reference env:GA4_SERVICE_ACCOUNT_JSON
+gis-ga4 validate --connection <connection-uuid>
+gis-ga4 sync --connection <connection-uuid> --recent-days 3 --dataset all
+```
+
+See [the GA4 integration guide](docs/gis/ga4-integration.md) for report definitions,
+authentication, operational behavior, and interpretation limits.

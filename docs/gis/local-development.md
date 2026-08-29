@@ -21,6 +21,21 @@ alembic upgrade head
 gis-seed --hostname vahomemath.com
 ```
 
+## GA4 collector
+
+After seeding, configure a GA4 connection with a secret reference, validate access, and sync:
+
+```bash
+gis-ga4 configure --tenant vahomemath --site vahomemath \
+  --property-id 123456789 \
+  --credential-reference env:GA4_SERVICE_ACCOUNT_JSON
+gis-ga4 validate --connection <connection-uuid>
+gis-ga4 sync --connection <connection-uuid> --recent-days 3 --dataset all
+```
+
+See [GA4 integration](ga4-integration.md) for OAuth, explicit backfills, report definitions, and
+recovery behavior. No GA4 credential is required for the automated test suite.
+
 If port 5432 is already in use, start with `GIS_DB_PORT=55433 docker compose up -d db`
 and update the port in `.env` before loading it.
 
