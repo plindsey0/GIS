@@ -78,6 +78,14 @@ Externally generated UUIDs make sessions, events, runs, and conversions idempote
 tenant/site scope. JSONB is limited to validated event-specific properties and bucketed calculator
 attributes; frequently queried identity, time, path, taxonomy, and relationship fields are typed.
 
+## Derived analytical relations
+
+dbt—not Alembic—owns `gis_staging`, `gis_intermediate`, and `gis_analytics`. Staging views select
+current provider versions and expose canonical telemetry. Intermediate views define page identity,
+channel classification, source-specific daily facts, and exact product funnels. Nine table marts
+provide site, page, keyword, acquisition, calculator, conversion, search-funnel, and reconciliation
+grains. All retain tenant/site scope. See [analytics](analytics.md) for complete contracts.
+
 ## Future typed observations
 
 New observation tables should use UUID primary keys, explicit `tenant_id`, appropriate optional

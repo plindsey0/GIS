@@ -65,6 +65,11 @@ Canonical `session`, `event`, `calculator_run`, and `conversion` entities live i
 carry connection and rights provenance without creating an `ingestion_run` per request. See
 [first-party telemetry](first-party-telemetry.md).
 
+dbt owns derived views and tables in `gis_staging`, `gis_intermediate`, and `gis_analytics`.
+Alembic never manages those relations. The analytical layer preserves GSC, GA4, and exact
+first-party measures independently while supplying documented page/channel identities and
+reconciliation indicators. See [analytics](analytics.md).
+
 ## Time and configuration
 
 All event timestamps use PostgreSQL `timestamp with time zone` and applications should write

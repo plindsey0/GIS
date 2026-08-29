@@ -8,3 +8,8 @@ __pycache__/
 htmlcov/
 dist/
 *.egg-info/
+analytics/target/
+analytics/dbt_packages/
+analytics/logs/
+analytics/profiles.yml
+analytics/.user.yml

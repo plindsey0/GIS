@@ -4,6 +4,8 @@ This repository contains the PostgreSQL data platform for the VAHomeMath Growth 
 System (GIS). It provides multi-tenant ownership, source provenance, data-rights metadata,
 ingestion-run history, versioned Google Search Console data, aggregate GA4 ingestion, and
 canonical first-party product telemetry.
+The dbt analytical layer turns those distinct evidence systems into documented BI-ready marts
+without forcing cross-source totals to reconcile.
 
 See [local development](docs/gis/local-development.md) for setup commands and
 [the architecture](docs/gis/architecture.md) for design context.
@@ -38,3 +40,5 @@ authentication, operational behavior, and interpretation limits.
 The first-party telemetry API is documented in
 [the telemetry guide](docs/gis/first-party-telemetry.md). It models exact product sessions,
 events, calculator runs, and conversions independently from GA4 aggregates.
+
+See [the analytics guide](docs/gis/analytics.md) for dbt setup, models, metrics, and mart contracts.

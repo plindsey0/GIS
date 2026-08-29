@@ -50,6 +50,20 @@ gis-telemetry send --write-key local-development-only \
 Production browser code should send to a VAHomeMath same-origin server route, which forwards to
 GIS with the private write key. See [first-party telemetry](first-party-telemetry.md).
 
+## Analytical models
+
+```bash
+cp analytics/profiles.yml.example analytics/profiles.yml
+export DBT_HOST=localhost DBT_PORT=5432 DBT_USER=gis DBT_PASSWORD=gis DBT_DATABASE=gis
+dbt debug --project-dir analytics --profiles-dir analytics
+dbt build --project-dir analytics --profiles-dir analytics
+dbt test --project-dir analytics --profiles-dir analytics
+dbt docs generate --project-dir analytics --profiles-dir analytics
+```
+
+Use `DBT_PORT=55433` when following the alternate Compose-port example. dbt owns only the three
+derived analytical schemas; run Alembic migrations before dbt. Generated dbt artifacts are ignored.
+
 If port 5432 is already in use, start with `GIS_DB_PORT=55433 docker compose up -d db`
 and update the port in `.env` before loading it.
 
