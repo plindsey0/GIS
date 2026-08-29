@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gis
+      POSTGRES_USER: gis
+      POSTGRES_PASSWORD: gis
+    ports:
+      - "${GIS_DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gis -d gis"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - gis-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  gis-postgres-data:
