@@ -16,6 +16,7 @@ from gis.integrations.gsc.service import (
     GSCCollector,
     date_chunks,
     normalize_row,
+    recent_window,
     validate_connection,
 )
 from gis.models import (
@@ -394,3 +395,10 @@ def test_date_range_chunking_is_one_day_per_request() -> None:
         (date(2026, 8, 21), date(2026, 8, 21)),
         (date(2026, 8, 22), date(2026, 8, 22)),
     ]
+
+
+def test_recent_window_ends_on_previous_reporting_date() -> None:
+    assert recent_window(3, today=date(2026, 8, 29)) == (
+        date(2026, 8, 26),
+        date(2026, 8, 28),
+    )

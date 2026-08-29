@@ -74,7 +74,7 @@ def date_chunks(start_date: date, end_date: date) -> list[tuple[date, date]]:
 def recent_window(recent_days: int, today: date | None = None) -> tuple[date, date]:
     if recent_days < 1:
         raise GSCConfigurationError("recent_days must be positive")
-    current = today or datetime.now(timezone.utc).date()
+    current = today or datetime.now(GSC_REPORTING_TIMEZONE).date()
     end_date = current - timedelta(days=1)
     return end_date - timedelta(days=recent_days - 1), end_date
 
