@@ -9,6 +9,7 @@ description = "VAHomeMath Growth Intelligence System data platform"
 requires-python = ">=3.9"
 dependencies = [
   "alembic>=1.13,<2",
+  "boto3>=1.35,<2",
   "fastapi>=0.115,<1",
   "google-auth>=2.35,<3",
   "psycopg[binary]>=3.1,<4",
@@ -35,6 +36,7 @@ gis-ga4 = "gis.integrations.ga4.cli:main"
 gis-gsc = "gis.integrations.gsc.cli:main"
 gis-seed = "gis.seed:main"
 gis-telemetry = "gis.telemetry.cli:main"
+gis-telemetry-worker = "gis.telemetry.worker:main"
 gis-provenance = "gis.provenance.cli:main"
 gis-serp = "gis.integrations.serp.cli:main"
 gis-experience = "gis.integrations.experience.cli:main"
@@ -58,3 +60,7 @@ ignore = ["E501", "UP045"]
 python_version = "3.9"
 strict = true
 packages = ["gis"]
+
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*"]
+ignore_missing_imports = true

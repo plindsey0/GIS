@@ -44,6 +44,7 @@ sources:
           freshness: {warn_after: {count: 2, period: day}}
       - name: calculator_run
       - name: conversion
+      - name: telemetry_transport_batch
       - name: data_source
       - name: data_source_connection
       - name: data_rights_policy
