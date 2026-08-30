@@ -77,6 +77,7 @@ class TelemetryService:
         *,
         request_id: uuid.UUID | None = None,
         now: datetime | None = None,
+        ingestion_run_id: uuid.UUID | None = None,
     ) -> TelemetryResponse:
         received_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         request_id = request_id or uuid.uuid4()
@@ -115,6 +116,7 @@ class TelemetryService:
                     calculator_run_id=calculator_run.id if calculator_run else None,
                     data_source_connection_id=context.connection.id,
                     rights_policy_id=context.rights_policy_id,
+                    ingestion_run_id=ingestion_run_id,
                     event_id=event_input.event_id,
                     event_name=event_input.event_name,
                     event_version=event_input.event_version,

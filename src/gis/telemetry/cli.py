@@ -21,7 +21,12 @@ from gis.models import (
 
 
 def configure_connection(
-    session: Session, *, tenant_slug: str, site_slug: str, credential_reference: str
+    session: Session,
+    *,
+    tenant_slug: str,
+    site_slug: str,
+    credential_reference: str | None,
+    transport: str = "server_to_server",
 ) -> DataSourceConnection:
     tenant = session.scalar(select(Tenant).where(Tenant.slug == tenant_slug))
     if tenant is None:
@@ -48,7 +53,7 @@ def configure_connection(
         )
         session.add(connection)
     connection.credential_reference = credential_reference
-    connection.configuration_json = {"transport": "server_to_server", "schema_version": 1}
+    connection.configuration_json = {"transport": transport, "schema_version": 1}
     connection.status = ConnectionStatus.ACTIVE
     session.commit()
     return connection
@@ -60,7 +65,10 @@ def parser() -> argparse.ArgumentParser:
     configure = commands.add_parser("configure")
     configure.add_argument("--tenant", required=True)
     configure.add_argument("--site", required=True)
-    configure.add_argument("--credential-reference", required=True)
+    configure.add_argument("--credential-reference")
+    configure.add_argument(
+        "--transport", choices=("server_to_server", "aws_sqs"), default="server_to_server"
+    )
     send = commands.add_parser("send")
     send.add_argument("--url", default="http://127.0.0.1:8000")
     send.add_argument("--write-key", required=True)
@@ -76,14 +84,26 @@ def parser() -> argparse.ArgumentParser:
 def run(arguments: list[str] | None = None) -> int:
     args = parser().parse_args(arguments)
     if args.command == "configure":
+        if args.transport == "server_to_server" and not args.credential_reference:
+            raise ValueError("server_to_server transport requires --credential-reference")
         with session_factory()() as session:
             connection = configure_connection(
                 session,
                 tenant_slug=args.tenant,
                 site_slug=args.site,
                 credential_reference=args.credential_reference,
+                transport=args.transport,
             )
-            print(json.dumps({"connection_id": str(connection.id), "status": "ACTIVE"}))
+            site = session.get(Site, connection.site_id)
+            print(
+                json.dumps(
+                    {
+                        "connection_id": str(connection.id),
+                        "site_public_id": str(site.public_id) if site else None,
+                        "status": "ACTIVE",
+                    }
+                )
+            )
             return 0
     response = requests.post(
         f"{args.url.rstrip('/')}/v1/telemetry/events",

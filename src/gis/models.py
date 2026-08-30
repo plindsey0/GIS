@@ -314,9 +314,13 @@ class Site(Base, TimestampMixin):
         ),
         UniqueConstraint("tenant_id", "slug", name="uq_site_tenant_slug"),
         UniqueConstraint("tenant_id", "id", name="uq_site_tenant_id"),
+        UniqueConstraint("public_id", name="uq_site_public_id"),
         {"schema": SCHEMA},
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    public_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, default=uuid.uuid4
+    )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id", ondelete="CASCADE"), nullable=False
     )
@@ -1117,6 +1121,10 @@ class ProductEvent(Base):
     rights_policy_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
     )
+    ingestion_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.ingestion_run.id", name="fk_event_ingestion_run"),
+    )
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     event_name: Mapped[str] = mapped_column(String(100), nullable=False)
     event_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -1126,6 +1134,48 @@ class ProductEvent(Base):
     page_path: Mapped[Optional[str]] = mapped_column(String(2048))
     event_properties: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     sequence_number: Mapped[Optional[int]] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class TelemetryTransportBatch(Base):
+    """Operational usage/provenance record; transport details never enter event properties."""
+
+    __tablename__ = "telemetry_transport_batch"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"],
+            [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"],
+            name="fk_telemetry_batch_site_tenant",
+        ),
+        CheckConstraint(
+            "events_received >= 0 AND events_accepted >= 0 AND events_rejected >= 0 "
+            "AND duplicates_ignored >= 0 AND payload_bytes >= 0",
+            name="ck_telemetry_batch_counters",
+        ),
+        UniqueConstraint(
+            "transport", "transport_message_id", name="uq_telemetry_transport_message"
+        ),
+        Index("ix_telemetry_batch_site_processed", "site_id", "processed_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    ingestion_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.ingestion_run.id"), nullable=False
+    )
+    transport: Mapped[str] = mapped_column(String(32), nullable=False)
+    transport_message_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    batch_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    events_received: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    events_accepted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    events_rejected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duplicates_ignored: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payload_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
