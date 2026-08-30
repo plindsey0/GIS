@@ -140,6 +140,13 @@ def register_dbt_manifest(session: Session, path: Path) -> dict[str, int]:
         "external_search_observation": "dataforseo",
         "external_keyword_ranking": "dataforseo",
         "external_competitor_observation": "dataforseo",
+        "competitive_content_observation": "direct_http",
+        "competitive_content_document": "direct_http",
+        "competitive_content_heading": "direct_http",
+        "competitive_content_schema_type": "direct_http",
+        "competitive_content_link": "direct_http",
+        "competitive_content_component": "direct_http",
+        "competitive_content_term": "direct_http",
     }
     link_count = 0
     for asset in assets.values():

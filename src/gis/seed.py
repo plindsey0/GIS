@@ -80,6 +80,13 @@ SOURCES = (
         "scrapy", "Scrapy", "Scrapy", SourceType.CRAWLED, AcquisitionMethod.PUBLIC_WEB
     ),
     SourceDefinition(
+        "direct_http",
+        "GIS Direct HTTP",
+        "GIS",
+        SourceType.CRAWLED,
+        AcquisitionMethod.PUBLIC_WEB,
+    ),
+    SourceDefinition(
         "playwright", "Playwright", "Microsoft", SourceType.CRAWLED, AcquisitionMethod.PUBLIC_WEB
     ),
     SourceDefinition(
