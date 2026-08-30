@@ -1157,6 +1157,7 @@ class TelemetryTransportBatch(Base):
         UniqueConstraint(
             "transport", "transport_message_id", name="uq_telemetry_transport_message"
         ),
+        UniqueConstraint("site_id", "batch_id", name="uq_telemetry_site_batch"),
         Index("ix_telemetry_batch_site_processed", "site_id", "processed_at"),
         {"schema": SCHEMA},
     )

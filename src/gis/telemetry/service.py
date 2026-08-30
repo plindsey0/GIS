@@ -77,6 +77,7 @@ class TelemetryService:
         *,
         request_id: uuid.UUID | None = None,
         now: datetime | None = None,
+        commit: bool = True,
         ingestion_run_id: uuid.UUID | None = None,
     ) -> TelemetryResponse:
         received_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -136,7 +137,8 @@ class TelemetryService:
                 )
             except EventValidationError as error:
                 errors.append(EventError(event_id=event_input.event_id, code=error.code))
-        self.session.commit()
+        if commit:
+            self.session.commit()
         return TelemetryResponse(
             request_id=request_id,
             accepted=accepted,

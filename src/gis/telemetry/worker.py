@@ -5,13 +5,12 @@ import json
 import logging
 import signal
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
 import boto3
-from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from gis.db import session_factory
@@ -35,10 +34,18 @@ class QueueClient(Protocol):
 
 
 class TelemetryWorker:
-    def __init__(self, session: Session, queue: QueueClient, queue_url: str) -> None:
+    def __init__(
+        self,
+        session: Session,
+        queue: QueueClient,
+        queue_url: str,
+        *,
+        before_commit: Callable[[], None] | None = None,
+    ) -> None:
         self.session = session
         self.queue = queue
         self.queue_url = queue_url
+        self.before_commit = before_commit
 
     def poll_once(self, *, wait_seconds: int = 20, max_messages: int = 10) -> dict[str, int]:
         response = self.queue.receive_message(
@@ -52,13 +59,9 @@ class TelemetryWorker:
             counters["received"] += 1
             try:
                 result = self.process_message(str(message["MessageId"]), str(message["Body"]))
-                self.queue.delete_message(
-                    QueueUrl=self.queue_url, ReceiptHandle=message["ReceiptHandle"]
-                )
-                counters["processed"] += 1
-                counters["events"] += result["accepted"]
-                counters["duplicates"] += result["duplicates"]
-            except (ValidationError, LookupError, ValueError, IntegrityError, KeyError) as error:
+            except Exception as error:
+                # Invalid, transient, and database failures all remain retryable via SQS/DLQ.
+                # Deliberately do not catch BaseException, SystemExit, or KeyboardInterrupt.
                 self.session.rollback()
                 counters["failed"] += 1
                 LOGGER.warning(
@@ -68,23 +71,45 @@ class TelemetryWorker:
                         "error_type": type(error).__name__,
                     },
                 )
+                continue
+            try:
+                self.queue.delete_message(
+                    QueueUrl=self.queue_url, ReceiptHandle=message["ReceiptHandle"]
+                )
+                counters["processed"] += 1
+                counters["events"] += result["accepted"]
+                counters["duplicates"] += result["duplicates"]
+            except Exception as error:
+                # The database commit already succeeded. A later delivery is resolved by
+                # (site_id, batch_id) and can safely retry deletion without re-ingestion.
+                counters["failed"] += 1
+                LOGGER.warning(
+                    "telemetry_message_delete_failed",
+                    extra={
+                        "message_id": message.get("MessageId"),
+                        "error_type": type(error).__name__,
+                    },
+                )
         return counters
 
     def process_message(self, message_id: str, body: str) -> dict[str, int]:
-        existing = self.session.scalar(
-            select(TelemetryTransportBatch).where(
-                TelemetryTransportBatch.transport == "aws_sqs",
-                TelemetryTransportBatch.transport_message_id == message_id,
-            )
-        )
-        if existing:
-            return {"accepted": 0, "duplicates": existing.events_received}
         envelope = QueueEnvelope.model_validate_json(body)
         site = self.session.scalar(
             select(Site).where(Site.public_id == envelope.batch.site_public_id)
         )
         if site is None:
             raise LookupError("public telemetry site not found")
+        existing = self.session.scalar(
+            select(TelemetryTransportBatch).where(
+                TelemetryTransportBatch.site_id == site.id,
+                TelemetryTransportBatch.batch_id == envelope.batch.batch_id,
+            )
+        )
+        if existing:
+            duplicate_count = existing.events_received
+            # End the read-only transaction before the long-lived worker returns to SQS.
+            self.session.commit()
+            return {"accepted": 0, "duplicates": duplicate_count}
         tenant = self.session.get(Tenant, site.tenant_id)
         if tenant is None:
             raise LookupError("telemetry tenant not found")
@@ -116,39 +141,41 @@ class TelemetryWorker:
             context,
             ingestion_run_id=run.id,
             now=now,
+            commit=False,
         )
         if result.rejected:
-            run.status = IngestionStatus.FAILED
-            run.completed_at = datetime.now(timezone.utc)
-            run.records_inserted = result.accepted
-            run.records_rejected = result.rejected
-            run.error_count = result.rejected
-            run.error_summary = "canonical telemetry validation rejected one or more events"
-            self.session.commit()
             raise ValueError("canonical telemetry validation failed")
         run.status = IngestionStatus.SUCCEEDED
         run.completed_at = datetime.now(timezone.utc)
         run.records_inserted = result.accepted
         run.records_rejected = result.rejected
         run.error_count = result.rejected
-        self.session.add(
-            TelemetryTransportBatch(
-                tenant_id=tenant.id,
-                site_id=site.id,
-                ingestion_run_id=run.id,
-                transport="aws_sqs",
-                transport_message_id=message_id,
-                batch_id=envelope.batch.batch_id,
-                schema_version=envelope.batch.schema_version,
-                events_received=len(envelope.batch.events),
-                events_accepted=result.accepted,
-                events_rejected=result.rejected,
-                duplicates_ignored=result.duplicates,
-                payload_bytes=envelope.payload_bytes,
-                processed_at=run.completed_at,
-            )
+        transport_batch = TelemetryTransportBatch(
+            tenant_id=tenant.id,
+            site_id=site.id,
+            ingestion_run_id=run.id,
+            transport="aws_sqs",
+            transport_message_id=message_id,
+            batch_id=envelope.batch.batch_id,
+            schema_version=envelope.batch.schema_version,
+            events_received=len(envelope.batch.events),
+            events_accepted=result.accepted,
+            events_rejected=result.rejected,
+            duplicates_ignored=result.duplicates,
+            payload_bytes=envelope.payload_bytes,
+            processed_at=run.completed_at,
         )
-        self.session.commit()
+        self.session.add(transport_batch)
+        # Flush stages every canonical and accounting row and makes database uniqueness
+        # the final race-safe authority before the one owning commit.
+        self.session.flush()
+        if self.before_commit is not None:
+            self.before_commit()
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
         return {"accepted": result.accepted, "duplicates": result.duplicates}
 
 

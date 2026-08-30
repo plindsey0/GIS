@@ -58,6 +58,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "transport", "transport_message_id", name="uq_telemetry_transport_message"
         ),
+        sa.UniqueConstraint("site_id", "batch_id", name="uq_telemetry_site_batch"),
         schema="gis_core",
     )
     op.create_index(
