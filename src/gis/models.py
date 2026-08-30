@@ -1547,6 +1547,256 @@ class ExternalCompetitorObservation(Base):
     )
 
 
+class CompetitiveContentObservation(Base):
+    """Immutable, revision-aware retrieval and extraction envelope."""
+
+    __tablename__ = "competitive_content_observation"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"],
+            [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"],
+            name="fk_content_observation_site_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "ingestion_run_id"],
+            [
+                f"{SCHEMA}.ingestion_run.tenant_id",
+                f"{SCHEMA}.ingestion_run.site_id",
+                f"{SCHEMA}.ingestion_run.id",
+            ],
+            name="fk_content_observation_run_scope",
+        ),
+        CheckConstraint(
+            "effective_end IS NULL OR effective_end >= effective_start",
+            name="ck_content_observation_effective_window",
+        ),
+        Index("ix_content_observation_site_date", "tenant_id", "site_id", "observed_at"),
+        Index("ix_content_observation_url", "normalized_url"),
+        Index("ix_content_observation_domain", "domain"),
+        Index("ix_content_observation_hash", "content_hash"),
+        Index(
+            "uq_content_observation_current",
+            "observation_key",
+            unique=True,
+            postgresql_where=text("effective_end IS NULL"),
+        ),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organization.id"), nullable=False
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id"), nullable=False
+    )
+    ingestion_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    rights_policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    requested_url: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_url: Mapped[str] = mapped_column(Text, nullable=False)
+    resolved_url: Mapped[Optional[str]] = mapped_column(Text)
+    canonical_url: Mapped[Optional[str]] = mapped_column(Text)
+    domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    page_path: Mapped[str] = mapped_column(Text, nullable=False)
+    ownership_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    tracked_query_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tracked_query.id")
+    )
+    serp_result_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{RAW_SCHEMA}.serp_result.id")
+    )
+    external_search_observation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{RAW_SCHEMA}.external_search_observation.id")
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retrieved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    retrieval_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    http_status: Mapped[Optional[int]] = mapped_column(Integer)
+    render_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    content_type: Mapped[Optional[str]] = mapped_column(String(255))
+    content_language: Mapped[Optional[str]] = mapped_column(String(32))
+    response_bytes: Mapped[Optional[int]] = mapped_column(Integer)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    observation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_request_id: Mapped[Optional[str]] = mapped_column(String(255))
+    provider_reported_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    estimated_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    cost_currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    raw_payload_reference: Mapped[Optional[str]] = mapped_column(Text)
+    raw_retained: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    retrieval_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    effective_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CompetitiveContentDocument(Base):
+    __tablename__ = "competitive_content_document"
+    __table_args__ = ({"schema": RAW_SCHEMA},)
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.competitive_content_observation.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    title: Mapped[Optional[str]] = mapped_column(Text)
+    meta_description: Mapped[Optional[str]] = mapped_column(Text)
+    robots_directives: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    normalized_word_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    paragraph_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    h1_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    h2_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    h3_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    ordered_list_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    unordered_list_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    table_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    image_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    video_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    form_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    iframe_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    internal_link_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    external_link_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    publication_dates: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    modified_dates: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    metric_semantics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class CompetitiveContentHeading(Base):
+    __tablename__ = "competitive_content_heading"
+    __table_args__ = (UniqueConstraint("observation_id", "ordinal"), {"schema": RAW_SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.competitive_content_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    level: Mapped[int] = mapped_column(Integer, nullable=False)
+    heading_text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_text: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class CompetitiveContentSchemaType(Base):
+    __tablename__ = "competitive_content_schema_type"
+    __table_args__ = (UniqueConstraint("observation_id", "schema_type"), {"schema": RAW_SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.competitive_content_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    schema_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class CompetitiveContentLink(Base):
+    __tablename__ = "competitive_content_link"
+    __table_args__ = (Index("ix_content_link_domain", "target_domain"), {"schema": RAW_SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.competitive_content_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_url: Mapped[str] = mapped_column(Text, nullable=False)
+    target_domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    link_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    anchor_text: Mapped[Optional[str]] = mapped_column(Text)
+    rel_values: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+
+class CompetitiveContentComponent(Base):
+    __tablename__ = "competitive_content_component"
+    __table_args__ = (UniqueConstraint("observation_id", "component_type"), {"schema": RAW_SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.competitive_content_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    component_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    detection_method: Mapped[str] = mapped_column(String(100), nullable=False)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    metric_semantics: Mapped[str] = mapped_column(String(32), nullable=False)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class CompetitiveContentTerm(Base):
+    __tablename__ = "competitive_content_term"
+    __table_args__ = (
+        UniqueConstraint("observation_id", "normalized_term"),
+        Index("ix_content_term_normalized", "normalized_term"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.competitive_content_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    term: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_term: Mapped[str] = mapped_column(Text, nullable=False)
+    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    extraction_method: Mapped[str] = mapped_column(String(100), nullable=False)
+    metric_semantics: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class CompetitiveContentCohort(Base, TimestampMixin):
+    __tablename__ = "competitive_content_cohort"
+    __table_args__ = (
+        Index("ix_content_cohort_site_created", "tenant_id", "site_id", "created_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organization.id"), nullable=False
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.site.id"), nullable=False
+    )
+    tracked_query_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tracked_query.id")
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    definition: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    frozen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CompetitiveContentCohortMember(Base):
+    __tablename__ = "competitive_content_cohort_member"
+    __table_args__ = (UniqueConstraint("cohort_id", "observation_id"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cohort_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.competitive_content_cohort.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.competitive_content_observation.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    rank_position: Mapped[Optional[int]] = mapped_column(Integer)
+    membership_source: Mapped[str] = mapped_column(String(50), nullable=False)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ExperienceObservation(Base):
     __tablename__ = "experience_observation"
     __table_args__ = (

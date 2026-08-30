@@ -88,6 +88,31 @@ models:
     description: Page-keyed GA4 and exact first-party behavior without forced reconciliation.
   - name: int_external_keyword_history
     description: Revision-safe external ranking history with first/last observation dates and deterministic movement labels.
+  - name: stg_competitive_content_observations
+    description: Current revision of provider-neutral competitive content retrieval envelopes.
+    columns:
+      - name: observation_id
+        tests: [not_null, unique]
+  - name: stg_competitive_content_pages
+    description: Successfully retrieved pages with deterministic document characteristics.
+  - name: stg_competitive_content_components
+    description: Measured and heuristic components with explicit semantic classification.
+  - name: stg_competitive_content_topics
+    description: GIS-derived deterministic heading n-grams; lexical evidence, not semantic identity.
+  - name: int_competitive_cohort_evidence
+    description: Frozen cohort membership joined to its historical page evidence.
+  - name: mart_competitive_content_page_daily
+    description: Page observation facts by retrieval date.
+  - name: mart_competitive_content_query_daily
+    description: Descriptive content characteristics by tracked query and date.
+  - name: mart_competitive_content_domain_daily
+    description: Descriptive content characteristics by observed domain and date.
+  - name: mart_competitive_content_component_daily
+    description: Component prevalence with measured/heuristic semantics preserved.
+  - name: mart_competitive_content_topic_daily
+    description: Deterministic lexical topic prevalence by tracked query and date.
+  - name: mart_competitive_content_gap
+    description: Observed cohort topic differences; never an opportunity or causal claim.
   - name: mart_site_daily
     description: Executive site/day performance preserving each evidence system separately.
     columns: &daily_keys

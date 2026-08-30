@@ -33,6 +33,14 @@ sources:
         config: {loaded_at_field: created_at}
       - name: external_competitor_observation
         config: {loaded_at_field: created_at}
+      - name: competitive_content_observation
+        config: {loaded_at_field: created_at}
+      - name: competitive_content_document
+      - name: competitive_content_heading
+      - name: competitive_content_schema_type
+      - name: competitive_content_link
+      - name: competitive_content_component
+      - name: competitive_content_term
   - name: gis_core
     schema: gis_core
     description: Canonical GIS entities owned by application migrations.
@@ -55,3 +63,5 @@ sources:
       - name: data_source_connection
       - name: data_rights_policy
       - name: tracked_query
+      - name: competitive_content_cohort
+      - name: competitive_content_cohort_member
