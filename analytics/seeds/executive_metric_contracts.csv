@@ -1,0 +1,12 @@
+metric_key,display_name,source_model,grain,unit,semantic_class,time_semantics,comparison_semantics,caveat
+organic_clicks,Organic clicks,mart_executive_site_daily,tenant-site-date,count,MEASURED,event date,equivalent prior period,GSC coverage required
+organic_impressions,Organic impressions,mart_executive_site_daily,tenant-site-date,count,MEASURED,event date,equivalent prior period,GSC coverage required
+organic_ctr,Organic click-through rate,mart_executive_site_daily,tenant-site-date,ratio,DERIVED,event date,equivalent prior period,Clicks divided by impressions
+search_position,Average search position,mart_executive_site_daily,tenant-site-date,position,PROVIDER_REPORTED,event date,equivalent prior period,Impression-weighted and lower is better
+sessions,GA4 sessions,mart_executive_site_daily,tenant-site-date,count,PROVIDER_REPORTED,property date,equivalent prior period,GA4 coverage required
+conversions,First-party conversions,mart_executive_site_daily,tenant-site-date,count,MEASURED,event date,equivalent prior period,No causal attribution implied
+conversion_rate,Session conversion rate,mart_executive_site_daily,tenant-site-date,ratio,DERIVED,event date,equivalent prior period,First-party conversions divided by first-party sessions
+tracked_query_top_10_rate,Tracked-query top-10 presence,mart_executive_search_position,tenant-site-date,ratio,DERIVED,observation date,equivalent prior period,Observed tracked queries only
+material_event_count,Material competitive events,mart_executive_recent_events,tenant-site-event,count,DERIVED,event time,equivalent prior period,Materiality is separate from confidence
+monthly_provider_cost,Observed monthly provider cost,mart_executive_cost,tenant-site-month-currency,currency,OBSERVED,ledger occurrence date,prior calendar month,Null means unknown and zero means observed zero
+pipeline_freshness_rate,Current pipeline freshness,mart_executive_operations,tenant-site-current-state,ratio,DERIVED,current state,no period comparison,Disabled pipelines excluded

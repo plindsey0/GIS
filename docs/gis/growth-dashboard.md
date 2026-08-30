@@ -1,4 +1,9 @@
-# Growth Dashboard — P0
+# Growth Dashboard — P0 (Epic 6 implementation record)
+
+Epic 20.5 supersedes this primary information architecture with
+[GIS Executive Intelligence](executive-intelligence-dashboard.md). The API provisioning mechanism
+originated here remains in use, but the current manifest now provisions an executive collection
+hierarchy and supporting dashboards rather than this single provider-oriented page.
 
 ## Purpose and architecture
 

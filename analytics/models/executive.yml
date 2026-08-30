@@ -1,0 +1,133 @@
+version: 2
+
+seeds:
+  - name: intelligence_capability_registry
+    description: Versioned structure for implemented and future GIS intelligence capabilities; operational state is never stored here.
+    columns:
+      - name: capability_key
+        data_tests: [not_null, unique]
+      - name: lifecycle_stage
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [OBSERVE, UNDERSTAND, DETECT, RECOMMEND, INTERVENE, MEASURE, LEARN]
+  - name: executive_metric_contracts
+    description: Machine-readable definitions and caveats for executive KPIs.
+    columns:
+      - name: metric_key
+        data_tests: [not_null, unique]
+
+models:
+  - name: int_capability_evidence
+    description: Evidence availability reduced to one row per tenant, site, and capability.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [tenant_id, site_id, capability_key]
+    columns:
+      - name: tenant_id
+        data_tests: [not_null]
+      - name: site_id
+        data_tests: [not_null]
+      - name: capability_key
+        data_tests: [not_null]
+  - name: mart_executive_site_daily
+    description: Daily owned-site metrics with explicit source availability flags and no cross-domain fanout.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [tenant_id, site_id, date]
+    columns:
+      - name: tenant_id
+        data_tests: [not_null]
+      - name: site_id
+        data_tests: [not_null]
+      - name: date
+        data_tests: [not_null]
+  - name: mart_executive_search_position
+    description: Daily observed tracked-query position; it does not represent complete market coverage.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [tenant_id, site_id, date, device]
+    columns:
+      - name: coverage_semantics
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [OBSERVED_TRACKED_QUERY_SET]
+  - name: mart_executive_period_comparison
+    description: Current trailing 28 complete dates versus the immediately preceding equivalent 28 dates.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [tenant_id, site_id]
+    columns:
+      - name: comparison_semantics
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [EQUIVALENT_COMPLETE_28_DAY_PERIODS]
+  - name: mart_executive_recent_events
+    description: Competitive events with materiality and confidence preserved as separate facts.
+    columns:
+      - name: competitive_event_id
+        data_tests: [not_null, unique]
+      - name: interpretation
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [MATERIALITY_AND_CONFIDENCE_ARE_DISTINCT]
+  - name: mart_executive_competitive_position
+    description: Long-form cross-domain observed facts; primary metrics retain their domain-specific semantics.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [tenant_id, site_id, date, observed_domain, evidence_domain, source_system]
+    columns:
+      - name: semantics
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [OBSERVED_COMPARISON, PROVIDER_SPECIFIC_METRICS_NOT_INTERCHANGEABLE]
+  - name: mart_intelligence_coverage
+    description: Deterministic capability status at tenant-site-capability grain.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [tenant_id, site_id, capability_key]
+    columns:
+      - name: capability_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [NOT_IMPLEMENTED, BLOCKED_BY_RIGHTS, FAILED, DEGRADED, STALE, DISABLED, IMPLEMENTED_NO_DATA, CONFIGURED, OPERATIONAL]
+      - name: data_availability
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [NO_DATA, AVAILABLE]
+  - name: mart_executive_operations
+    description: Current system-health summary; disabled schedules remain distinct from failures.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [tenant_id, site_id]
+  - name: mart_executive_cost
+    description: Monthly observed provider cost; a missing ledger is UNKNOWN rather than zero.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [tenant_id, site_id, month, currency]
+    columns:
+      - name: cost_semantics
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [OBSERVED, UNKNOWN]
+  - name: mart_executive_governance
+    description: Product-governance policy coverage; it does not claim legal approval.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [tenant_id, site_id]
