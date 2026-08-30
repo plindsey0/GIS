@@ -87,6 +87,13 @@ SOURCES = (
         AcquisitionMethod.PUBLIC_WEB,
     ),
     SourceDefinition(
+        "direct_technology",
+        "GIS Direct Technology Detection",
+        "GIS",
+        SourceType.CRAWLED,
+        AcquisitionMethod.PUBLIC_WEB,
+    ),
+    SourceDefinition(
         "playwright", "Playwright", "Microsoft", SourceType.CRAWLED, AcquisitionMethod.PUBLIC_WEB
     ),
     SourceDefinition(

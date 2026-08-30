@@ -41,6 +41,12 @@ sources:
       - name: competitive_content_link
       - name: competitive_content_component
       - name: competitive_content_term
+      - name: technology_observation
+        config: {loaded_at_field: created_at}
+      - name: technology_detection
+        config: {loaded_at_field: created_at}
+      - name: technology_evidence
+        config: {loaded_at_field: created_at}
   - name: gis_core
     schema: gis_core
     description: Canonical GIS entities owned by application migrations.
@@ -65,3 +71,5 @@ sources:
       - name: tracked_query
       - name: competitive_content_cohort
       - name: competitive_content_cohort_member
+      - name: technology
+      - name: technology_alias
