@@ -156,7 +156,7 @@ def run(arguments: list[str] | None = None) -> int:
                     "configuration_valid": True,
                 }
                 if evaluation.status.value != "ALLOWED":
-                    print(json.dumps(output))
+                    print(json.dumps(output, default=str))
                     return 3
             elif args.command == "collect":
                 if args.url and args.external_search_observation_id:
@@ -275,7 +275,7 @@ def run(arguments: list[str] | None = None) -> int:
                     "competitor_median_word_count": ordered_words[len(ordered_words) // 2],
                     "semantics": "OBSERVED_DESCRIPTIVE_NOT_CAUSAL",
                 }
-        print(json.dumps(output))
+        print(json.dumps(output, default=str))
         return 0
     except (ValueError, PermissionError, json.JSONDecodeError) as error:
         print(json.dumps({"error": str(error)}))
