@@ -47,6 +47,14 @@ sources:
         config: {loaded_at_field: created_at}
       - name: technology_evidence
         config: {loaded_at_field: created_at}
+      - name: authority_observation
+        config: {loaded_at_field: created_at}
+      - name: authority_metric_observation
+        config: {loaded_at_field: created_at}
+      - name: backlink_observation
+        config: {loaded_at_field: created_at}
+      - name: referring_domain_observation
+        config: {loaded_at_field: created_at}
   - name: gis_core
     schema: gis_core
     description: Canonical GIS entities owned by application migrations.
@@ -95,3 +103,4 @@ sources:
       - name: competitive_event_relationship
         config: {loaded_at_field: created_at}
       - name: competitive_event_policy
+      - name: authority_metric_definition

@@ -20,6 +20,7 @@ EXECUTABLES = {
     "external_search": "gis-search-intelligence",
     "competitive_content": "gis-content-intelligence",
     "competitive_technology": "gis-technology-intelligence",
+    "authority_intelligence": "gis-authority-intelligence",
 }
 
 

@@ -58,6 +58,14 @@ VAHOMEMATH_CADENCE = (
         "direct_technology",
         "COLLECTOR_CLI",
     ),
+    Cadence(
+        "authority_intelligence",
+        "Authority intelligence weekly",
+        "0 11 * * 5",
+        "dataforseo",
+        "COLLECTOR_CLI",
+        True,
+    ),
     Cadence("experience", "PageSpeed and CrUX weekly", "0 11 * * 4", "pagespeed", "COLLECTOR_CLI"),
     Cadence(
         "competitive_events", "Competitive events daily", "0 12 * * *", None, "COMPETITIVE_EVENTS"
@@ -135,6 +143,7 @@ def seed_vahomemath_cadence(session: Session) -> list[ScheduleDefinition]:
         ("external_search", "competitive_events"),
         ("competitive_content", "competitive_events"),
         ("competitive_technology", "competitive_events"),
+        ("authority_intelligence", "competitive_events"),
     ):
         existing = session.scalar(
             select(PipelineDependency).where(
