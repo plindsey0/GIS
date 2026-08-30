@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -7,7 +8,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from gis.competitive_events.cli import json_default
+from gis.competitive_events.cli import json_default, orm_json
 from gis.competitive_events.policy import decimal_thresholds
 from gis.competitive_events.rules import (
     experience_change,
@@ -20,6 +21,7 @@ from gis.models import (
     CompetitiveEvent,
     CompetitiveEventDomain,
     CompetitiveEventEvidence,
+    CompetitiveEventRelationship,
     CompetitiveEventStatus,
     CompetitiveEventType,
     CompetitiveSubjectType,
@@ -34,6 +36,19 @@ from gis.models import (
 from gis.seed import seed
 
 NOW = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+
+
+def test_orm_json_uses_mapped_attribute_for_physical_metadata_column() -> None:
+    event = CompetitiveEvent(metadata_json={"kind": "event"})
+    evidence = CompetitiveEventEvidence(metadata_json={"kind": "evidence"})
+
+    event_payload = orm_json(event)
+    evidence_payload = orm_json(evidence)
+
+    assert event_payload["metadata"] == {"kind": "event"}
+    assert evidence_payload["metadata"] == {"kind": "evidence"}
+    assert "metadata_json" not in event_payload
+    assert "metadata_json" not in evidence_payload
 
 
 def test_rank_semantics_thresholds_and_suppression() -> None:
@@ -187,3 +202,92 @@ def test_bounded_reprocessing_and_json(session: Session) -> None:
         service.synthesize(
             tenant.id, site.id, [CompetitiveEventDomain.SERP], NOW - timedelta(days=400), NOW
         )
+
+
+def test_reprocess_creates_one_deterministic_correction_and_preserves_history(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tenant, site = scope(session)
+    service = SynthesisService(session)
+    original_candidate = replace(candidate(), metadata={"revision": "old"})
+    corrected_candidate = replace(candidate(), metadata={"revision": "corrected"})
+    original = service.record(tenant.id, site.id, original_candidate)
+    session.flush()
+
+    monkeypatch.setattr(
+        "gis.competitive_events.adapters.candidates_for",
+        lambda *args, **kwargs: [original_candidate],
+    )
+    unchanged = service.reprocess(
+        tenant.id,
+        site.id,
+        [CompetitiveEventDomain.CONTENT],
+        NOW - timedelta(days=1),
+        NOW + timedelta(days=1),
+    )
+    assert unchanged["events_created"] == 0
+
+    monkeypatch.setattr(
+        "gis.competitive_events.adapters.candidates_for",
+        lambda *args, **kwargs: [corrected_candidate],
+    )
+    first = service.reprocess(
+        tenant.id,
+        site.id,
+        [CompetitiveEventDomain.CONTENT],
+        NOW - timedelta(days=1),
+        NOW + timedelta(days=1),
+    )
+    second = service.reprocess(
+        tenant.id,
+        site.id,
+        [CompetitiveEventDomain.CONTENT],
+        NOW - timedelta(days=1),
+        NOW + timedelta(days=1),
+    )
+
+    events = session.scalars(
+        select(CompetitiveEvent).order_by(CompetitiveEvent.created_at, CompetitiveEvent.id)
+    ).all()
+    assert len(events) == 2
+    replacement = next(item for item in events if item.id != original.id)
+    assert original.status == CompetitiveEventStatus.SUPERSEDED
+    assert original.replaced_by_event_id == replacement.id
+    assert replacement.status == CompetitiveEventStatus.ACTIVE
+    assert replacement.metadata_json["revision"] == "corrected"
+    assert first["events_created"] == 1
+    assert first["events_superseded"] == 1
+    assert second["events_created"] == 0
+    assert second["events_superseded"] == 0
+    assert session.scalar(select(func.count()).select_from(CompetitiveEventEvidence)) == 2
+    relationship = session.scalar(
+        select(CompetitiveEventRelationship).where(
+            CompetitiveEventRelationship.from_event_id == replacement.id,
+            CompetitiveEventRelationship.to_event_id == original.id,
+            CompetitiveEventRelationship.relationship_type == EventRelationshipType.SUPERSEDES,
+        )
+    )
+    assert relationship is not None
+
+
+def test_reprocess_retracts_event_not_reproduced(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tenant, site = scope(session)
+    service = SynthesisService(session)
+    event = service.record(tenant.id, site.id, candidate())
+    monkeypatch.setattr(
+        "gis.competitive_events.adapters.candidates_for", lambda *args, **kwargs: []
+    )
+
+    result = service.reprocess(
+        tenant.id,
+        site.id,
+        [CompetitiveEventDomain.CONTENT],
+        NOW - timedelta(days=1),
+        NOW + timedelta(days=1),
+    )
+
+    assert result["events_retracted"] == 1
+    assert event.status == CompetitiveEventStatus.RETRACTED
+    assert event.correction_reason == "not reproduced by bounded deterministic reprocessing"

@@ -6,6 +6,7 @@ import json
 import uuid
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import select
 
@@ -62,10 +63,16 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
-def event_json(event: CompetitiveEvent) -> dict[str, object]:
+def orm_json(row: Any) -> dict[str, object]:
+    mapper = row.__mapper__
     return {
-        column.name: getattr(event, column.key) for column in CompetitiveEvent.__table__.columns
+        column.name: getattr(row, mapper.get_property_by_column(column).key)
+        for column in row.__table__.columns
     }
+
+
+def event_json(event: CompetitiveEvent) -> dict[str, object]:
+    return orm_json(event)
 
 
 def run(arguments: list[str] | None = None) -> int:
@@ -91,7 +98,9 @@ def run(arguments: list[str] | None = None) -> int:
             if args.command in {"synthesize", "reprocess"}:
                 start = datetime.combine(args.start_date, time.min, timezone.utc)
                 end = datetime.combine(args.end_date, time.max, timezone.utc)
-                result = SynthesisService(session).synthesize(
+                service = SynthesisService(session)
+                operation = service.reprocess if args.command == "reprocess" else service.synthesize
+                result = operation(
                     tenant.id,
                     site.id,
                     [CompetitiveEventDomain(item) for item in args.domains],
@@ -126,15 +135,7 @@ def run(arguments: list[str] | None = None) -> int:
                     CompetitiveEventEvidence.competitive_event_id == event.id
                 )
             ).all()
-            emit(
-                [
-                    {
-                        column.name: getattr(row, column.key)
-                        for column in CompetitiveEventEvidence.__table__.columns
-                    }
-                    for row in evidence_rows
-                ]
-            )
+            emit([orm_json(row) for row in evidence_rows])
         else:
             relationship_rows = session.scalars(
                 select(CompetitiveEventRelationship).where(
@@ -142,15 +143,7 @@ def run(arguments: list[str] | None = None) -> int:
                     | (CompetitiveEventRelationship.to_event_id == event.id)
                 )
             ).all()
-            emit(
-                [
-                    {
-                        column.name: getattr(row, column.key)
-                        for column in CompetitiveEventRelationship.__table__.columns
-                    }
-                    for row in relationship_rows
-                ]
-            )
+            emit([orm_json(row) for row in relationship_rows])
     return 0
 
 

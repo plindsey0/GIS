@@ -32,6 +32,13 @@ from gis.models import (
 
 METHOD_VERSION = "1.0.0"
 PUBLIC_NAMESPACE = uuid.UUID("f77a7661-a5c4-4e37-bbac-056504b7ee96")
+REPROCESS_METADATA_KEY = "reprocessing"
+
+
+def _decimal_text(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    return format(value.normalize(), "f")
 
 
 @dataclass(frozen=True)
@@ -117,6 +124,19 @@ class SynthesisService:
     def record(
         self, tenant_id: uuid.UUID, site_id: uuid.UUID, candidate: EventCandidate
     ) -> CompetitiveEvent:
+        return self._record(
+            tenant_id, site_id, candidate, event_identity(tenant_id, site_id, candidate)
+        )
+
+    def _record(
+        self,
+        tenant_id: uuid.UUID,
+        site_id: uuid.UUID,
+        candidate: EventCandidate,
+        identity: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> CompetitiveEvent:
         site = self.session.scalar(
             select(Site).where(Site.id == site_id, Site.tenant_id == tenant_id)
         )
@@ -124,7 +144,6 @@ class SynthesisService:
             raise ValueError("site does not belong to tenant")
         if not candidate.evidence:
             raise ValueError("competitive events require evidence")
-        identity = event_identity(tenant_id, site_id, candidate)
         existing = self.session.scalar(
             select(CompetitiveEvent).where(
                 CompetitiveEvent.tenant_id == tenant_id,
@@ -189,7 +208,7 @@ class SynthesisService:
             effective_rights_status=effective_rights,
             identity_hash=identity,
             provider_cost=Decimal("0"),
-            metadata_json=candidate.metadata,
+            metadata_json=metadata if metadata is not None else candidate.metadata,
         )
         self.session.add(event)
         self.session.flush()
@@ -214,6 +233,286 @@ class SynthesisService:
             )
         self.session.flush()
         return event
+
+    def reprocess(
+        self,
+        tenant_id: uuid.UUID,
+        site_id: uuid.UUID,
+        domains: Iterable[CompetitiveEventDomain],
+        start: datetime,
+        end: datetime,
+    ) -> dict[str, Any]:
+        """Recompute a bounded window while retaining correction history."""
+        policy = self._validate_window(tenant_id, site_id, start, end)
+        from gis.competitive_events.adapters import ADAPTERS, candidates_for
+
+        selected = list(domains)
+        recomputed_domains = [item for item in selected if item in ADAPTERS]
+        candidates = candidates_for(
+            self.session,
+            tenant_id,
+            site_id,
+            recomputed_domains,
+            start,
+            end,
+            policy.thresholds_json,
+        )
+        history = self.session.scalars(
+            select(CompetitiveEvent)
+            .where(
+                CompetitiveEvent.tenant_id == tenant_id,
+                CompetitiveEvent.site_id == site_id,
+                CompetitiveEvent.event_domain.in_(recomputed_domains),
+                CompetitiveEvent.event_time >= start,
+                CompetitiveEvent.event_time <= end,
+            )
+            .order_by(CompetitiveEvent.created_at, CompetitiveEvent.id)
+        ).all()
+        history_by_lineage: dict[str, list[CompetitiveEvent]] = {}
+        for item in history:
+            history_by_lineage.setdefault(self._lineage_identity(item), []).append(item)
+        active_by_lineage = {
+            lineage: next(
+                (item for item in reversed(items) if item.status == CompetitiveEventStatus.ACTIVE),
+                None,
+            )
+            for lineage, items in history_by_lineage.items()
+        }
+        seen: set[str] = set()
+        created = 0
+        superseded = 0
+
+        for candidate in candidates:
+            lineage = event_identity(tenant_id, site_id, candidate)
+            seen.add(lineage)
+            current = active_by_lineage.get(lineage)
+            fingerprint = self._candidate_fingerprint(candidate)
+            if current is not None and self._event_fingerprint(current) == fingerprint:
+                continue
+
+            predecessor = current
+            if predecessor is None and history_by_lineage.get(lineage):
+                predecessor = history_by_lineage[lineage][-1]
+
+            if predecessor is None:
+                replacement = self.record(tenant_id, site_id, candidate)
+                created += 1
+                continue
+
+            correction_identity = hashlib.sha256(
+                json.dumps(
+                    [
+                        "competitive-event-correction-v1",
+                        lineage,
+                        predecessor.identity_hash,
+                        fingerprint,
+                    ],
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            correction_metadata = dict(candidate.metadata)
+            correction_metadata[REPROCESS_METADATA_KEY] = {
+                "lineage_identity": lineage,
+                "outcome_fingerprint": fingerprint,
+            }
+            replacement = self._record(
+                tenant_id,
+                site_id,
+                candidate,
+                correction_identity,
+                metadata=correction_metadata,
+            )
+            if current is None:
+                self.relate(
+                    tenant_id,
+                    site_id,
+                    replacement.id,
+                    predecessor.id,
+                    EventRelationshipType.SUPERSEDES,
+                )
+                created += 1
+                continue
+            if replacement.id != current.id:
+                self.supersede(current, replacement, "bounded deterministic reprocessing")
+                superseded += 1
+                created += 1
+
+        retracted = 0
+        for lineage, event in active_by_lineage.items():
+            if event is not None and lineage not in seen:
+                self.retract(event, "not reproduced by bounded deterministic reprocessing")
+                retracted += 1
+
+        return {
+            "tenant_id": str(tenant_id),
+            "site_id": str(site_id),
+            "domains": [item.value for item in selected],
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "events_created": created,
+            "events_superseded": superseded,
+            "events_retracted": retracted,
+            "provider_cost": "0",
+        }
+
+    def _lineage_identity(self, event: CompetitiveEvent) -> str:
+        reprocessing = (event.metadata_json or {}).get(REPROCESS_METADATA_KEY, {})
+        return str(reprocessing.get("lineage_identity", event.identity_hash))
+
+    def _candidate_fingerprint(
+        self,
+        candidate: EventCandidate,
+        *,
+        persisted_rights: tuple[uuid.UUID | None, str | None, Any] | None = None,
+    ) -> str:
+        rights_ids = {item.rights_policy_id for item in candidate.evidence if item.rights_policy_id}
+        rights_versions = {
+            item.rights_policy_version for item in candidate.evidence if item.rights_policy_version
+        }
+        if persisted_rights is None:
+            from gis.provenance.service import aggregate_evaluations, evaluate_policy_use
+
+            evaluations = [
+                evaluate_policy_use(
+                    self.session,
+                    self.session.get(DataRightsPolicy, item.rights_policy_id)
+                    if item.rights_policy_id
+                    else None,
+                    PermittedUse.DERIVATIVE_CREATION,
+                )
+                for item in candidate.evidence
+            ]
+            rights_status = aggregate_evaluations(
+                PermittedUse.DERIVATIVE_CREATION, evaluations
+            ).status
+            rights_policy_id = next(iter(rights_ids)) if len(rights_ids) == 1 else None
+            rights_policy_version = (
+                next(iter(rights_versions)) if len(rights_versions) == 1 else None
+            )
+        else:
+            rights_policy_id, rights_policy_version, rights_status = persisted_rights
+        payload = {
+            "subject": [
+                candidate.subject_type.value,
+                str(candidate.subject_id) if candidate.subject_id else None,
+                candidate.subject_key,
+                candidate.subject_domain,
+                candidate.subject_url,
+            ],
+            "event": [
+                candidate.event_domain.value,
+                candidate.event_type.value,
+                candidate.event_subtype,
+                candidate.event_time.isoformat(),
+                candidate.semantic_class.value,
+                _decimal_text(candidate.confidence),
+                _decimal_text(candidate.magnitude),
+                candidate.magnitude_unit,
+                candidate.synthesis_method,
+                METHOD_VERSION,
+            ],
+            "rights": [
+                str(rights_policy_id) if rights_policy_id else None,
+                rights_policy_version,
+                rights_status.value,
+            ],
+            "evidence": sorted(
+                (
+                    {
+                        "source_asset": item.source_asset,
+                        "source_record_id": item.source_record_id,
+                        "observation_time": item.observation_time.isoformat(),
+                        "role": item.role.value,
+                        "semantic_class": item.semantic_class.value,
+                        "confidence": _decimal_text(item.confidence),
+                        "data_source_connection_id": str(item.data_source_connection_id)
+                        if item.data_source_connection_id
+                        else None,
+                        "ingestion_run_id": str(item.ingestion_run_id)
+                        if item.ingestion_run_id
+                        else None,
+                        "rights_policy_id": str(item.rights_policy_id)
+                        if item.rights_policy_id
+                        else None,
+                        "rights_policy_version": item.rights_policy_version,
+                        "metadata": item.metadata,
+                    }
+                    for item in candidate.evidence
+                ),
+                key=lambda item: json.dumps(item, sort_keys=True, default=str),
+            ),
+            "metadata": candidate.metadata,
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ).hexdigest()
+
+    def _event_fingerprint(self, event: CompetitiveEvent) -> str:
+        reprocessing = (event.metadata_json or {}).get(REPROCESS_METADATA_KEY, {})
+        stored = reprocessing.get("outcome_fingerprint")
+        if stored:
+            return str(stored)
+        evidence = self.session.scalars(
+            select(CompetitiveEventEvidence).where(
+                CompetitiveEventEvidence.competitive_event_id == event.id
+            )
+        ).all()
+        candidate = EventCandidate(
+            subject_type=event.subject_type,
+            subject_id=event.subject_id,
+            subject_key=event.subject_key,
+            subject_domain=event.subject_domain,
+            subject_url=event.subject_url,
+            event_domain=event.event_domain,
+            event_type=event.event_type,
+            event_subtype=event.event_subtype,
+            event_time=event.event_time,
+            semantic_class=event.semantic_class,
+            confidence=event.confidence,
+            magnitude=event.magnitude,
+            magnitude_unit=event.magnitude_unit,
+            synthesis_method=event.synthesis_method,
+            metadata={
+                key: value
+                for key, value in (event.metadata_json or {}).items()
+                if key != REPROCESS_METADATA_KEY
+            },
+            evidence=tuple(
+                EvidenceRef(
+                    source_asset=item.source_asset,
+                    source_record_id=item.source_record_id,
+                    observation_time=item.observation_time,
+                    role=item.evidence_role,
+                    semantic_class=item.semantic_class,
+                    confidence=item.confidence,
+                    data_source_connection_id=item.data_source_connection_id,
+                    ingestion_run_id=item.ingestion_run_id,
+                    rights_policy_id=item.rights_policy_id,
+                    rights_policy_version=item.rights_policy_version,
+                    metadata=item.metadata_json,
+                )
+                for item in evidence
+            ),
+        )
+        return self._candidate_fingerprint(
+            candidate,
+            persisted_rights=(
+                event.rights_policy_id,
+                event.rights_policy_version,
+                event.effective_rights_status,
+            ),
+        )
+
+    def _validate_window(
+        self, tenant_id: uuid.UUID, site_id: uuid.UUID, start: datetime, end: datetime
+    ) -> CompetitiveEventPolicy:
+        if start >= end:
+            raise ValueError("start must precede end")
+        policy = self.ensure_policy(tenant_id, site_id)
+        maximum = int(policy.thresholds_json.get("maximum_window_days", 366))
+        if (end - start).days > maximum:
+            raise ValueError(f"synthesis window cannot exceed {maximum} days")
+        return policy
 
     def relate(
         self,
@@ -282,12 +581,7 @@ class SynthesisService:
         start: datetime,
         end: datetime,
     ) -> dict[str, Any]:
-        if start >= end:
-            raise ValueError("start must precede end")
-        policy = self.ensure_policy(tenant_id, site_id)
-        maximum = int(policy.thresholds_json.get("maximum_window_days", 366))
-        if (end - start).days > maximum:
-            raise ValueError(f"synthesis window cannot exceed {maximum} days")
+        policy = self._validate_window(tenant_id, site_id, start, end)
         from gis.competitive_events.adapters import candidates_for
 
         selected = list(domains)

@@ -25,6 +25,8 @@ Identity is SHA-256 over tenant, site, normalized subject, event type, event bou
 
 Events are append-oriented. State is `ACTIVE`, `SUPERSEDED`, or `RETRACTED`; correction reason and replacement are retained. Relationships (`SUPPORTS`, `PRECEDES`, `SUPERSEDES`, `SAME_CHANGE`, `CONSTITUENT_OF`) form a tenant/site-safe event graph. Self-links and duplicates are rejected.
 
+Bounded reprocessing recomputes events only from stored evidence. An unchanged outcome is a no-op. If event output, provenance, or effective rights changes, a deterministic correction identity creates one replacement and supersedes the prior active event; repeating the same correction reuses that replacement. Active events in the window that are no longer reproduced are retracted, never deleted. Reprocessing makes no provider calls and has zero provider cost.
+
 ## Versioned materiality
 
 The default `gis-default-materiality` policy is version `1.0.0` and stored in `competitive_event_policy`. Defaults are inspectable JSON:
