@@ -1403,6 +1403,150 @@ class SerpResult(Base):
     )
 
 
+class ExternalSearchObservation(Base):
+    __tablename__ = "external_search_observation"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "ingestion_run_id"],
+            [
+                f"{SCHEMA}.ingestion_run.tenant_id",
+                f"{SCHEMA}.ingestion_run.site_id",
+                f"{SCHEMA}.ingestion_run.id",
+            ],
+        ),
+        CheckConstraint(
+            "effective_end IS NULL OR effective_end >= effective_start",
+            name="ck_external_search_effective_window",
+        ),
+        Index("ix_external_search_target_date", "target_domain", "observed_date"),
+        Index("ix_external_search_run", "ingestion_run_id"),
+        Index(
+            "uq_external_search_current",
+            "observation_key",
+            unique=True,
+            postgresql_where=text("effective_end IS NULL"),
+        ),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    ingestion_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id"), nullable=False
+    )
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    rights_policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    observation_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    country_code: Mapped[Optional[str]] = mapped_column(String(2))
+    location_code: Mapped[Optional[int]] = mapped_column(Integer)
+    location_name: Mapped[Optional[str]] = mapped_column(String(255))
+    language_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    device: Mapped[Optional[str]] = mapped_column(String(32))
+    observed_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    observation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_task_id: Mapped[Optional[str]] = mapped_column(String(255))
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    items_returned: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    provider_reported_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    estimated_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    cost_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    effective_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ExternalKeywordRanking(Base):
+    __tablename__ = "external_keyword_ranking"
+    __table_args__ = (
+        UniqueConstraint(
+            "external_search_observation_id",
+            "normalized_keyword",
+            "ranking_domain",
+            "normalized_url",
+            name="uq_external_keyword_observation_rank",
+        ),
+        CheckConstraint("position > 0", name="ck_external_keyword_position"),
+        Index("ix_external_keyword_normalized", "normalized_keyword"),
+        Index("ix_external_keyword_domain", "ranking_domain"),
+        Index("ix_external_keyword_url", "normalized_url"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    external_search_observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.external_search_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    keyword: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_keyword: Mapped[str] = mapped_column(Text, nullable=False)
+    ranking_domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    ranking_url: Mapped[Optional[str]] = mapped_column(Text)
+    normalized_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    prior_position: Mapped[Optional[int]] = mapped_column(Integer)
+    ranking_type: Mapped[str] = mapped_column(String(100), nullable=False, default="organic")
+    search_volume: Mapped[Optional[int]] = mapped_column(Integer)
+    cpc: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    paid_competition: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    competition_index: Mapped[Optional[int]] = mapped_column(Integer)
+    search_intent: Mapped[Optional[str]] = mapped_column(String(100))
+    keyword_difficulty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    estimated_traffic: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    estimated_traffic_share: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    monthly_searches: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    metric_semantics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ExternalCompetitorObservation(Base):
+    __tablename__ = "external_competitor_observation"
+    __table_args__ = (
+        UniqueConstraint(
+            "external_search_observation_id",
+            "competitor_domain",
+            name="uq_external_competitor_observation_domain",
+        ),
+        Index("ix_external_competitor_domain", "competitor_domain"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    external_search_observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.external_search_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    competitor_domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    target_keyword_count: Mapped[Optional[int]] = mapped_column(Integer)
+    competitor_keyword_count: Mapped[Optional[int]] = mapped_column(Integer)
+    shared_keyword_count: Mapped[Optional[int]] = mapped_column(Integer)
+    provider_relevance: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    provider_estimated_traffic: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    provider_visibility: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    gis_competitive_strength: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    metric_semantics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ExperienceObservation(Base):
     __tablename__ = "experience_observation"
     __table_args__ = (

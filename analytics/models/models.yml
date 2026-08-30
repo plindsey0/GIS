@@ -1,6 +1,33 @@
 version: 2
 
 models:
+  - name: stg_external_search_observations
+    description: Current provider-neutral external-search collection headers with costs and rights.
+    columns:
+      - name: observation_id
+        tests: [not_null, unique]
+  - name: stg_external_keyword_rankings
+    description: Current external keyword and organic ranking evidence.
+    columns:
+      - name: ranking_id
+        tests: [not_null, unique]
+  - name: stg_external_competitors
+    description: Current provider and GIS-derived competitor evidence with explicit semantics.
+    columns:
+      - name: competitor_observation_id
+        tests: [not_null, unique]
+  - name: mart_external_keyword_daily
+    description: External keyword/ranking evidence; traffic and volume remain provider estimates.
+  - name: mart_external_domain_daily
+    description: Domain keyword footprint and deterministic volume-weighted visibility.
+  - name: mart_external_page_daily
+    description: Ranked-page footprint and provider-estimated traffic.
+  - name: mart_external_competitor_daily
+    description: Provider competitor observations and separately labeled GIS-derived strength.
+  - name: mart_keyword_gap
+    description: External rankings compared with same-day GSC and controlled SERP evidence; not opportunity scoring.
+  - name: mart_search_market_visibility
+    description: Domain/date keyword footprint and deterministic ranking distribution.
   - name: stg_gsc_search_observations
     description: Current GSC observations with provider grain and provenance preserved.
     columns:
@@ -59,6 +86,8 @@ models:
     description: GSC page totals preferring page grain, with query/page fallback by site-date.
   - name: int_behavior_page_daily
     description: Page-keyed GA4 and exact first-party behavior without forced reconciliation.
+  - name: int_external_keyword_history
+    description: Revision-safe external ranking history with first/last observation dates and deterministic movement labels.
   - name: mart_site_daily
     description: Executive site/day performance preserving each evidence system separately.
     columns: &daily_keys

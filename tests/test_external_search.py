@@ -1,0 +1,257 @@
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Any
+
+import pytest
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from gis.integrations.external_search.cli import estimate_cost
+from gis.integrations.external_search.dataforseo import (
+    COMPETITORS_URL,
+    RANKED_KEYWORDS_URL,
+    DataForSEOExternalSearchProvider,
+    ExternalSearchProviderError,
+    ProviderCollection,
+    SearchRequest,
+    normalize_domain,
+)
+from gis.integrations.external_search.service import (
+    ExternalSearchCollector,
+    normalize_keyword,
+    normalize_ranking_url,
+)
+from gis.integrations.serp.cli import configure_connection
+from gis.models import (
+    DataRightsPolicy,
+    ExternalCompetitorObservation,
+    ExternalKeywordRanking,
+    ExternalSearchObservation,
+    IngestionStatus,
+    Organization,
+    RightsDecision,
+    Site,
+    Tenant,
+)
+from gis.seed import seed
+
+OBSERVED = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+
+
+class FakeProvider:
+    def __init__(self, items: list[dict[str, Any]], *, task_id: str = "fixture-task") -> None:
+        self.items = items
+        self.task_id = task_id
+
+    def collect(self, request: SearchRequest) -> ProviderCollection:
+        return ProviderCollection(
+            task_id=self.task_id,
+            observed_at=OBSERVED,
+            cost=Decimal("0.01224"),
+            items=self.items,
+            metadata={"fixture": True, "type": request.observation_type},
+        )
+
+
+class FakeResponse:
+    status_code = 200
+
+    def __init__(self, payload: object) -> None:
+        self.payload = payload
+
+    def json(self) -> object:
+        return self.payload
+
+
+class FakeHTTPSession:
+    def __init__(self, payload: object) -> None:
+        self.payload = payload
+        self.calls: list[dict[str, Any]] = []
+
+    def post(self, url: str, **kwargs: Any) -> FakeResponse:
+        self.calls.append({"url": url, **kwargs})
+        return FakeResponse(self.payload)
+
+
+def ranking_item(position: int = 8) -> dict[str, Any]:
+    return {
+        "keyword_data": {
+            "keyword": "VA Loan Calculator",
+            "keyword_info": {
+                "search_volume": 12100,
+                "cpc": 2.75,
+                "competition": 0.42,
+                "competition_index": 42,
+                "monthly_searches": [{"year": 2026, "month": 7, "search_volume": 11900}],
+            },
+            "keyword_properties": {"keyword_difficulty": 37},
+            "search_intent_info": {"main_intent": "commercial"},
+        },
+        "ranked_serp_element": {
+            "serp_item": {
+                "type": "organic",
+                "rank_absolute": position,
+                "previous_rank_absolute": 10,
+                "url": "https://www.vahomemath.com/calculator/?utm=x",
+                "etv": 220.5,
+            }
+        },
+    }
+
+
+def competitor_item() -> dict[str, Any]:
+    return {
+        "domain": "example.com",
+        "intersections": 25,
+        "target_keywords": 100,
+        "relevance": 0.75,
+        "avg_position": 14.2,
+        "full_domain_metrics": {"organic": {"count": 200, "etv": 900.4, "pos_1": 3}},
+    }
+
+
+def setup_scope(session: Session) -> tuple[Site, uuid.UUID]:
+    seed(session, hostname="vahomemath.test")
+    site = session.scalar(select(Site).where(Site.slug == "vahomemath"))
+    assert site
+    connection = configure_connection(
+        session, "vahomemath", "vahomemath", "env:DATAFORSEO_CREDENTIAL_JSON"
+    )
+    return site, connection.id
+
+
+def request(kind: str = "ranked_keywords", domain: str = "vahomemath.test") -> SearchRequest:
+    return SearchRequest(
+        observation_type=kind,
+        target_domain=domain,
+        country_code="US",
+        location_code=2840,
+        language_code="en",
+        device="desktop",
+        limit=2,
+    )
+
+
+def test_normalization_and_cost_estimate() -> None:
+    assert normalize_keyword(" VA  Loan\tCalculator ") == "va loan calculator"
+    assert normalize_domain("https://WWW.Example.com/path") == "example.com"
+    assert normalize_ranking_url("https://WWW.Example.com/a?q=1#x") == (
+        "https://www.example.com/a",
+        "example.com",
+    )
+    assert estimate_cost(2) == Decimal("0.01224000")
+    with pytest.raises(ValueError):
+        normalize_domain("localhost")
+
+
+def test_dataforseo_request_mapping_and_response() -> None:
+    payload = {
+        "status_code": 20000,
+        "tasks": [
+            {
+                "id": "task-1",
+                "status_code": 20000,
+                "cost": 0.01224,
+                "result": [{"datetime": "2026-08-30T12:00:00Z", "items": [ranking_item()]}],
+            }
+        ],
+    }
+    transport = FakeHTTPSession(payload)
+    provider = DataForSEOExternalSearchProvider(
+        "login",
+        "secret",
+        session=transport,  # type: ignore[arg-type]
+    )
+    collection = provider.collect(request())
+    assert transport.calls[0]["url"] == RANKED_KEYWORDS_URL
+    body = transport.calls[0]["json"][0]
+    assert body["target"] == "vahomemath.test" and body["location_code"] == 2840
+    assert collection.task_id == "task-1" and collection.cost == Decimal("0.01224")
+    assert "secret" not in str(transport.calls[0]["json"])
+
+
+def test_dataforseo_competitor_request_and_malformed_response() -> None:
+    transport = FakeHTTPSession({"status_code": 20000, "tasks": []})
+    provider = DataForSEOExternalSearchProvider(
+        "login",
+        "secret",
+        session=transport,  # type: ignore[arg-type]
+    )
+    with pytest.raises(ExternalSearchProviderError):
+        provider.collect(request("competitors"))
+    assert transport.calls[0]["url"] == COMPETITORS_URL
+    assert transport.calls[0]["json"][0]["exclude_top_domains"] is True
+
+
+def test_rankings_history_idempotency_cost_rights_and_isolation(session: Session) -> None:
+    site, connection_id = setup_scope(session)
+    first = ExternalSearchCollector(session, FakeProvider([ranking_item()])).sync(
+        connection_id, site.id, request(), estimated_cost=Decimal("0.01224")
+    )
+    replay = ExternalSearchCollector(
+        session, FakeProvider([ranking_item()], task_id="task-2")
+    ).sync(connection_id, site.id, request(), estimated_cost=Decimal("0.01224"))
+    changed = ExternalSearchCollector(
+        session, FakeProvider([ranking_item(6)], task_id="task-3")
+    ).sync(connection_id, site.id, request(), estimated_cost=Decimal("0.01224"))
+    assert all(run.status is IngestionStatus.SUCCEEDED for run in (first, replay, changed))
+    assert replay.records_inserted == 0 and replay.source_metadata["idempotent_replay"] is True
+    observations = session.scalars(
+        select(ExternalSearchObservation).order_by(ExternalSearchObservation.created_at)
+    ).all()
+    assert len(observations) == 2 and observations[0].effective_end is not None
+    assert observations[1].effective_end is None
+    ranking = session.scalar(
+        select(ExternalKeywordRanking).where(
+            ExternalKeywordRanking.external_search_observation_id == observations[1].id
+        )
+    )
+    assert ranking and ranking.position == 6 and ranking.search_volume == 12100
+    assert ranking.metric_semantics["estimated_traffic"] == "PROVIDER_ESTIMATED"
+    assert observations[1].provider_reported_cost == Decimal("0.01224000")
+    policy = session.get(DataRightsPolicy, observations[1].rights_policy_id)
+    assert policy and policy.commercial_use_allowed is RightsDecision.UNKNOWN
+
+    tenant = session.scalar(select(Tenant).where(Tenant.slug == "vahomemath"))
+    organization = session.scalar(select(Organization))
+    assert tenant and organization
+    other = Site(
+        tenant_id=tenant.id,
+        organization_id=organization.id,
+        name="Other",
+        slug="other",
+        canonical_url="https://other.test",
+        timezone="UTC",
+    )
+    session.add(other)
+    session.commit()
+    with pytest.raises(ValueError):
+        ExternalSearchCollector(session, FakeProvider([ranking_item()])).sync(
+            connection_id, other.id, request()
+        )
+
+
+def test_competitor_metrics_keep_provider_and_gis_semantics_separate(session: Session) -> None:
+    site, connection_id = setup_scope(session)
+    run = ExternalSearchCollector(session, FakeProvider([competitor_item()])).sync(
+        connection_id, site.id, request("competitors")
+    )
+    assert run.status is IngestionStatus.SUCCEEDED
+    row = session.scalar(select(ExternalCompetitorObservation))
+    assert row and row.competitor_domain == "example.com"
+    assert row.shared_keyword_count == 25
+    assert row.gis_competitive_strength == Decimal("0.12500000")
+    assert row.metric_semantics["relevance"] == "PROVIDER_DERIVED"
+    assert row.metric_semantics["gis_competitive_strength"].startswith("GIS_DERIVED")
+
+
+def test_malformed_canonical_item_persists_failed_run(session: Session) -> None:
+    site, connection_id = setup_scope(session)
+    run = ExternalSearchCollector(session, FakeProvider([{"keyword_data": {}}])).sync(
+        connection_id, site.id, request()
+    )
+    assert run.status is IngestionStatus.FAILED and run.error_count == 1
+    assert session.scalar(select(func.count()).select_from(ExternalSearchObservation)) == 0

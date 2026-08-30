@@ -137,6 +137,9 @@ def register_dbt_manifest(session: Session, path: Path) -> dict[str, int]:
         "serp_observation": "dataforseo",
         "serp_result": "dataforseo",
         "experience_observation": "pagespeed",
+        "external_search_observation": "dataforseo",
+        "external_keyword_ranking": "dataforseo",
+        "external_competitor_observation": "dataforseo",
     }
     link_count = 0
     for asset in assets.values():
