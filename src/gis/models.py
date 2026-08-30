@@ -261,6 +261,83 @@ class QualityFlag(str, enum.Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class CompetitiveEventDomain(str, enum.Enum):
+    SERP = "SERP"
+    SEARCH_VISIBILITY = "SEARCH_VISIBILITY"
+    CONTENT = "CONTENT"
+    TECHNOLOGY = "TECHNOLOGY"
+    EXPERIENCE = "EXPERIENCE"
+    DOMAIN = "DOMAIN"
+    CROSS_SOURCE = "CROSS_SOURCE"
+
+
+class CompetitiveSubjectType(str, enum.Enum):
+    DOMAIN = "DOMAIN"
+    PAGE = "PAGE"
+    QUERY = "QUERY"
+    TECHNOLOGY = "TECHNOLOGY"
+    SERP_FEATURE = "SERP_FEATURE"
+    CONTENT_COMPONENT = "CONTENT_COMPONENT"
+    SITE = "SITE"
+    COMPETITOR = "COMPETITOR"
+
+
+class CompetitiveEventType(str, enum.Enum):
+    SERP_RANK_ENTERED = "SERP_RANK_ENTERED"
+    SERP_RANK_EXITED = "SERP_RANK_EXITED"
+    SERP_RANK_INCREASED = "SERP_RANK_INCREASED"
+    SERP_RANK_DECREASED = "SERP_RANK_DECREASED"
+    SERP_FEATURE_APPEARED = "SERP_FEATURE_APPEARED"
+    SERP_FEATURE_DISAPPEARED = "SERP_FEATURE_DISAPPEARED"
+    KEYWORD_GAINED = "KEYWORD_GAINED"
+    KEYWORD_LOST = "KEYWORD_LOST"
+    SEARCH_VISIBILITY_INCREASED = "SEARCH_VISIBILITY_INCREASED"
+    SEARCH_VISIBILITY_DECREASED = "SEARCH_VISIBILITY_DECREASED"
+    PAGE_FIRST_OBSERVED = "PAGE_FIRST_OBSERVED"
+    PAGE_CONTENT_CHANGED = "PAGE_CONTENT_CHANGED"
+    TITLE_CHANGED = "TITLE_CHANGED"
+    META_DESCRIPTION_CHANGED = "META_DESCRIPTION_CHANGED"
+    HEADING_STRUCTURE_CHANGED = "HEADING_STRUCTURE_CHANGED"
+    CONTENT_COMPONENT_APPEARED = "CONTENT_COMPONENT_APPEARED"
+    SCHEMA_TYPE_APPEARED = "SCHEMA_TYPE_APPEARED"
+    WORD_COUNT_INCREASED = "WORD_COUNT_INCREASED"
+    WORD_COUNT_DECREASED = "WORD_COUNT_DECREASED"
+    TECHNOLOGY_FIRST_DETECTED = "TECHNOLOGY_FIRST_DETECTED"
+    TECHNOLOGY_VERSION_CHANGED = "TECHNOLOGY_VERSION_CHANGED"
+    TECHNOLOGY_ADDED = "TECHNOLOGY_ADDED"
+    EXPERIENCE_METRIC_IMPROVED = "EXPERIENCE_METRIC_IMPROVED"
+    EXPERIENCE_METRIC_DEGRADED = "EXPERIENCE_METRIC_DEGRADED"
+    COMPETITOR_PAGE_EMERGENCE = "COMPETITOR_PAGE_EMERGENCE"
+
+
+class EventSemanticClass(str, enum.Enum):
+    MEASURED = "MEASURED"
+    PROVIDER_REPORTED = "PROVIDER_REPORTED"
+    GIS_DERIVED = "GIS_DERIVED"
+    HEURISTIC = "HEURISTIC"
+
+
+class CompetitiveEventStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    SUPERSEDED = "SUPERSEDED"
+    RETRACTED = "RETRACTED"
+
+
+class EvidenceRole(str, enum.Enum):
+    BEFORE = "BEFORE"
+    AFTER = "AFTER"
+    PRIMARY = "PRIMARY"
+    SUPPORTING = "SUPPORTING"
+
+
+class EventRelationshipType(str, enum.Enum):
+    SUPPORTS = "SUPPORTS"
+    PRECEDES = "PRECEDES"
+    SUPERSEDES = "SUPERSEDES"
+    SAME_CHANGE = "SAME_CHANGE"
+    CONSTITUENT_OF = "CONSTITUENT_OF"
+
+
 def enum_type(enum_class: type[enum.Enum], name: str) -> Enum:
     return Enum(enum_class, name=name, schema=SCHEMA, native_enum=True)
 
@@ -2085,6 +2162,214 @@ class ExperienceObservation(Base):
     needs_improvement_proportion: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 8))
     poor_proportion: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 8))
     provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CompetitiveEventPolicy(Base, TimestampMixin):
+    __tablename__ = "competitive_event_policy"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "site_id",
+            "name",
+            "policy_version",
+            name="uq_competitive_event_policy_version",
+        ),
+        Index("ix_competitive_event_policy_scope", "tenant_id", "site_id", "active"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.site.id")
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    thresholds_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class CompetitiveEvent(Base):
+    __tablename__ = "competitive_event"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        CheckConstraint("confidence BETWEEN 0 AND 1", name="ck_competitive_event_confidence"),
+        CheckConstraint("provider_cost = 0", name="ck_competitive_event_zero_provider_cost"),
+        UniqueConstraint(
+            "tenant_id", "site_id", "identity_hash", name="uq_competitive_event_identity"
+        ),
+        UniqueConstraint("tenant_id", "site_id", "id", name="uq_competitive_event_scope_id"),
+        Index("ix_competitive_event_timeline", "tenant_id", "site_id", "event_time"),
+        Index("ix_competitive_event_type", "tenant_id", "site_id", "event_domain", "event_type"),
+        Index("ix_competitive_event_subject", "tenant_id", "site_id", "subject_key"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    public_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, unique=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organization.id")
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    subject_type: Mapped[CompetitiveSubjectType] = mapped_column(
+        enum_type(CompetitiveSubjectType, "competitive_subject_type"), nullable=False
+    )
+    subject_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    subject_key: Mapped[str] = mapped_column(Text, nullable=False)
+    subject_domain: Mapped[Optional[str]] = mapped_column(String(253))
+    subject_url: Mapped[Optional[str]] = mapped_column(Text)
+    event_domain: Mapped[CompetitiveEventDomain] = mapped_column(
+        enum_type(CompetitiveEventDomain, "competitive_event_domain"), nullable=False
+    )
+    event_type: Mapped[CompetitiveEventType] = mapped_column(
+        enum_type(CompetitiveEventType, "competitive_event_type"), nullable=False
+    )
+    event_subtype: Mapped[Optional[str]] = mapped_column(String(100))
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_start_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    effective_end_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    magnitude: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 6))
+    magnitude_unit: Mapped[Optional[str]] = mapped_column(String(32))
+    status: Mapped[CompetitiveEventStatus] = mapped_column(
+        enum_type(CompetitiveEventStatus, "competitive_event_status"),
+        nullable=False,
+        default=CompetitiveEventStatus.ACTIVE,
+    )
+    synthesis_method: Mapped[str] = mapped_column(String(100), nullable=False)
+    synthesis_method_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.competitive_event_policy.id"), nullable=False
+    )
+    policy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    rights_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id")
+    )
+    rights_policy_version: Mapped[Optional[str]] = mapped_column(String(100))
+    effective_rights_status: Mapped[RightsStatus] = mapped_column(
+        enum_type(RightsStatus, "rights_status"), nullable=False
+    )
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    correction_reason: Mapped[Optional[str]] = mapped_column(Text)
+    replaced_by_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.competitive_event.id")
+    )
+    provider_cost: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, default=Decimal("0")
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CompetitiveEventEvidence(Base):
+    __tablename__ = "competitive_event_evidence"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "competitive_event_id"],
+            [
+                f"{SCHEMA}.competitive_event.tenant_id",
+                f"{SCHEMA}.competitive_event.site_id",
+                f"{SCHEMA}.competitive_event.id",
+            ],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "competitive_event_id",
+            "source_asset",
+            "source_record_id",
+            "evidence_role",
+            name="uq_competitive_event_evidence",
+        ),
+        Index("ix_competitive_event_evidence_source", "source_asset", "source_record_id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    competitive_event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_asset: Mapped[str] = mapped_column(String(150), nullable=False)
+    source_record_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    observation_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    evidence_role: Mapped[EvidenceRole] = mapped_column(
+        enum_type(EvidenceRole, "competitive_evidence_role"), nullable=False
+    )
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    data_source_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id")
+    )
+    ingestion_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.ingestion_run.id")
+    )
+    rights_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id")
+    )
+    rights_policy_version: Mapped[Optional[str]] = mapped_column(String(100))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CompetitiveEventRelationship(Base):
+    __tablename__ = "competitive_event_relationship"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "from_event_id"],
+            [
+                f"{SCHEMA}.competitive_event.tenant_id",
+                f"{SCHEMA}.competitive_event.site_id",
+                f"{SCHEMA}.competitive_event.id",
+            ],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "to_event_id"],
+            [
+                f"{SCHEMA}.competitive_event.tenant_id",
+                f"{SCHEMA}.competitive_event.site_id",
+                f"{SCHEMA}.competitive_event.id",
+            ],
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "from_event_id <> to_event_id", name="ck_competitive_event_relationship_not_self"
+        ),
+        UniqueConstraint(
+            "from_event_id",
+            "to_event_id",
+            "relationship_type",
+            name="uq_competitive_event_relationship",
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    from_event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    to_event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    relationship_type: Mapped[EventRelationshipType] = mapped_column(
+        enum_type(EventRelationshipType, "competitive_event_relationship_type"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

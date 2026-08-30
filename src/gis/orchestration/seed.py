@@ -59,6 +59,9 @@ VAHOMEMATH_CADENCE = (
         "COLLECTOR_CLI",
     ),
     Cadence("experience", "PageSpeed and CrUX weekly", "0 11 * * 4", "pagespeed", "COLLECTOR_CLI"),
+    Cadence(
+        "competitive_events", "Competitive events daily", "0 12 * * *", None, "COMPETITIVE_EVENTS"
+    ),
 )
 
 
@@ -128,6 +131,10 @@ def seed_vahomemath_cadence(session: Session) -> list[ScheduleDefinition]:
         ("ga4", "dbt_core"),
         ("serp", "competitive_content"),
         ("competitive_content", "competitive_technology"),
+        ("serp", "competitive_events"),
+        ("external_search", "competitive_events"),
+        ("competitive_content", "competitive_events"),
+        ("competitive_technology", "competitive_events"),
     ):
         existing = session.scalar(
             select(PipelineDependency).where(

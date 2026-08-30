@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -89,5 +89,29 @@ def collector_cli_handler(session: Session, run: OrchestrationRun) -> PipelineRe
     )
 
 
+def competitive_events_handler(session: Session, run: OrchestrationRun) -> PipelineResult:
+    from gis.competitive_events.service import SynthesisService
+    from gis.models import CompetitiveEventDomain
+
+    if not run.site_id:
+        raise ValueError("competitive event synthesis requires a site")
+    now = datetime.now().astimezone()
+    start_date = run.backfill_start or now.date()
+    end_date = run.backfill_end or now.date()
+    domains = run.configuration_json.get("domains", [item.value for item in CompetitiveEventDomain])
+    SynthesisService(session).synthesize(
+        run.tenant_id,
+        run.site_id,
+        [CompetitiveEventDomain(item) for item in domains],
+        datetime.combine(start_date, datetime.min.time(), timezone.utc),
+        datetime.combine(end_date, datetime.max.time(), timezone.utc),
+    )
+    return PipelineResult(actual_cost=Decimal("0"))
+
+
 def default_handlers() -> dict[str, PipelineHandler]:
-    return {"DBT": dbt_handler, "COLLECTOR_CLI": collector_cli_handler}
+    return {
+        "DBT": dbt_handler,
+        "COLLECTOR_CLI": collector_cli_handler,
+        "COMPETITIVE_EVENTS": competitive_events_handler,
+    }
