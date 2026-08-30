@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from gis.db import session_factory
 from gis.models import (
+    AcquisitionMethod,
     DataRightsPolicy,
     DataSource,
     Domain,
@@ -28,15 +29,32 @@ class SourceDefinition:
     name: str
     provider: str
     source_type: SourceType
+    acquisition_method: AcquisitionMethod = AcquisitionMethod.UNKNOWN
 
 
 SOURCES = (
     SourceDefinition(
-        "google_search_console", "Google Search Console", "Google", SourceType.CUSTOMER_CONNECTED
+        "google_search_console",
+        "Google Search Console",
+        "Google",
+        SourceType.CUSTOMER_CONNECTED,
+        AcquisitionMethod.AUTHENTICATED_API,
     ),
-    SourceDefinition("ga4", "Google Analytics 4", "Google", SourceType.CUSTOMER_CONNECTED),
-    SourceDefinition("first_party", "First-party Data", "VAHomeMath", SourceType.FIRST_PARTY),
-    SourceDefinition("git", "Git", "Git", SourceType.FIRST_PARTY),
+    SourceDefinition(
+        "ga4",
+        "Google Analytics 4",
+        "Google",
+        SourceType.CUSTOMER_CONNECTED,
+        AcquisitionMethod.AUTHENTICATED_API,
+    ),
+    SourceDefinition(
+        "first_party",
+        "First-party Data",
+        "VAHomeMath",
+        SourceType.FIRST_PARTY,
+        AcquisitionMethod.FIRST_PARTY,
+    ),
+    SourceDefinition("git", "Git", "Git", SourceType.FIRST_PARTY, AcquisitionMethod.FIRST_PARTY),
     SourceDefinition("va", "U.S. Department of Veterans Affairs", "VA", SourceType.PUBLIC),
     SourceDefinition("census", "U.S. Census Bureau", "Census", SourceType.PUBLIC),
     SourceDefinition("fhfa", "Federal Housing Finance Agency", "FHFA", SourceType.PUBLIC),
@@ -46,9 +64,15 @@ SOURCES = (
     SourceDefinition("ahrefs", "Ahrefs", "Ahrefs", SourceType.COMMERCIAL),
     SourceDefinition("semrush", "Semrush", "Semrush", SourceType.COMMERCIAL),
     SourceDefinition("builtwith", "BuiltWith", "BuiltWith", SourceType.COMMERCIAL),
-    SourceDefinition("scrapy", "Scrapy", "Scrapy", SourceType.CRAWLED),
-    SourceDefinition("playwright", "Playwright", "Microsoft", SourceType.CRAWLED),
-    SourceDefinition("manual", "Manual Entry", "GIS", SourceType.MANUAL),
+    SourceDefinition(
+        "scrapy", "Scrapy", "Scrapy", SourceType.CRAWLED, AcquisitionMethod.PUBLIC_WEB
+    ),
+    SourceDefinition(
+        "playwright", "Playwright", "Microsoft", SourceType.CRAWLED, AcquisitionMethod.PUBLIC_WEB
+    ),
+    SourceDefinition(
+        "manual", "Manual Entry", "GIS", SourceType.MANUAL, AcquisitionMethod.MANUAL_IMPORT
+    ),
 )
 
 
@@ -77,9 +101,12 @@ def seed(session: Session, hostname: str = "vahomemath.com") -> None:
                     name=definition.name,
                     provider=definition.provider,
                     source_type=definition.source_type,
+                    acquisition_method=definition.acquisition_method,
                     default_rights_policy_id=unknown_policy.id,
                 )
             )
+        else:
+            source.acquisition_method = definition.acquisition_method
 
     tenant = session.scalar(select(Tenant).where(Tenant.slug == TENANT_SLUG))
     if tenant is None:

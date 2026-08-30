@@ -147,6 +147,10 @@ def test_successful_ingestion_creates_run_and_paginated_observations(session: Se
     )
     assert run.status is IngestionStatus.SUCCEEDED
     assert (run.records_received, run.records_inserted, run.records_rejected) == (2, 2, 0)
+    assert run.rights_policy_id is not None
+    assert run.acquisition_method.value == "AUTHENTICATED_API"
+    assert run.collector_name == "gis.integrations.gsc"
+    assert run.requested_start_at is not None and run.requested_end_at is not None
     assert len(transport.calls) == 3
     assert session.scalar(select(func.count()).select_from(GSCSearchObservation)) == 2
 

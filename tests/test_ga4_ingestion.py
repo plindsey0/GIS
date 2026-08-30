@@ -111,6 +111,10 @@ def test_all_fixed_reports_ingest_and_retain_rights_provenance(session: Session)
     )
     assert run.status is IngestionStatus.SUCCEEDED
     assert (run.records_received, run.records_inserted, run.records_rejected) == (3, 3, 0)
+    assert run.rights_policy_id is not None
+    assert run.acquisition_method.value == "AUTHENTICATED_API"
+    assert run.collector_name == "gis.integrations.ga4"
+    assert run.requested_start_at is not None and run.requested_end_at is not None
     for model in (
         GA4LandingPageObservation,
         GA4AcquisitionObservation,
