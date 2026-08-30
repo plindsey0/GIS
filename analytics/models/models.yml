@@ -113,6 +113,35 @@ models:
     description: Deterministic lexical topic prevalence by tracked query and date.
   - name: mart_competitive_content_gap
     description: Observed cohort topic differences; never an opportunity or causal claim.
+  - name: stg_technology_observations
+    description: Current provider-neutral technology collection revisions.
+    columns:
+      - name: observation_id
+        tests: [not_null, unique]
+  - name: stg_technology_detections
+    description: Canonical technologies with scope, version, confidence, and measured/provider/heuristic semantics.
+  - name: stg_technology_evidence
+    description: Versioned signature or provider evidence supporting each detection.
+  - name: int_technology_history
+    description: Comparable PRESENT detections sequenced without treating missing evidence as removal.
+  - name: int_technology_cohort_evidence
+    description: Frozen Epic 17 cohort domains joined to technology evidence observed by cohort freeze time.
+  - name: int_technology_cooccurrence
+    description: Exact within-observation technology pairs; descriptive and non-causal.
+  - name: mart_technology_domain_daily
+    description: Technologies observed by domain and day.
+  - name: mart_technology_site_daily
+    description: Site-level observed technology and category counts.
+  - name: mart_technology_category_daily
+    description: Observed technology category footprint by domain and day.
+  - name: mart_technology_cohort_daily
+    description: Frozen-cohort technology prevalence with exact denominators.
+  - name: mart_technology_competitor_daily
+    description: Descriptive competitor domain technology footprints.
+  - name: mart_technology_change_daily
+    description: Deterministic ADDED and VERSION_CHANGED evidence; never infers REMOVED from non-detection.
+  - name: mart_technology_gap
+    description: Owned-versus-competitor observed differences, not recommendations or causal findings.
   - name: mart_site_daily
     description: Executive site/day performance preserving each evidence system separately.
     columns: &daily_keys

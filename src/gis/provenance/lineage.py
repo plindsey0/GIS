@@ -147,6 +147,9 @@ def register_dbt_manifest(session: Session, path: Path) -> dict[str, int]:
         "competitive_content_link": "direct_http",
         "competitive_content_component": "direct_http",
         "competitive_content_term": "direct_http",
+        "technology_observation": "direct_technology",
+        "technology_detection": "direct_technology",
+        "technology_evidence": "direct_technology",
     }
     link_count = 0
     for asset in assets.values():

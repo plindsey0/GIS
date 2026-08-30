@@ -116,7 +116,18 @@ class DirectHTTPRetriever:
                 headers={
                     key: value
                     for key, value in response.headers.items()
-                    if key.lower() in {"last-modified", "content-language"}
+                    if key.lower()
+                    in {
+                        "last-modified",
+                        "content-language",
+                        "server",
+                        "via",
+                        "x-powered-by",
+                        "x-vercel-id",
+                        "cf-ray",
+                        "cf-cache-status",
+                        "set-cookie",
+                    }
                 },
             )
         raise RetrievalError("redirect limit exceeded")

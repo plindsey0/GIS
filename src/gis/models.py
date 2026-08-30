@@ -1797,6 +1797,184 @@ class CompetitiveContentCohortMember(Base):
     )
 
 
+class Technology(Base, TimestampMixin):
+    __tablename__ = "technology"
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_technology_slug"),
+        Index("ix_technology_category", "category"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    vendor: Mapped[Optional[str]] = mapped_column(String(255))
+    product_family: Mapped[Optional[str]] = mapped_column(String(255))
+    category: Mapped[str] = mapped_column(String(100), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+
+
+class TechnologyAlias(Base, TimestampMixin):
+    __tablename__ = "technology_alias"
+    __table_args__ = (
+        UniqueConstraint("source_key", "normalized_alias", name="uq_technology_alias_source"),
+        Index("ix_technology_alias_normalized", "normalized_alias"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    technology_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.technology.id"), nullable=False
+    )
+    source_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    alias: Mapped[str] = mapped_column(String(255), nullable=False)
+    normalized_alias: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_identifier: Mapped[Optional[str]] = mapped_column(String(255))
+
+
+class TechnologyObservation(Base):
+    __tablename__ = "technology_observation"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"],
+            [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"],
+            name="fk_technology_observation_site_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "ingestion_run_id"],
+            [
+                f"{SCHEMA}.ingestion_run.tenant_id",
+                f"{SCHEMA}.ingestion_run.site_id",
+                f"{SCHEMA}.ingestion_run.id",
+            ],
+            name="fk_technology_observation_run_scope",
+        ),
+        CheckConstraint(
+            "effective_end IS NULL OR effective_end >= effective_start",
+            name="ck_technology_observation_effective_window",
+        ),
+        Index("ix_technology_observation_site_date", "tenant_id", "site_id", "observed_at"),
+        Index("ix_technology_observation_domain_date", "domain", "observed_at"),
+        Index(
+            "uq_technology_observation_current",
+            "observation_key",
+            unique=True,
+            postgresql_where=text("effective_end IS NULL"),
+        ),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organization.id"), nullable=False
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id"), nullable=False
+    )
+    ingestion_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    rights_policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    requested_url: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_url: Mapped[str] = mapped_column(Text, nullable=False)
+    ownership_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    observation_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    collected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    collection_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    http_status: Mapped[Optional[int]] = mapped_column(Integer)
+    render_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    observation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_request_id: Mapped[Optional[str]] = mapped_column(String(255))
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    provider_reported_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    estimated_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    cost_currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    signature_version: Mapped[Optional[str]] = mapped_column(String(100))
+    collection_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    effective_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class TechnologyDetection(Base):
+    __tablename__ = "technology_detection"
+    __table_args__ = (
+        UniqueConstraint(
+            "observation_id",
+            "technology_id",
+            "detection_scope",
+            name="uq_technology_detection_observation",
+        ),
+        Index("ix_technology_detection_technology", "technology_id"),
+        Index("ix_technology_detection_semantics", "semantic_class"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.technology_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    technology_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.technology.id"), nullable=False
+    )
+    provider_technology_name: Mapped[Optional[str]] = mapped_column(String(255))
+    provider_category: Mapped[Optional[str]] = mapped_column(String(255))
+    detected_version: Mapped[Optional[str]] = mapped_column(String(255))
+    provider_first_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    provider_last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    presence_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    detection_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    semantic_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    detection_method: Mapped[str] = mapped_column(String(100), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class TechnologyEvidence(Base):
+    __tablename__ = "technology_evidence"
+    __table_args__ = (
+        UniqueConstraint(
+            "detection_id",
+            "signature_key",
+            "evidence_hash",
+            name="uq_technology_evidence_signature",
+        ),
+        Index("ix_technology_evidence_signature", "signature_key"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    detection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.technology_detection.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    signature_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    signature_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    evidence_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    match_target: Mapped[str] = mapped_column(String(50), nullable=False)
+    evidence_value: Mapped[Optional[str]] = mapped_column(Text)
+    evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    semantic_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ExperienceObservation(Base):
     __tablename__ = "experience_observation"
     __table_args__ = (
