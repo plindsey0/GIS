@@ -269,6 +269,7 @@ class CompetitiveEventDomain(str, enum.Enum):
     EXPERIENCE = "EXPERIENCE"
     DOMAIN = "DOMAIN"
     CROSS_SOURCE = "CROSS_SOURCE"
+    AUTHORITY = "AUTHORITY"
 
 
 class CompetitiveSubjectType(str, enum.Enum):
@@ -308,6 +309,15 @@ class CompetitiveEventType(str, enum.Enum):
     EXPERIENCE_METRIC_IMPROVED = "EXPERIENCE_METRIC_IMPROVED"
     EXPERIENCE_METRIC_DEGRADED = "EXPERIENCE_METRIC_DEGRADED"
     COMPETITOR_PAGE_EMERGENCE = "COMPETITOR_PAGE_EMERGENCE"
+    BACKLINK_FIRST_OBSERVED = "BACKLINK_FIRST_OBSERVED"
+    BACKLINK_GAINED = "BACKLINK_GAINED"
+    BACKLINK_LOST = "BACKLINK_LOST"
+    REFERRING_DOMAIN_FIRST_OBSERVED = "REFERRING_DOMAIN_FIRST_OBSERVED"
+    REFERRING_DOMAIN_GAINED = "REFERRING_DOMAIN_GAINED"
+    REFERRING_DOMAIN_LOST = "REFERRING_DOMAIN_LOST"
+    AUTHORITY_METRIC_INCREASED = "AUTHORITY_METRIC_INCREASED"
+    AUTHORITY_METRIC_DECREASED = "AUTHORITY_METRIC_DECREASED"
+    REFERRING_DOMAIN_VELOCITY_CHANGED = "REFERRING_DOMAIN_VELOCITY_CHANGED"
 
 
 class EventSemanticClass(str, enum.Enum):
@@ -336,6 +346,50 @@ class EventRelationshipType(str, enum.Enum):
     SUPERSEDES = "SUPERSEDES"
     SAME_CHANGE = "SAME_CHANGE"
     CONSTITUENT_OF = "CONSTITUENT_OF"
+
+
+class AuthorityTargetType(str, enum.Enum):
+    DOMAIN = "DOMAIN"
+    PAGE = "PAGE"
+
+
+class AuthorityLinkState(str, enum.Enum):
+    OBSERVED_ACTIVE = "OBSERVED_ACTIVE"
+    OBSERVED_NEW = "OBSERVED_NEW"
+    OBSERVED_LOST = "OBSERVED_LOST"
+    UNKNOWN = "UNKNOWN"
+
+
+class AuthorityFollowState(str, enum.Enum):
+    FOLLOWED = "FOLLOWED"
+    NOFOLLOW = "NOFOLLOW"
+    UNKNOWN = "UNKNOWN"
+
+
+class AuthorityLinkType(str, enum.Enum):
+    TEXT = "TEXT"
+    IMAGE = "IMAGE"
+    REDIRECT = "REDIRECT"
+    OTHER = "OTHER"
+    UNKNOWN = "UNKNOWN"
+
+
+class AnchorClassification(str, enum.Enum):
+    BRAND = "BRAND"
+    EXACT_MATCH = "EXACT_MATCH"
+    PARTIAL_MATCH = "PARTIAL_MATCH"
+    URL = "URL"
+    GENERIC = "GENERIC"
+    IMAGE_OR_EMPTY = "IMAGE_OR_EMPTY"
+    OTHER = "OTHER"
+    UNKNOWN = "UNKNOWN"
+
+
+class AuthorityOwnership(str, enum.Enum):
+    OWNED = "OWNED"
+    COMPETITOR = "COMPETITOR"
+    OTHER = "OTHER"
+    UNKNOWN = "UNKNOWN"
 
 
 def enum_type(enum_class: type[enum.Enum], name: str) -> Enum:
@@ -2161,6 +2215,234 @@ class ExperienceObservation(Base):
     good_proportion: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 8))
     needs_improvement_proportion: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 8))
     poor_proportion: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 8))
+    provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AuthorityMetricDefinition(Base, TimestampMixin):
+    __tablename__ = "authority_metric_definition"
+    __table_args__ = (
+        UniqueConstraint("provider", "metric_key", name="uq_authority_metric_provider_key"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    metric_key: Mapped[str] = mapped_column(String(150), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    scale_min: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 6))
+    scale_max: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 6))
+    unit: Mapped[Optional[str]] = mapped_column(String(50))
+    methodology_version: Mapped[Optional[str]] = mapped_column(String(100))
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class AuthorityObservation(Base):
+    __tablename__ = "authority_observation"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "ingestion_run_id"],
+            [
+                f"{SCHEMA}.ingestion_run.tenant_id",
+                f"{SCHEMA}.ingestion_run.site_id",
+                f"{SCHEMA}.ingestion_run.id",
+            ],
+        ),
+        CheckConstraint(
+            "effective_end IS NULL OR effective_end >= effective_start",
+            name="ck_authority_observation_effective_window",
+        ),
+        Index(
+            "ix_authority_observation_target_date",
+            "tenant_id",
+            "site_id",
+            "target_domain",
+            "observed_at",
+        ),
+        Index("ix_authority_observation_run", "ingestion_run_id"),
+        Index(
+            "uq_authority_observation_current",
+            "observation_key",
+            unique=True,
+            postgresql_where=text("effective_end IS NULL"),
+        ),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organization.id"), nullable=False
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id"), nullable=False
+    )
+    ingestion_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    rights_policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_task_id: Mapped[Optional[str]] = mapped_column(String(255))
+    target_type: Mapped[AuthorityTargetType] = mapped_column(
+        enum_type(AuthorityTargetType, "authority_target_type"), nullable=False
+    )
+    target_domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    target_url: Mapped[Optional[str]] = mapped_column(Text)
+    ownership: Mapped[AuthorityOwnership] = mapped_column(
+        enum_type(AuthorityOwnership, "authority_ownership"), nullable=False
+    )
+    observed_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    observation_scope: Mapped[str] = mapped_column(String(100), nullable=False)
+    completeness: Mapped[str] = mapped_column(String(50), nullable=False, default="UNKNOWN")
+    observation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    records_received: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    provider_reported_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    estimated_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    cost_currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    effective_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AuthorityMetricObservation(Base):
+    __tablename__ = "authority_metric_observation"
+    __table_args__ = (
+        UniqueConstraint(
+            "authority_observation_id",
+            "metric_provider",
+            "metric_key",
+            name="uq_authority_metric_observation",
+        ),
+        CheckConstraint(
+            "scale_max IS NULL OR scale_min IS NULL OR scale_max >= scale_min",
+            name="ck_authority_metric_scale",
+        ),
+        Index("ix_authority_metric_key", "metric_provider", "metric_key"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    authority_observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.authority_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    metric_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.authority_metric_definition.id")
+    )
+    metric_provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    metric_key: Mapped[str] = mapped_column(String(150), nullable=False)
+    metric_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    metric_value: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
+    scale_min: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 6))
+    scale_max: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 6))
+    unit: Mapped[Optional[str]] = mapped_column(String(50))
+    methodology_version: Mapped[Optional[str]] = mapped_column(String(100))
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BacklinkObservation(Base):
+    __tablename__ = "backlink_observation"
+    __table_args__ = (
+        UniqueConstraint(
+            "authority_observation_id", "link_identity", name="uq_backlink_observation_identity"
+        ),
+        Index("ix_backlink_source_domain", "source_domain"),
+        Index("ix_backlink_target_domain", "target_domain"),
+        Index("ix_backlink_target_url", "target_url"),
+        Index("ix_backlink_state", "link_state"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    authority_observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.authority_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider_record_id: Mapped[Optional[str]] = mapped_column(String(512))
+    link_identity: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    target_url: Mapped[str] = mapped_column(Text, nullable=False)
+    target_domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    link_state: Mapped[AuthorityLinkState] = mapped_column(
+        enum_type(AuthorityLinkState, "authority_link_state"), nullable=False
+    )
+    follow_state: Mapped[AuthorityFollowState] = mapped_column(
+        enum_type(AuthorityFollowState, "authority_follow_state"), nullable=False
+    )
+    sponsored: Mapped[Optional[bool]] = mapped_column(Boolean)
+    ugc: Mapped[Optional[bool]] = mapped_column(Boolean)
+    link_type: Mapped[AuthorityLinkType] = mapped_column(
+        enum_type(AuthorityLinkType, "authority_link_type"), nullable=False
+    )
+    anchor_text: Mapped[Optional[str]] = mapped_column(Text)
+    anchor_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    anchor_classification: Mapped[AnchorClassification] = mapped_column(
+        enum_type(AnchorClassification, "anchor_classification"), nullable=False
+    )
+    anchor_method: Mapped[Optional[str]] = mapped_column(String(100))
+    anchor_method_version: Mapped[Optional[str]] = mapped_column(String(32))
+    anchor_confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4))
+    first_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ReferringDomainObservation(Base):
+    __tablename__ = "referring_domain_observation"
+    __table_args__ = (
+        UniqueConstraint(
+            "authority_observation_id", "referring_domain", name="uq_referring_domain_observation"
+        ),
+        Index("ix_referring_domain_target", "referring_domain", "target_domain"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    authority_observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.authority_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    referring_domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    target_domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    backlink_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    followed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    nofollow_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    first_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    link_state: Mapped[AuthorityLinkState] = mapped_column(
+        enum_type(AuthorityLinkState, "authority_link_state"), nullable=False
+    )
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
     provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

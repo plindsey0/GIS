@@ -405,7 +405,14 @@ class SynthesisService:
                 candidate.event_subtype,
                 candidate.event_time.isoformat(),
                 candidate.semantic_class.value,
-                _decimal_text(candidate.confidence),
+                _decimal_text(
+                    min(
+                        [
+                            candidate.confidence,
+                            *(item.confidence for item in candidate.evidence),
+                        ]
+                    )
+                ),
                 _decimal_text(candidate.magnitude),
                 candidate.magnitude_unit,
                 candidate.synthesis_method,

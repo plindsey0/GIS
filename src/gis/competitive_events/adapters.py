@@ -17,6 +17,10 @@ from gis.competitive_events.rules import (
 )
 from gis.competitive_events.service import EventCandidate, EvidenceRef
 from gis.models import (
+    AuthorityLinkState,
+    AuthorityMetricObservation,
+    AuthorityObservation,
+    BacklinkObservation,
     CompetitiveContentComponent,
     CompetitiveContentDocument,
     CompetitiveContentHeading,
@@ -31,6 +35,7 @@ from gis.models import (
     ExperienceObservation,
     ExternalKeywordRanking,
     ExternalSearchObservation,
+    ReferringDomainObservation,
     SerpObservation,
     SerpResult,
     TechnologyDetection,
@@ -622,12 +627,199 @@ def synthesize_experience(
     return candidates
 
 
+def synthesize_authority(
+    session: Session,
+    tenant_id: Any,
+    site_id: Any,
+    start: datetime,
+    end: datetime,
+    thresholds: dict[str, Any],
+) -> list[EventCandidate]:
+    observations = session.scalars(
+        select(AuthorityObservation)
+        .where(
+            AuthorityObservation.tenant_id == tenant_id,
+            AuthorityObservation.site_id == site_id,
+            AuthorityObservation.observed_at <= end,
+        )
+        .order_by(
+            AuthorityObservation.provider,
+            AuthorityObservation.target_domain,
+            AuthorityObservation.target_url,
+            AuthorityObservation.observed_at,
+        )
+    ).all()
+    candidates: list[EventCandidate] = []
+    seen_links: set[str] = set()
+    seen_domains: set[tuple[str, str]] = set()
+    metric_history: dict[
+        tuple[str, str, str, str], tuple[AuthorityObservation, AuthorityMetricObservation]
+    ] = {}
+    for observation in observations:
+        links = session.scalars(
+            select(BacklinkObservation).where(
+                BacklinkObservation.authority_observation_id == observation.id
+            )
+        ).all()
+        domains = session.scalars(
+            select(ReferringDomainObservation).where(
+                ReferringDomainObservation.authority_observation_id == observation.id
+            )
+        ).all()
+        metrics = session.scalars(
+            select(AuthorityMetricObservation).where(
+                AuthorityMetricObservation.authority_observation_id == observation.id
+            )
+        ).all()
+        in_window = observation.observed_at >= start
+        for link in links:
+            first = link.link_identity not in seen_links
+            seen_links.add(link.link_identity)
+            if not in_window:
+                continue
+            event_type = None
+            if link.link_state is AuthorityLinkState.OBSERVED_LOST:
+                event_type = CompetitiveEventType.BACKLINK_LOST
+            elif link.link_state is AuthorityLinkState.OBSERVED_NEW:
+                event_type = (
+                    CompetitiveEventType.BACKLINK_FIRST_OBSERVED
+                    if first
+                    else CompetitiveEventType.BACKLINK_GAINED
+                )
+            elif first and link.link_state is AuthorityLinkState.OBSERVED_ACTIVE:
+                event_type = CompetitiveEventType.BACKLINK_FIRST_OBSERVED
+            if event_type:
+                candidates.append(
+                    EventCandidate(
+                        CompetitiveSubjectType.PAGE,
+                        link.link_identity,
+                        CompetitiveEventDomain.AUTHORITY,
+                        event_type,
+                        observation.observed_at,
+                        (
+                            evidence(
+                                observation,
+                                "gis_raw.authority_observation",
+                                EvidenceRole.PRIMARY,
+                                semantic=link.semantic_class,
+                            ),
+                        ),
+                        link.semantic_class,
+                        subject_domain=link.source_domain,
+                        subject_url=link.target_url,
+                        metadata={
+                            "source_url": link.source_url,
+                            "target_url": link.target_url,
+                            "provider": observation.provider,
+                            "explicit_link_state": link.link_state.value,
+                        },
+                    )
+                )
+        for domain in domains:
+            identity = (domain.referring_domain, domain.target_domain)
+            first = identity not in seen_domains
+            seen_domains.add(identity)
+            if not in_window:
+                continue
+            event_type = None
+            if domain.link_state is AuthorityLinkState.OBSERVED_LOST:
+                event_type = CompetitiveEventType.REFERRING_DOMAIN_LOST
+            elif domain.link_state is AuthorityLinkState.OBSERVED_NEW:
+                event_type = (
+                    CompetitiveEventType.REFERRING_DOMAIN_FIRST_OBSERVED
+                    if first
+                    else CompetitiveEventType.REFERRING_DOMAIN_GAINED
+                )
+            elif first and domain.link_state is AuthorityLinkState.OBSERVED_ACTIVE:
+                event_type = CompetitiveEventType.REFERRING_DOMAIN_FIRST_OBSERVED
+            if event_type:
+                candidates.append(
+                    EventCandidate(
+                        CompetitiveSubjectType.DOMAIN,
+                        f"{domain.referring_domain}|{domain.target_domain}",
+                        CompetitiveEventDomain.AUTHORITY,
+                        event_type,
+                        observation.observed_at,
+                        (
+                            evidence(
+                                observation,
+                                "gis_raw.authority_observation",
+                                EvidenceRole.PRIMARY,
+                                semantic=domain.semantic_class,
+                            ),
+                        ),
+                        domain.semantic_class,
+                        subject_domain=domain.referring_domain,
+                        magnitude=Decimal(domain.backlink_count),
+                        magnitude_unit="backlinks",
+                        metadata={
+                            "target_domain": domain.target_domain,
+                            "provider": observation.provider,
+                        },
+                    )
+                )
+        for metric in metrics:
+            key = (
+                observation.provider,
+                observation.target_domain,
+                observation.target_url or "",
+                f"{metric.metric_provider}:{metric.metric_key}",
+            )
+            prior = metric_history.get(key)
+            metric_history[key] = (observation, metric)
+            if not in_window or not prior:
+                continue
+            before_observation, before_metric = prior
+            change = material_numeric_change(
+                metric.metric_key,
+                before_metric.metric_value,
+                metric.metric_value,
+                absolute_min=thresholds["authority_metric_absolute_min"],
+                percent_min=thresholds["authority_metric_percent_min"],
+                increased=CompetitiveEventType.AUTHORITY_METRIC_INCREASED,
+                decreased=CompetitiveEventType.AUTHORITY_METRIC_DECREASED,
+                unit=metric.unit or metric.metric_key,
+            )
+            if change:
+                candidates.append(
+                    EventCandidate(
+                        CompetitiveSubjectType.PAGE
+                        if observation.target_url
+                        else CompetitiveSubjectType.DOMAIN,
+                        observation.target_url or observation.target_domain,
+                        CompetitiveEventDomain.AUTHORITY,
+                        change.event_type,
+                        observation.observed_at,
+                        pair_evidence(
+                            before_observation,
+                            observation,
+                            "gis_raw.authority_observation",
+                            semantic=metric.semantic_class,
+                        ),
+                        EventSemanticClass.GIS_DERIVED,
+                        subject_domain=observation.target_domain,
+                        subject_url=observation.target_url,
+                        event_subtype=f"{metric.metric_provider}:{metric.metric_key}",
+                        magnitude=change.magnitude,
+                        magnitude_unit=change.unit,
+                        metadata={
+                            "metric_provider": metric.metric_provider,
+                            "metric_key": metric.metric_key,
+                            "before": str(before_metric.metric_value),
+                            "after": str(metric.metric_value),
+                        },
+                    )
+                )
+    return candidates
+
+
 ADAPTERS = {
     CompetitiveEventDomain.SERP: synthesize_serp,
     CompetitiveEventDomain.SEARCH_VISIBILITY: synthesize_search,
     CompetitiveEventDomain.CONTENT: synthesize_content,
     CompetitiveEventDomain.TECHNOLOGY: synthesize_technology,
     CompetitiveEventDomain.EXPERIENCE: synthesize_experience,
+    CompetitiveEventDomain.AUTHORITY: synthesize_authority,
 }
 
 

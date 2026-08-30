@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Any
 
 POLICY_NAME = "gis-default-materiality"
-POLICY_VERSION = "1.0.0"
+POLICY_VERSION = "1.1.0"
 
 DEFAULT_THRESHOLDS: dict[str, Any] = {
     "rank_movement_min": 3,
@@ -26,12 +26,21 @@ DEFAULT_THRESHOLDS: dict[str, Any] = {
     },
     "cross_source_window_days": 14,
     "maximum_window_days": 366,
+    "authority_metric_absolute_min": "1",
+    "authority_metric_percent_min": "0.10",
+    "referring_domain_velocity_absolute_min": 3,
 }
 
 
 def decimal_thresholds(raw: dict[str, Any] | None = None) -> dict[str, Any]:
     values = {**DEFAULT_THRESHOLDS, **(raw or {})}
-    for key in ("word_count_percent_min", "visibility_absolute_min", "visibility_percent_min"):
+    for key in (
+        "word_count_percent_min",
+        "visibility_absolute_min",
+        "visibility_percent_min",
+        "authority_metric_absolute_min",
+        "authority_metric_percent_min",
+    ):
         values[key] = Decimal(str(values[key]))
     values["experience_absolute"] = {
         key: Decimal(str(value)) for key, value in values["experience_absolute"].items()

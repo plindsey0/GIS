@@ -205,6 +205,54 @@ models:
     description: Site/day source presence, deltas, ratios, and simple quality status.
     columns: *daily_keys
 
+  - name: stg_authority_observations
+    description: Revision-aware provider observations with explicit target and ownership semantics.
+    columns:
+      - name: authority_observation_id
+        tests: [not_null, unique]
+      - name: target_type
+        tests:
+          - accepted_values:
+              arguments: {values: [DOMAIN, PAGE]}
+      - name: ownership
+        tests:
+          - accepted_values:
+              arguments: {values: [OWNED, COMPETITOR, OTHER, UNKNOWN]}
+  - name: stg_backlink_observations
+    description: Canonical provider-neutral link evidence; absence is not loss.
+    columns:
+      - name: backlink_observation_id
+        tests: [not_null, unique]
+      - name: link_state
+        tests:
+          - accepted_values:
+              arguments: {values: [OBSERVED_ACTIVE, OBSERVED_NEW, OBSERVED_LOST, UNKNOWN]}
+      - name: semantic_class
+        tests:
+          - accepted_values:
+              arguments: {values: [MEASURED, PROVIDER_REPORTED, GIS_DERIVED, HEURISTIC]}
+  - name: stg_referring_domain_observations
+    description: Deterministically grouped referring-domain evidence by provider observation.
+    columns:
+      - name: referring_domain_observation_id
+        tests: [not_null, unique]
+  - name: mart_authority_domain_daily
+    description: Provider-specific domain authority facts; provider metrics remain non-interchangeable JSON keys.
+  - name: mart_authority_page_daily
+    description: Descriptive page-level external-link evidence.
+  - name: mart_referring_domain_daily
+    description: Historical referring-domain relationships.
+  - name: mart_authority_competitor_daily
+    description: Comparable owned and competitor observations without strategic inference.
+  - name: mart_authority_gap
+    description: Shared, owned-only, and competitor-only observed referring-domain conditions.
+  - name: mart_authority_velocity
+    description: Explicitly reported new/lost link velocity.
+  - name: mart_authority_concentration
+    description: HHI concentration and one-minus-HHI diversification.
+  - name: mart_page_link_attraction
+    description: Descriptive page-level acquisition observations; no causal claim.
+
 unit_tests:
   - name: reconciliation_distinguishes_ga4_presence_from_organic_sessions
     description: GA4 presence is independent of organic traffic, including GA4-only dates.
