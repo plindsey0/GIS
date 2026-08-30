@@ -60,7 +60,19 @@ SOURCES = (
     SourceDefinition("fhfa", "Federal Housing Finance Agency", "FHFA", SourceType.PUBLIC),
     SourceDefinition("google_ads", "Google Ads", "Google", SourceType.COMMERCIAL),
     SourceDefinition("google_trends", "Google Trends", "Google", SourceType.PUBLIC),
-    SourceDefinition("dataforseo", "DataForSEO", "DataForSEO", SourceType.COMMERCIAL),
+    SourceDefinition(
+        "dataforseo",
+        "DataForSEO",
+        "DataForSEO",
+        SourceType.COMMERCIAL,
+        AcquisitionMethod.LICENSED_API,
+    ),
+    SourceDefinition(
+        "crux", "Chrome UX Report", "Google", SourceType.PUBLIC, AcquisitionMethod.PUBLIC_API
+    ),
+    SourceDefinition(
+        "pagespeed", "PageSpeed Insights", "Google", SourceType.PUBLIC, AcquisitionMethod.PUBLIC_API
+    ),
     SourceDefinition("ahrefs", "Ahrefs", "Ahrefs", SourceType.COMMERCIAL),
     SourceDefinition("semrush", "Semrush", "Semrush", SourceType.COMMERCIAL),
     SourceDefinition("builtwith", "BuiltWith", "BuiltWith", SourceType.COMMERCIAL),

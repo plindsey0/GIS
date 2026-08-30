@@ -129,6 +129,68 @@ class LineageType(str, enum.Enum):
     DERIVES = "DERIVES"
 
 
+class SerpFeatureType(str, enum.Enum):
+    ORGANIC = "ORGANIC"
+    PAID = "PAID"
+    FEATURED_SNIPPET = "FEATURED_SNIPPET"
+    AI_ANSWER = "AI_ANSWER"
+    PEOPLE_ALSO_ASK = "PEOPLE_ALSO_ASK"
+    LOCAL_PACK = "LOCAL_PACK"
+    IMAGE = "IMAGE"
+    VIDEO = "VIDEO"
+    SHOPPING = "SHOPPING"
+    KNOWLEDGE_PANEL = "KNOWLEDGE_PANEL"
+    NEWS = "NEWS"
+    DISCUSSION_FORUM = "DISCUSSION_FORUM"
+    RELATED_SEARCH = "RELATED_SEARCH"
+    SITELINK = "SITELINK"
+    MAP = "MAP"
+    OTHER = "OTHER"
+    UNKNOWN = "UNKNOWN"
+
+
+class ResultOwnership(str, enum.Enum):
+    OWN_SITE = "OWN_SITE"
+    KNOWN_COMPETITOR = "KNOWN_COMPETITOR"
+    OTHER = "OTHER"
+
+
+class ExperienceMeasurementType(str, enum.Enum):
+    FIELD = "FIELD"
+    LAB = "LAB"
+
+
+class ExperienceScope(str, enum.Enum):
+    URL = "URL"
+    ORIGIN = "ORIGIN"
+
+
+class FormFactor(str, enum.Enum):
+    MOBILE = "MOBILE"
+    DESKTOP = "DESKTOP"
+    TABLET = "TABLET"
+    ALL = "ALL"
+    UNKNOWN = "UNKNOWN"
+
+
+class ExperienceAvailability(str, enum.Enum):
+    DATA_AVAILABLE = "DATA_AVAILABLE"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+    FAILED = "FAILED"
+
+
+class ExperienceMetric(str, enum.Enum):
+    LCP = "LCP"
+    INP = "INP"
+    CLS = "CLS"
+    FCP = "FCP"
+    TTFB = "TTFB"
+    PERFORMANCE_SCORE = "PERFORMANCE_SCORE"
+    ACCESSIBILITY_SCORE = "ACCESSIBILITY_SCORE"
+    BEST_PRACTICES_SCORE = "BEST_PRACTICES_SCORE"
+    SEO_SCORE = "SEO_SCORE"
+
+
 class ConnectionType(str, enum.Enum):
     NATIVE = "NATIVE"
     BYOD = "BYOD"
@@ -1130,6 +1192,236 @@ class Conversion(Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class TrackedQuery(Base, TimestampMixin):
+    __tablename__ = "tracked_query"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"],
+            [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "site_id",
+            "normalized_query",
+            "search_engine",
+            "country_code",
+            "location_code",
+            "language_code",
+            "device",
+            name="uq_tracked_query_context",
+        ),
+        CheckConstraint(
+            "requested_depth > 0 AND requested_depth <= 1000", name="ck_tracked_query_depth"
+        ),
+        Index("ix_tracked_query_normalized", "normalized_query"),
+        Index("ix_tracked_query_tenant_site_active", "tenant_id", "site_id", "active"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_query: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    priority: Mapped[str] = mapped_column(String(32), nullable=False, default="STANDARD")
+    cadence: Mapped[str] = mapped_column(String(32), nullable=False, default="WEEKLY")
+    device: Mapped[str] = mapped_column(String(32), nullable=False, default="desktop")
+    search_engine: Mapped[str] = mapped_column(String(32), nullable=False, default="google")
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False, default="US")
+    location_code: Mapped[Optional[int]] = mapped_column(Integer)
+    location_name: Mapped[Optional[str]] = mapped_column(String(255))
+    language_code: Mapped[str] = mapped_column(String(16), nullable=False, default="en")
+    requested_depth: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    tags: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+
+class SerpObservation(Base):
+    __tablename__ = "serp_observation"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "ingestion_run_id"],
+            [
+                f"{SCHEMA}.ingestion_run.tenant_id",
+                f"{SCHEMA}.ingestion_run.site_id",
+                f"{SCHEMA}.ingestion_run.id",
+            ],
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "data_source_connection_id"],
+            [f"{SCHEMA}.data_source_connection.tenant_id", f"{SCHEMA}.data_source_connection.id"],
+        ),
+        CheckConstraint(
+            "effective_end IS NULL OR effective_end >= effective_start",
+            name="ck_serp_effective_window",
+        ),
+        Index("ix_serp_query_date", "tracked_query_id", "observed_date"),
+        Index("ix_serp_ingestion_run", "ingestion_run_id"),
+        Index(
+            "uq_serp_current_observation",
+            "observation_key",
+            unique=True,
+            postgresql_where=text("effective_end IS NULL"),
+        ),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    tracked_query_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tracked_query.id"), nullable=False
+    )
+    ingestion_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    rights_policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_task_id: Mapped[Optional[str]] = mapped_column(String(255))
+    observation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    search_engine: Mapped[str] = mapped_column(String(32), nullable=False)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_query: Mapped[str] = mapped_column(Text, nullable=False)
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    location_code: Mapped[Optional[int]] = mapped_column(Integer)
+    location_name: Mapped[Optional[str]] = mapped_column(String(255))
+    language_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    device: Mapped[str] = mapped_column(String(32), nullable=False)
+    requested_depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    effective_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SerpResult(Base):
+    __tablename__ = "serp_result"
+    __table_args__ = (
+        UniqueConstraint(
+            "serp_observation_id",
+            "rank_absolute",
+            "provider_type",
+            name="uq_serp_result_position_type",
+        ),
+        CheckConstraint("rank_absolute > 0", name="ck_serp_result_rank"),
+        Index("ix_serp_result_observation", "serp_observation_id"),
+        Index("ix_serp_result_domain", "hostname"),
+        Index("ix_serp_result_url", "normalized_url"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    serp_observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.serp_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rank_absolute: Mapped[int] = mapped_column(Integer, nullable=False)
+    rank_group: Mapped[Optional[int]] = mapped_column(Integer)
+    feature_type: Mapped[SerpFeatureType] = mapped_column(
+        enum_type(SerpFeatureType, "serp_feature_type"), nullable=False
+    )
+    provider_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    url: Mapped[Optional[str]] = mapped_column(Text)
+    normalized_url: Mapped[Optional[str]] = mapped_column(Text)
+    hostname: Mapped[Optional[str]] = mapped_column(String(253))
+    title: Mapped[Optional[str]] = mapped_column(Text)
+    snippet: Mapped[Optional[str]] = mapped_column(Text)
+    breadcrumb: Mapped[Optional[str]] = mapped_column(Text)
+    is_paid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_organic: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_feature: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ownership: Mapped[ResultOwnership] = mapped_column(
+        enum_type(ResultOwnership, "result_ownership"),
+        nullable=False,
+        default=ResultOwnership.OTHER,
+    )
+    provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ExperienceObservation(Base):
+    __tablename__ = "experience_observation"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id", "ingestion_run_id"],
+            [
+                f"{SCHEMA}.ingestion_run.tenant_id",
+                f"{SCHEMA}.ingestion_run.site_id",
+                f"{SCHEMA}.ingestion_run.id",
+            ],
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "data_source_connection_id"],
+            [f"{SCHEMA}.data_source_connection.tenant_id", f"{SCHEMA}.data_source_connection.id"],
+        ),
+        CheckConstraint("metric_value IS NULL OR metric_value >= 0", name="ck_experience_value"),
+        CheckConstraint(
+            "good_proportion IS NULL OR good_proportion BETWEEN 0 AND 1", name="ck_experience_good"
+        ),
+        CheckConstraint(
+            "needs_improvement_proportion IS NULL OR needs_improvement_proportion BETWEEN 0 AND 1",
+            name="ck_experience_needs",
+        ),
+        CheckConstraint(
+            "poor_proportion IS NULL OR poor_proportion BETWEEN 0 AND 1", name="ck_experience_poor"
+        ),
+        Index("ix_experience_target_period", "normalized_target", "period_end"),
+        Index("ix_experience_ingestion_run", "ingestion_run_id"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    ingestion_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    data_source_connection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    rights_policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_start: Mapped[Optional[date]] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    target: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_target: Mapped[str] = mapped_column(Text, nullable=False)
+    measurement_type: Mapped[ExperienceMeasurementType] = mapped_column(
+        enum_type(ExperienceMeasurementType, "experience_measurement_type"), nullable=False
+    )
+    scope: Mapped[ExperienceScope] = mapped_column(
+        enum_type(ExperienceScope, "experience_scope"), nullable=False
+    )
+    form_factor: Mapped[FormFactor] = mapped_column(
+        enum_type(FormFactor, "experience_form_factor"), nullable=False
+    )
+    availability: Mapped[ExperienceAvailability] = mapped_column(
+        enum_type(ExperienceAvailability, "experience_availability"), nullable=False
+    )
+    metric: Mapped[ExperienceMetric] = mapped_column(
+        enum_type(ExperienceMetric, "experience_metric"), nullable=False
+    )
+    metric_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 6))
+    unit: Mapped[Optional[str]] = mapped_column(String(32))
+    percentile: Mapped[Optional[int]] = mapped_column(Integer)
+    classification: Mapped[Optional[str]] = mapped_column(String(32))
+    good_proportion: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 8))
+    needs_improvement_proportion: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 8))
+    poor_proportion: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 8))
+    provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
