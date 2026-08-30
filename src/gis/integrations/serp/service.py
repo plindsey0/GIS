@@ -13,7 +13,9 @@ from urllib.parse import urlsplit, urlunsplit
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from gis.integrations.serp.dataforseo import SerpProviderError
 from gis.models import (
+    ConnectionStatus,
     DataRightsPolicy,
     DataSource,
     DataSourceConnection,
@@ -156,8 +158,31 @@ class SerpCollector:
         self.session.flush()
         try:
             payload = self.provider.collect(tracked_query)
-            task = payload.get("tasks", [{}])[0]
-            result = task.get("result", [{}])[0]
+            tasks = payload.get("tasks")
+            if not isinstance(tasks, list) or not tasks or not isinstance(tasks[0], dict):
+                raise ValueError("SERP provider response contains no valid task")
+            task = tasks[0]
+            results = task.get("result")
+            if not isinstance(results, list):
+                raise ValueError("SERP provider task result must be an array")
+            if not results:
+                run.records_received = 0
+                run.records_inserted = 0
+                run.status = IngestionStatus.SUCCEEDED
+                run.completed_at = datetime.now(timezone.utc)
+                run.source_metadata = {
+                    **run.source_metadata,
+                    "provider_task_id": task.get("id"),
+                    "provider_cost": task.get("cost"),
+                }
+                connection.status = ConnectionStatus.ACTIVE
+                connection.last_successful_sync_at = run.completed_at
+                connection.last_attempted_sync_at = run.completed_at
+                self.session.commit()
+                return run
+            result = results[0]
+            if not isinstance(result, dict):
+                raise ValueError("SERP provider result must be an object")
             observed_at = datetime.fromisoformat(
                 result.get("datetime", now.isoformat()).replace("Z", "+00:00")
             )
@@ -244,10 +269,26 @@ class SerpCollector:
                 "provider_task_id": task.get("id"),
                 "provider_cost": task.get("cost"),
             }
+            connection.status = ConnectionStatus.ACTIVE
+            connection.last_successful_sync_at = run.completed_at
+            connection.last_attempted_sync_at = run.completed_at
         except Exception as error:
             run.status = IngestionStatus.FAILED
             run.error_count = 1
-            run.error_summary = type(error).__name__
+            if isinstance(error, SerpProviderError):
+                run.error_summary = f"{type(error).__name__}: {error}"[:1000]
+                run.source_metadata = {
+                    **run.source_metadata,
+                    "provider_error_category": type(error).__name__,
+                    **(
+                        {"provider_status_code": error.status_code}
+                        if error.status_code is not None
+                        else {}
+                    ),
+                }
+            else:
+                run.error_summary = type(error).__name__
             run.completed_at = datetime.now(timezone.utc)
+            connection.last_attempted_sync_at = run.completed_at
         self.session.commit()
         return run
