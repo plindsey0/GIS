@@ -43,6 +43,7 @@ gis-technology-intelligence = "gis.integrations.technology_intelligence.cli:main
 gis-provenance = "gis.provenance.cli:main"
 gis-serp = "gis.integrations.serp.cli:main"
 gis-experience = "gis.integrations.experience.cli:main"
+gis-orchestrator = "gis.orchestration.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gis"]

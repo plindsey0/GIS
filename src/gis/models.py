@@ -214,6 +214,46 @@ class IngestionStatus(str, enum.Enum):
     CANCELLED = "CANCELLED"
 
 
+class ScheduleStatus(str, enum.Enum):
+    ENABLED = "ENABLED"
+    DISABLED = "DISABLED"
+
+
+class TriggerType(str, enum.Enum):
+    SCHEDULED = "SCHEDULED"
+    MANUAL = "MANUAL"
+    RETRY = "RETRY"
+    BACKFILL = "BACKFILL"
+    DEPENDENCY = "DEPENDENCY"
+
+
+class OrchestrationStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    WAITING_DEPENDENCY = "WAITING_DEPENDENCY"
+    RUNNING = "RUNNING"
+    RETRY_WAIT = "RETRY_WAIT"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
+    CANCELLED = "CANCELLED"
+
+
+class DependencyPolicy(str, enum.Enum):
+    ALL_SUCCESS = "ALL_SUCCESS"
+    ANY_SUCCESS = "ANY_SUCCESS"
+    ALWAYS = "ALWAYS"
+
+
+class BudgetDecision(str, enum.Enum):
+    ALLOW = "ALLOW"
+    BLOCK = "BLOCK"
+
+
+class AlertStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    RESOLVED = "RESOLVED"
+
+
 class QualityFlag(str, enum.Enum):
     VALID = "VALID"
     SUSPECT = "SUSPECT"
@@ -2045,6 +2085,419 @@ class ExperienceObservation(Base):
     needs_improvement_proportion: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 8))
     poor_proportion: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 8))
     provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PipelineDefinition(Base, TimestampMixin):
+    __tablename__ = "pipeline_definition"
+    __table_args__ = (
+        UniqueConstraint("key", name="uq_pipeline_definition_key"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    handler_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    data_source_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source.id")
+    )
+    paid_provider: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    default_estimated_cost: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, default=Decimal("0")
+    )
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    configuration_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class PipelineDependency(Base):
+    __tablename__ = "pipeline_dependency"
+    __table_args__ = (
+        Index(
+            "uq_pipeline_dependency_scope",
+            "tenant_id",
+            "site_id",
+            "upstream_pipeline_id",
+            "downstream_pipeline_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint(
+            "upstream_pipeline_id <> downstream_pipeline_id", name="ck_pipeline_dependency_self"
+        ),
+        Index(
+            "ix_pipeline_dependency_downstream", "tenant_id", "site_id", "downstream_pipeline_id"
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    upstream_pipeline_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.pipeline_definition.id"), nullable=False
+    )
+    downstream_pipeline_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.pipeline_definition.id"), nullable=False
+    )
+    policy: Mapped[DependencyPolicy] = mapped_column(
+        enum_type(DependencyPolicy, "dependency_policy"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ScheduleDefinition(Base, TimestampMixin):
+    __tablename__ = "schedule_definition"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("tenant_id", "name", name="uq_schedule_definition_tenant_name"),
+        CheckConstraint("max_attempts >= 1", name="ck_schedule_max_attempts"),
+        CheckConstraint("retry_delay_seconds >= 0", name="ck_schedule_retry_delay"),
+        CheckConstraint(
+            "freshness_sla_seconds IS NULL OR freshness_sla_seconds > 0",
+            name="ck_schedule_freshness_sla",
+        ),
+        Index("ix_schedule_due", "status", "next_scheduled_at"),
+        Index("ix_schedule_tenant_site", "tenant_id", "site_id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organization.id")
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    pipeline_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.pipeline_definition.id"), nullable=False
+    )
+    data_source_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id")
+    )
+    rights_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id")
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    cron_expression: Mapped[str] = mapped_column(String(100), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False, default="UTC")
+    status: Mapped[ScheduleStatus] = mapped_column(
+        enum_type(ScheduleStatus, "schedule_status"),
+        nullable=False,
+        default=ScheduleStatus.DISABLED,
+    )
+    next_scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    retry_delay_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    exponential_backoff: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    freshness_sla_seconds: Mapped[Optional[int]] = mapped_column(Integer)
+    configuration_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class ScheduledTarget(Base, TimestampMixin):
+    __tablename__ = "scheduled_target"
+    __table_args__ = (
+        UniqueConstraint("schedule_id", "target_type", "target_key", name="uq_scheduled_target"),
+        Index("ix_scheduled_target_tenant", "tenant_id", "site_id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    schedule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.schedule_definition.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_key: Mapped[str] = mapped_column(Text, nullable=False)
+    configuration_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class OrchestrationRun(Base):
+    __tablename__ = "orchestration_run"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        Index(
+            "uq_orchestration_schedule_occurrence",
+            "schedule_id",
+            "scheduled_for",
+            "target_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+            postgresql_where=text("schedule_id IS NOT NULL"),
+        ),
+        CheckConstraint("estimated_provider_cost >= 0", name="ck_orchestration_estimated_cost"),
+        CheckConstraint(
+            "actual_provider_cost IS NULL OR actual_provider_cost >= 0",
+            name="ck_orchestration_actual_cost",
+        ),
+        CheckConstraint(
+            "backfill_end IS NULL OR backfill_start IS NOT NULL",
+            name="ck_orchestration_backfill_pair",
+        ),
+        CheckConstraint(
+            "backfill_end IS NULL OR backfill_end >= backfill_start",
+            name="ck_orchestration_backfill_bounds",
+        ),
+        Index("ix_orchestration_queue", "status", "available_at", "requested_at"),
+        Index("ix_orchestration_history", "tenant_id", "site_id", "pipeline_id", "requested_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organization.id")
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    pipeline_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.pipeline_definition.id"), nullable=False
+    )
+    schedule_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.schedule_definition.id")
+    )
+    target_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.scheduled_target.id")
+    )
+    data_source_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id")
+    )
+    rights_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id")
+    )
+    upstream_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.orchestration_run.id")
+    )
+    ingestion_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.ingestion_run.id")
+    )
+    trigger_type: Mapped[TriggerType] = mapped_column(
+        enum_type(TriggerType, "trigger_type"), nullable=False
+    )
+    status: Mapped[OrchestrationStatus] = mapped_column(
+        enum_type(OrchestrationStatus, "orchestration_status"), nullable=False
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    scheduled_for: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    backfill_start: Mapped[Optional[date]] = mapped_column(Date)
+    backfill_end: Mapped[Optional[date]] = mapped_column(Date)
+    estimated_provider_cost: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, default=Decimal("0")
+    )
+    actual_provider_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    error_classification: Mapped[Optional[str]] = mapped_column(String(100))
+    error_detail: Mapped[Optional[str]] = mapped_column(Text)
+    configuration_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ExecutionAttempt(Base):
+    __tablename__ = "execution_attempt"
+    __table_args__ = (
+        UniqueConstraint(
+            "orchestration_run_id", "attempt_number", name="uq_execution_attempt_number"
+        ),
+        Index("ix_execution_attempt_status", "status", "started_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    orchestration_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.orchestration_run.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    trigger_type: Mapped[TriggerType] = mapped_column(
+        enum_type(TriggerType, "trigger_type"), nullable=False
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[OrchestrationStatus] = mapped_column(
+        enum_type(OrchestrationStatus, "orchestration_status"), nullable=False
+    )
+    worker_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    ingestion_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.ingestion_run.id")
+    )
+    error_classification: Mapped[Optional[str]] = mapped_column(String(100))
+    error_detail: Mapped[Optional[str]] = mapped_column(Text)
+    estimated_provider_cost: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, default=Decimal("0")
+    )
+    actual_provider_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class FreshnessState(Base):
+    __tablename__ = "freshness_state"
+    __table_args__ = (
+        Index(
+            "uq_freshness_scope",
+            "tenant_id",
+            "site_id",
+            "pipeline_id",
+            "schedule_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+        Index("ix_freshness_stale", "tenant_id", "stale_since"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    pipeline_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.pipeline_definition.id"), nullable=False
+    )
+    schedule_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.schedule_definition.id")
+    )
+    last_attempted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_successful_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expected_next_execution_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    freshness_sla_seconds: Mapped[Optional[int]] = mapped_column(Integer)
+    stale_since: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CostBudget(Base, TimestampMixin):
+    __tablename__ = "cost_budget"
+    __table_args__ = (
+        Index(
+            "uq_cost_budget_scope",
+            "tenant_id",
+            "site_id",
+            "data_source_id",
+            "pipeline_id",
+            "schedule_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint("daily_limit IS NULL OR daily_limit >= 0", name="ck_budget_daily"),
+        CheckConstraint("monthly_limit IS NULL OR monthly_limit >= 0", name="ck_budget_monthly"),
+        CheckConstraint("per_run_limit IS NULL OR per_run_limit >= 0", name="ck_budget_per_run"),
+        Index("ix_cost_budget_tenant", "tenant_id", "active"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    data_source_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source.id")
+    )
+    pipeline_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.pipeline_definition.id")
+    )
+    schedule_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.schedule_definition.id")
+    )
+    daily_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    monthly_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    per_run_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class CostLedgerEntry(Base):
+    __tablename__ = "cost_ledger_entry"
+    __table_args__ = (
+        UniqueConstraint("orchestration_run_id", name="uq_cost_ledger_run"),
+        Index("ix_cost_ledger_scope_date", "tenant_id", "occurred_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    data_source_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source.id")
+    )
+    pipeline_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.pipeline_definition.id"), nullable=False
+    )
+    schedule_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.schedule_definition.id")
+    )
+    orchestration_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.orchestration_run.id"), nullable=False
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class OperationalAlert(Base):
+    __tablename__ = "operational_alert"
+    __table_args__ = (
+        Index(
+            "uq_operational_alert_open",
+            "tenant_id",
+            "deduplication_key",
+            unique=True,
+            postgresql_where=text("status = 'OPEN'"),
+        ),
+        Index("ix_operational_alert_tenant_status", "tenant_id", "status", "opened_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    pipeline_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.pipeline_definition.id")
+    )
+    schedule_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.schedule_definition.id")
+    )
+    orchestration_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.orchestration_run.id")
+    )
+    alert_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    severity: Mapped[str] = mapped_column(String(32), nullable=False)
+    deduplication_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[AlertStatus] = mapped_column(
+        enum_type(AlertStatus, "alert_status"), nullable=False, default=AlertStatus.OPEN
+    )
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
