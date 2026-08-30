@@ -73,3 +73,18 @@ sources:
       - name: competitive_content_cohort_member
       - name: technology
       - name: technology_alias
+      - name: pipeline_definition
+      - name: pipeline_dependency
+      - name: schedule_definition
+      - name: scheduled_target
+      - name: orchestration_run
+        config: {loaded_at_field: created_at}
+      - name: execution_attempt
+        config: {loaded_at_field: created_at}
+      - name: freshness_state
+        config: {loaded_at_field: updated_at}
+      - name: cost_budget
+      - name: cost_ledger_entry
+        config: {loaded_at_field: created_at}
+      - name: operational_alert
+        config: {loaded_at_field: created_at}
