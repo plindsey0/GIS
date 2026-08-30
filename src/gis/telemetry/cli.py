@@ -66,8 +66,8 @@ def parser() -> argparse.ArgumentParser:
     send.add_argument("--write-key", required=True)
     send.add_argument("--tenant", default="vahomemath")
     send.add_argument("--site", default="vahomemath")
-    send.add_argument("--session-key", type=uuid.UUID, default=uuid.uuid4)
-    send.add_argument("--event-id", type=uuid.UUID, default=uuid.uuid4)
+    send.add_argument("--session-key", type=uuid.UUID, default=uuid.uuid4())
+    send.add_argument("--event-id", type=uuid.UUID, default=uuid.uuid4())
     send.add_argument("--event", default="page_view")
     send.add_argument("--page-path", default="/")
     return root
