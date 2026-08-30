@@ -88,3 +88,10 @@ sources:
         config: {loaded_at_field: created_at}
       - name: operational_alert
         config: {loaded_at_field: created_at}
+      - name: competitive_event
+        config: {loaded_at_field: created_at}
+      - name: competitive_event_evidence
+        config: {loaded_at_field: created_at}
+      - name: competitive_event_relationship
+        config: {loaded_at_field: created_at}
+      - name: competitive_event_policy

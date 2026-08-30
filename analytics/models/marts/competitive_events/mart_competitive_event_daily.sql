@@ -1,0 +1,5 @@
+select tenant_id, site_id, event_time::date as date, event_domain, event_type,
+       count(*) as event_count, count(distinct subject_key) as affected_subjects,
+       avg(confidence) as average_confidence
+from {{ ref('stg_competitive_events') }} where status = 'ACTIVE'
+group by 1,2,3,4,5
