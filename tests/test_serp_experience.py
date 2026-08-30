@@ -15,7 +15,12 @@ from gis.integrations.experience.pagespeed import (
     normalize_target,
 )
 from gis.integrations.serp.cli import add_query
-from gis.integrations.serp.dataforseo import API_URL, DataForSEOProvider
+from gis.integrations.serp.dataforseo import (
+    API_URL,
+    DataForSEOProvider,
+    DataForSEORequestError,
+    DataForSEOResponseError,
+)
 from gis.integrations.serp.service import (
     SerpCollector,
     estimate_cost,
@@ -24,6 +29,7 @@ from gis.integrations.serp.service import (
     normalize_url,
 )
 from gis.models import (
+    ConnectionStatus,
     ConnectionType,
     DataRightsPolicy,
     DataSource,
@@ -73,6 +79,41 @@ class FakeSerpProvider:
                 }
             ]
         }
+
+
+class FakeResponse:
+    def __init__(self, payload: object, status_code: int = 200) -> None:
+        self.payload = payload
+        self.status_code = status_code
+
+    def json(self) -> object:
+        if isinstance(self.payload, Exception):
+            raise self.payload
+        return self.payload
+
+
+class FakeHTTPSession:
+    def __init__(self, response: FakeResponse) -> None:
+        self.response = response
+        self.calls: list[dict[str, Any]] = []
+
+    def post(self, url: str, **kwargs: Any) -> FakeResponse:
+        self.calls.append({"url": url, **kwargs})
+        return self.response
+
+
+def provider_query(**values: object) -> TrackedQuery:
+    defaults: dict[str, object] = {
+        "query_text": "va loan calculator",
+        "normalized_query": "va loan calculator",
+        "tenant_id": uuid.uuid4(),
+        "site_id": uuid.uuid4(),
+        "device": "desktop",
+        "language_code": "en",
+        "country_code": "US",
+        "requested_depth": 100,
+    }
+    return TrackedQuery(**{**defaults, **values})
 
 
 def setup_scope(session: Session) -> tuple[Tenant, Site, DataSourceConnection]:
@@ -154,12 +195,89 @@ def test_dataforseo_request_mapping_does_not_include_credentials() -> None:
     assert "secret" not in str(body)
 
 
+def test_dataforseo_country_and_explicit_location_precedence() -> None:
+    provider = DataForSEOProvider("login", "secret")
+    assert provider.request_body(provider_query())[0]["location_code"] == 2840
+    assert provider.request_body(provider_query(location_code=21176))[0]["location_code"] == 21176
+    named = provider.request_body(provider_query(location_name="Austin,Texas,United States"))[0]
+    assert named["location_name"] == "Austin,Texas,United States"
+    assert "location_code" not in named
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"country_code": "ZZ"},
+        {"query_text": " "},
+        {"language_code": "english"},
+        {"device": "tablet"},
+        {"requested_depth": 201},
+        {"location_code": 2840, "location_name": "United States"},
+    ],
+)
+def test_invalid_dataforseo_request_never_calls_http(changes: dict[str, object]) -> None:
+    transport = FakeHTTPSession(FakeResponse({}))
+    provider = DataForSEOProvider("login", "secret", session=transport)  # type: ignore[arg-type]
+    with pytest.raises(DataForSEORequestError):
+        provider.collect(provider_query(**changes))
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    [
+        (FakeResponse(ValueError("bad json")), "valid JSON"),
+        (FakeResponse([]), "must be an object"),
+        (FakeResponse({"status_code": 40100, "status_message": "Authentication failed"}), "40100"),
+        (FakeResponse({"status_code": 20000, "tasks": []}), "no tasks"),
+        (
+            FakeResponse(
+                {
+                    "status_code": 20000,
+                    "tasks": [
+                        {
+                            "status_code": 40501,
+                            "status_message": "Invalid Field: location",
+                            "result": None,
+                        }
+                    ],
+                }
+            ),
+            "task failed: 40501 Invalid Field: location",
+        ),
+    ],
+)
+def test_dataforseo_response_failures_are_meaningful(response: FakeResponse, message: str) -> None:
+    transport = FakeHTTPSession(response)
+    provider = DataForSEOProvider("login", "secret", session=transport)  # type: ignore[arg-type]
+    with pytest.raises(DataForSEOResponseError, match=message):
+        provider.collect(provider_query())
+
+
+def test_dataforseo_http_failure_is_sanitized() -> None:
+    response = FakeResponse(
+        {"status_message": "password=secret Authorization=Basic-token"}, status_code=401
+    )
+    provider = DataForSEOProvider(
+        "login",
+        "secret",
+        session=FakeHTTPSession(response),  # type: ignore[arg-type]
+    )
+    with pytest.raises(DataForSEOResponseError) as raised:
+        provider.collect(provider_query())
+    assert "secret" not in str(raised.value)
+    assert "Basic-token" not in str(raised.value)
+
+
 def test_serp_collection_provenance_ownership_and_revisions(session: Session) -> None:
     _, _, connection = setup_scope(session)
     query = add_query(session, "vahomemath", "vahomemath", "va loan calculator")
     first = SerpCollector(session, FakeSerpProvider()).sync(connection.id, query)
     second = SerpCollector(session, FakeSerpProvider()).sync(connection.id, query)
     assert first.status is IngestionStatus.SUCCEEDED and second.status is IngestionStatus.SUCCEEDED
+    assert first.records_received == 2 and first.records_inserted == 2
+    assert connection.status is ConnectionStatus.ACTIVE
+    assert connection.last_successful_sync_at is not None
     observations = session.scalars(
         select(SerpObservation).order_by(SerpObservation.created_at)
     ).all()
@@ -186,6 +304,53 @@ def test_failed_provider_run_never_leaks_secret(session: Session) -> None:
     run = SerpCollector(session, Failure()).sync(connection.id, query)
     assert run.status is IngestionStatus.FAILED and run.error_summary == "RuntimeError"
     assert "supersecret" not in (run.error_summary or "")
+
+
+def test_failed_task_null_result_persists_safe_diagnostic(session: Session) -> None:
+    _, _, connection = setup_scope(session)
+    query = add_query(session, "vahomemath", "vahomemath", "failed provider task")
+    payload = {
+        "status_code": 20000,
+        "tasks": [
+            {
+                "status_code": 40501,
+                "status_message": "Invalid Field: location",
+                "result": None,
+            }
+        ],
+    }
+    provider = DataForSEOProvider(
+        "login",
+        "secret",
+        session=FakeHTTPSession(FakeResponse(payload)),  # type: ignore[arg-type]
+    )
+    run = SerpCollector(session, provider).sync(connection.id, query)
+    assert run.status is IngestionStatus.FAILED
+    assert run.error_count == 1 and run.completed_at is not None
+    assert run.error_summary == (
+        "DataForSEOResponseError: task failed: 40501 Invalid Field: location"
+    )
+    assert run.source_metadata["provider_status_code"] == 40501
+    assert connection.status is not ConnectionStatus.ACTIVE
+
+
+def test_successful_empty_serp_activates_connection(session: Session) -> None:
+    _, _, connection = setup_scope(session)
+    query = add_query(session, "vahomemath", "vahomemath", "empty serp")
+    payload = {
+        "status_code": 20000,
+        "tasks": [{"id": "empty-task", "status_code": 20000, "cost": 0.002, "result": []}],
+    }
+    provider = DataForSEOProvider(
+        "login",
+        "secret",
+        session=FakeHTTPSession(FakeResponse(payload)),  # type: ignore[arg-type]
+    )
+    run = SerpCollector(session, provider).sync(connection.id, query)
+    assert run.status is IngestionStatus.SUCCEEDED
+    assert run.records_received == 0 and run.records_inserted == 0
+    assert connection.status is ConnectionStatus.ACTIVE
+    assert connection.last_successful_sync_at is not None
 
 
 def test_cost_estimation_is_deterministic() -> None:

@@ -224,7 +224,11 @@ def run(arguments: list[str] | None = None) -> int:
                 run = SerpCollector(session, DataForSEOProvider(login, password)).sync(
                     connection.id, query
                 )
-                output = {"run_id": str(run.id), "status": run.status.value}
+                output = {
+                    "run_id": str(run.id),
+                    "status": run.status.value,
+                    **({"error": run.error_summary} if run.error_summary else {}),
+                }
             else:
                 observation_rows = session.scalars(
                     select(SerpObservation)

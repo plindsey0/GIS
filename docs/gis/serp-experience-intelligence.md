@@ -26,9 +26,13 @@ Canonical feature values are `ORGANIC`, `PAID`, `FEATURED_SNIPPET`, `AI_ANSWER`,
 
 ## Collection and cost control
 
-DataForSEO uses the Google Organic live advanced endpoint. Connections retain only a credential reference. For the CLI, `env:VARIABLE` points to ignored JSON containing `login` and `password`. The request preserves device, language, location, and requested depth. Collection metadata records provider task ID/cost, collector version, query, depth, source acquisition method, and policy version. Errors store their class only, preventing provider messages from leaking credentials.
+DataForSEO uses the Google Organic Live Advanced endpoint. Connections retain only a credential reference. For the CLI, `env:VARIABLE` points to ignored JSON containing `login` and `password`. Provider request validation happens before HTTP: keyword and two-letter language must be present, device must be `desktop` or `mobile`, depth must be 1–200, and exactly one geographic target must resolve.
 
-Cost estimation is configuration-driven. `--unit-cost` is cost per provider task; the CLI default is **USD 0.002**, an operational placeholder last reviewed 2026-08-29, not a claim about current DataForSEO pricing. Monthly cadence multipliers are 1 for one-time, 4.345 for weekly, and 30 for daily. Formula: `ceil(queries × cadence multiplier) × unit cost`. Confirm current contract pricing before collection.
+Geographic translation stays inside the adapter. An explicit `location_code` takes precedence; otherwise an explicit `location_name` is sent. When neither is supplied, a canonical country code must resolve through the adapter's reviewed DataForSEO country-location mapping. `US` maps to DataForSEO's United States location code `2840`. Unmapped countries fail closed before HTTP rather than silently producing an untargeted request. Supplying both location fields is rejected as ambiguous.
+
+DataForSEO top-level and task-level `status_code` values are validated independently; `20000` is treated as success. Malformed JSON, malformed tasks/results, provider failures, and a null result produce sanitized provider exceptions. Safe status codes/messages are retained in the failed ingestion run, but credentials, authorization data, and request headers are not. A successful task with an empty result array is a successful zero-record run, not a provider failure. The first successful provider collection, including a legitimate empty SERP, changes the connection from `PENDING` to `ACTIVE`; local credential availability alone does not.
+
+Cost estimation is configuration-driven. `--unit-cost` is cost per provider task; the CLI default is **USD 0.002**, an operational placeholder last reviewed 2026-08-29, not a claim about current DataForSEO pricing. Monthly cadence multipliers are 1 for one-time, 4.345 for weekly, and 30 for daily. Formula: `ceil(queries × cadence multiplier) × unit cost`. Confirm current contract pricing before collection. Live sync can be billable, and the endpoint bills in result-depth increments, so depth above 10 can increase task cost.
 
 ```bash
 gis-serp configure --tenant vahomemath --site vahomemath --credential-reference env:DATAFORSEO_CREDENTIAL_JSON
@@ -41,6 +45,8 @@ gis-serp inspect --limit 10
 ```
 
 Use an external scheduler to invoke active daily or weekly query sets. The epic intentionally adds no scheduler. Tests use fixtures and never make billable requests.
+
+`gis-serp validate` checks only that the referenced credential value is locally available and parseable. It does not contact DataForSEO, prove authentication, or activate the connection. `gis-serp sync` is the controlled live-provider check and may incur a charge; on failure its JSON output includes the persisted sanitized diagnostic.
 
 ## Experience semantics
 
