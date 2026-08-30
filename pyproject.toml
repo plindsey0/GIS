@@ -36,6 +36,8 @@ gis-gsc = "gis.integrations.gsc.cli:main"
 gis-seed = "gis.seed:main"
 gis-telemetry = "gis.telemetry.cli:main"
 gis-provenance = "gis.provenance.cli:main"
+gis-serp = "gis.integrations.serp.cli:main"
+gis-experience = "gis.integrations.experience.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gis"]

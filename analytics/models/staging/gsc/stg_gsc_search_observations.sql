@@ -1,5 +1,6 @@
 select
-  id as observation_id, tenant_id, site_id, observed_date, query, page,
+  id as observation_id, tenant_id, site_id, observed_date, query,
+  lower(regexp_replace(trim(query), '\\s+', ' ', 'g')) as normalized_query, page,
   country, device, search_appearance, search_type, collection_grain,
   clicks, impressions, ctr, position,
   data_source_connection_id as connection_id, rights_policy_id,
