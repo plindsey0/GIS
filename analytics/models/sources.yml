@@ -27,6 +27,12 @@ sources:
         config: {loaded_at_field: created_at}
       - name: experience_observation
         config: {loaded_at_field: created_at}
+      - name: external_search_observation
+        config: {loaded_at_field: created_at}
+      - name: external_keyword_ranking
+        config: {loaded_at_field: created_at}
+      - name: external_competitor_observation
+        config: {loaded_at_field: created_at}
   - name: gis_core
     schema: gis_core
     description: Canonical GIS entities owned by application migrations.

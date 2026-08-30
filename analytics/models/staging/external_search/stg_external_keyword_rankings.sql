@@ -1,0 +1,30 @@
+select
+    r.id as ranking_id,
+    o.tenant_id,
+    o.site_id,
+    o.observed_date,
+    o.target_domain,
+    o.country_code,
+    o.location_code,
+    o.language_code,
+    o.device,
+    r.keyword,
+    r.normalized_keyword,
+    r.ranking_domain,
+    r.ranking_url,
+    r.normalized_url,
+    r.position,
+    r.prior_position,
+    r.ranking_type,
+    r.search_volume,
+    r.cpc,
+    r.paid_competition,
+    r.competition_index,
+    r.search_intent,
+    r.keyword_difficulty,
+    r.estimated_traffic,
+    r.estimated_traffic_share,
+    r.metric_semantics
+from {{ source('gis_raw', 'external_keyword_ranking') }} r
+join {{ ref('stg_external_search_observations') }} o
+  on o.observation_id = r.external_search_observation_id
