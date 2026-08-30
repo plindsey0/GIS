@@ -3,6 +3,7 @@ version: 1.0.0
 config-version: 2
 profile: vahomemath_gis
 model-paths: ["models"]
+seed-paths: ["seeds"]
 test-paths: ["tests"]
 macro-paths: ["macros"]
 clean-targets: ["target", "dbt_packages", "logs"]
@@ -18,3 +19,7 @@ models:
     marts:
       +materialized: table
       +schema: gis_analytics
+
+seeds:
+  vahomemath_gis:
+    +schema: gis_analytics

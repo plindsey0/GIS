@@ -19,6 +19,40 @@ VARIABLE_PATTERN = re.compile(r"{{\s*([a-z_]+)\s*}}")
 DATE_VARIABLES = {"start_date", "end_date"}
 
 
+def derive_capability_status(
+    *,
+    implemented: bool,
+    rights_blocked: bool = False,
+    latest_run_status: str | None = None,
+    evidence_count: int = 0,
+    stale: bool = False,
+    all_schedules_disabled: bool = False,
+    active_connection: bool = False,
+    connection_exists: bool = False,
+    open_alerts: int = 0,
+) -> str:
+    """Reference contract for the dbt capability-status precedence."""
+    if not implemented:
+        return "NOT_IMPLEMENTED"
+    if rights_blocked:
+        return "BLOCKED_BY_RIGHTS"
+    if latest_run_status in {"FAILED", "BLOCKED"}:
+        return "FAILED"
+    if evidence_count > 0 and open_alerts > 0:
+        return "DEGRADED"
+    if evidence_count > 0 and stale:
+        return "STALE"
+    if all_schedules_disabled:
+        return "DISABLED"
+    if evidence_count == 0 and (active_connection or all_schedules_disabled):
+        return "IMPLEMENTED_NO_DATA"
+    if evidence_count == 0 and connection_exists:
+        return "CONFIGURED"
+    if evidence_count == 0:
+        return "IMPLEMENTED_NO_DATA"
+    return "OPERATIONAL"
+
+
 class MetabaseAPI:
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url.rstrip("/")
@@ -96,7 +130,16 @@ def initialize_or_login(api: MetabaseAPI) -> None:
                 "database": database_payload(),
             },
         )
-    session = api.request("POST", "/api/session", {"username": email, "password": password})
+    try:
+        session = api.request("POST", "/api/session", {"username": email, "password": password})
+    except RuntimeError as error:
+        if " 401 " in str(error):
+            raise RuntimeError(
+                "Metabase login failed. The persisted volume may have been initialized with "
+                "different admin credentials; use that account or deliberately recreate the "
+                "local volume. Provisioning will not delete it."
+            ) from error
+        raise
     api.session_id = session["id"]
 
 
@@ -108,13 +151,35 @@ def ensure_database(api: MetabaseAPI) -> int:
     return int(api.request("POST", "/api/database", database_payload())["id"])
 
 
-def ensure_collection(api: MetabaseAPI, name: str) -> int:
+def ensure_collection(api: MetabaseAPI, name: str, parent_id: int | None = None) -> int:
     existing = next(
         (item for item in api.request("GET", "/api/collection") if item["name"] == name), None
     )
+    payload = {"name": name, "color": "#509EE3", "parent_id": parent_id}
     if existing:
-        return int(existing["id"])
-    return int(api.request("POST", "/api/collection", {"name": name, "color": "#509EE3"})["id"])
+        collection_id = int(existing["id"])
+        api.request("PUT", f"/api/collection/{collection_id}", payload)
+        return collection_id
+    return int(api.request("POST", "/api/collection", payload)["id"])
+
+
+def ensure_collections(api: MetabaseAPI, definitions: list[dict[str, Any]]) -> dict[str, int]:
+    collection_ids: dict[str, int] = {}
+    pending = list(definitions)
+    while pending:
+        progressed = False
+        for definition in pending[:]:
+            parent = definition.get("parent")
+            if parent and parent not in collection_ids:
+                continue
+            collection_ids[definition["name"]] = ensure_collection(
+                api, definition["name"], collection_ids.get(parent)
+            )
+            pending.remove(definition)
+            progressed = True
+        if not progressed:
+            raise RuntimeError("Collection hierarchy contains an unknown parent or cycle")
+    return collection_ids
 
 
 def template_tags(sql: str) -> dict[str, dict[str, Any]]:
@@ -144,7 +209,7 @@ def ensure_card(
     sql = (ROOT / definition["file"]).read_text()
     payload = {
         "name": definition["name"],
-        "description": "Provisioned from dashboard/manifest.json",
+        "description": definition.get("description", "Provisioned from dashboard/manifest.json"),
         "collection_id": collection_id,
         "display": definition["display"],
         "visualization_settings": definition.get("visualization_settings", {}),
@@ -180,7 +245,7 @@ def ensure_dashboard(
     collection_id: int,
     cards: list[tuple[int, dict[str, Any]]],
 ) -> int:
-    definition = manifest["dashboard"]
+    definition = manifest
     payload = {
         "name": definition["name"],
         "description": definition["description"],
@@ -231,13 +296,18 @@ def main() -> int:
     api.wait_until_ready()
     initialize_or_login(api)
     database_id = ensure_database(api)
-    collection_id = ensure_collection(api, manifest["collection"])
-    cards = [
-        (ensure_card(api, card, database_id, collection_id), card) for card in manifest["cards"]
-    ]
-    dashboard_id = ensure_dashboard(api, manifest, collection_id, cards)
-    validate_cards(api, cards)
-    print(f"Provisioned Growth Dashboard — P0 (dashboard id {dashboard_id})")
+    collection_ids = ensure_collections(api, manifest["collections"])
+    dashboard_ids = []
+    for dashboard in manifest["dashboards"]:
+        collection_id = collection_ids[dashboard["collection"]]
+        cards = [
+            (ensure_card(api, card, database_id, collection_id), card)
+            for card in dashboard["cards"]
+        ]
+        definition = {**dashboard, "parameters": manifest["parameters"]}
+        dashboard_ids.append(ensure_dashboard(api, definition, collection_id, cards))
+        validate_cards(api, cards)
+    print(f"Provisioned {len(dashboard_ids)} GIS dashboards: {dashboard_ids}")
     return 0
 
 

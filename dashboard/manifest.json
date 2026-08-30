@@ -1,26 +1,46 @@
 {
-  "collection": "GIS Operations",
-  "dashboard": {
-    "name": "Growth Dashboard — P0",
-    "description": "Operational growth, search, behavior, conversion, and source-quality views. Missing source coverage is not a zero.",
-    "parameters": [
-      {"id": "tenant_id", "name": "Tenant ID", "slug": "tenant_id", "type": "string/=", "sectionId": "string"},
-      {"id": "site_id", "name": "Site ID", "slug": "site_id", "type": "string/=", "sectionId": "string"},
-      {"id": "start_date", "name": "Start date", "slug": "start_date", "type": "date/single", "sectionId": "date"},
-      {"id": "end_date", "name": "End date", "slug": "end_date", "type": "date/single", "sectionId": "date"}
-    ]
-  },
-  "cards": [
-    {"name": "A1 · GSC Impressions", "file": "questions/kpi_gsc_impressions.sql", "display": "scalar", "row": 0, "col": 0, "size_x": 8, "size_y": 3},
-    {"name": "A2 · GA4 Sessions", "file": "questions/kpi_ga4_sessions.sql", "display": "scalar", "row": 0, "col": 8, "size_x": 8, "size_y": 3},
-    {"name": "A3 · First-Party Sessions", "file": "questions/kpi_first_party_sessions.sql", "display": "scalar", "row": 0, "col": 16, "size_x": 8, "size_y": 3},
-    {"name": "A · Executive Overview", "file": "questions/executive_overview.sql", "display": "table", "row": 3, "col": 0, "size_x": 24, "size_y": 7},
-    {"name": "B · Search Performance", "file": "questions/search_performance.sql", "display": "line", "visualization_settings": {"graph.dimensions": ["date"], "graph.metrics": ["impressions", "clicks"]}, "row": 10, "col": 0, "size_x": 24, "size_y": 7},
-    {"name": "C · Page Performance", "file": "questions/page_performance.sql", "display": "table", "row": 17, "col": 0, "size_x": 24, "size_y": 8},
-    {"name": "D · Keyword / Query Performance", "file": "questions/keyword_performance.sql", "display": "table", "row": 25, "col": 0, "size_x": 24, "size_y": 8},
-    {"name": "E · Acquisition", "file": "questions/acquisition.sql", "display": "table", "row": 33, "col": 0, "size_x": 24, "size_y": 8},
-    {"name": "F · Calculator Performance", "file": "questions/calculator_performance.sql", "display": "table", "row": 41, "col": 0, "size_x": 24, "size_y": 7},
-    {"name": "G · Conversion Performance", "file": "questions/conversion_performance.sql", "display": "table", "row": 48, "col": 0, "size_x": 24, "size_y": 7},
-    {"name": "H · Data Quality / Reconciliation", "file": "questions/data_quality.sql", "display": "table", "row": 55, "col": 0, "size_x": 24, "size_y": 8}
+  "collections": [
+    {"name": "GIS"}, {"name": "Executive", "parent": "GIS"}, {"name": "Growth Performance", "parent": "GIS"},
+    {"name": "Search Intelligence", "parent": "GIS"}, {"name": "Competitive Intelligence", "parent": "GIS"},
+    {"name": "Content", "parent": "Competitive Intelligence"}, {"name": "Technology", "parent": "Competitive Intelligence"},
+    {"name": "Authority", "parent": "Competitive Intelligence"}, {"name": "Events", "parent": "Competitive Intelligence"},
+    {"name": "Operations", "parent": "GIS"}, {"name": "Governance", "parent": "GIS"},
+    {"name": "Cost", "parent": "GIS"}, {"name": "Diagnostics", "parent": "GIS"}
+  ],
+  "parameters": [
+    {"id": "tenant_id", "name": "Tenant ID", "slug": "tenant_id", "type": "string/=", "sectionId": "string"},
+    {"id": "site_id", "name": "Site ID", "slug": "site_id", "type": "string/=", "sectionId": "string"},
+    {"id": "start_date", "name": "Start date", "slug": "start_date", "type": "date/single", "sectionId": "date"},
+    {"id": "end_date", "name": "End date", "slug": "end_date", "type": "date/single", "sectionId": "date"}
+  ],
+  "dashboards": [
+    {"name": "GIS Executive Intelligence", "collection": "Executive", "description": "Site performance, observed competitive change, intelligence coverage, system health, governance, and cost. No universal score; no recommendation semantics.", "cards": [
+      {"name": "Executive · Organic clicks", "file": "questions/executive/kpi_organic_clicks.sql", "display": "scalar", "row": 0, "col": 0, "size_x": 4, "size_y": 3},
+      {"name": "Executive · Conversions", "file": "questions/executive/kpi_conversions.sql", "display": "scalar", "row": 0, "col": 4, "size_x": 4, "size_y": 3},
+      {"name": "Executive · Material changes", "file": "questions/executive/kpi_material_events.sql", "display": "scalar", "row": 0, "col": 8, "size_x": 4, "size_y": 3},
+      {"name": "Executive · Intelligence coverage", "file": "questions/executive/kpi_coverage.sql", "display": "scalar", "row": 0, "col": 12, "size_x": 4, "size_y": 3},
+      {"name": "Executive · Open alerts", "file": "questions/executive/kpi_alerts.sql", "display": "scalar", "row": 0, "col": 16, "size_x": 4, "size_y": 3},
+      {"name": "Executive · Observed cost", "file": "questions/executive/cost_status.sql", "display": "table", "row": 0, "col": 20, "size_x": 4, "size_y": 3},
+      {"name": "Executive · Growth performance", "file": "questions/executive/growth_performance.sql", "display": "line", "visualization_settings": {"graph.dimensions": ["date"], "graph.metrics": ["organic_clicks", "sessions", "conversions"]}, "row": 3, "col": 0, "size_x": 24, "size_y": 7},
+      {"name": "Executive · Equivalent-period comparison", "file": "questions/executive/period_comparison.sql", "display": "table", "row": 10, "col": 0, "size_x": 24, "size_y": 5},
+      {"name": "Executive · Competitive position", "file": "questions/executive/competitive_position.sql", "display": "table", "row": 15, "col": 0, "size_x": 12, "size_y": 8},
+      {"name": "Executive · Recent material changes", "file": "questions/executive/recent_events.sql", "display": "table", "row": 15, "col": 12, "size_x": 12, "size_y": 8},
+      {"name": "Executive · Observed gaps", "file": "questions/executive/observed_gaps.sql", "display": "table", "row": 23, "col": 0, "size_x": 24, "size_y": 8},
+      {"name": "Executive · Capability coverage", "file": "questions/executive/capability_coverage.sql", "display": "table", "row": 31, "col": 0, "size_x": 24, "size_y": 9},
+      {"name": "Executive · GIS operations", "file": "questions/executive/operations.sql", "display": "table", "row": 40, "col": 0, "size_x": 12, "size_y": 7},
+      {"name": "Executive · Governance", "file": "questions/executive/governance.sql", "display": "table", "row": 40, "col": 12, "size_x": 12, "size_y": 7},
+      {"name": "Executive · Future intelligence layers", "file": "questions/executive/future_layers.sql", "display": "table", "row": 47, "col": 0, "size_x": 24, "size_y": 7}
+    ]},
+    {"name": "GIS Operations & Governance", "collection": "Operations", "description": "Pipeline freshness, enabled versus disabled schedules, alerts, governance, and observed-versus-unknown cost.", "cards": [
+      {"name": "Operations · Capability detail", "file": "questions/executive/capability_coverage.sql", "display": "table", "row": 0, "col": 0, "size_x": 24, "size_y": 10},
+      {"name": "Operations · Health detail", "file": "questions/executive/operations.sql", "display": "table", "row": 10, "col": 0, "size_x": 12, "size_y": 7},
+      {"name": "Operations · Governance detail", "file": "questions/executive/governance.sql", "display": "table", "row": 10, "col": 12, "size_x": 12, "size_y": 7},
+      {"name": "Operations · Cost detail", "file": "questions/executive/cost_detail.sql", "display": "table", "row": 17, "col": 0, "size_x": 24, "size_y": 7}
+    ]},
+    {"name": "GIS Competitive Evidence", "collection": "Competitive Intelligence", "description": "Observed search, content, technology, authority, event, and gap evidence. Differences are descriptive, not recommendations.", "cards": [
+      {"name": "Competitive · Position detail", "file": "questions/executive/competitive_position.sql", "display": "table", "row": 0, "col": 0, "size_x": 24, "size_y": 10},
+      {"name": "Competitive · Event evidence", "file": "questions/executive/recent_events.sql", "display": "table", "row": 10, "col": 0, "size_x": 24, "size_y": 9},
+      {"name": "Competitive · Gap evidence", "file": "questions/executive/observed_gaps.sql", "display": "table", "row": 19, "col": 0, "size_x": 24, "size_y": 9}
+    ]}
   ]
 }

@@ -43,8 +43,11 @@ events, calculator runs, and conversions independently from GA4 aggregates.
 
 See [the analytics guide](docs/gis/analytics.md) for dbt setup, models, metrics, and mart contracts.
 
-The Metabase Growth Dashboard is reproducibly provisioned from checked-in SQL and configuration.
-See [the dashboard guide](docs/gis/growth-dashboard.md) for local startup and operator semantics.
+The Metabase executive intelligence dashboards are reproducibly provisioned from checked-in SQL,
+metric contracts, capability structure, and configuration. See the
+[executive dashboard guide](docs/gis/executive-intelligence-dashboard.md) for architecture,
+local startup, status semantics, and operator guidance. The original
+[Growth Dashboard guide](docs/gis/growth-dashboard.md) remains as the Epic 6 implementation record.
 
 Versioned per-use rights decisions, fail-closed enforcement, ingestion provenance, and dbt asset
 lineage are documented in [the data-rights and provenance guide](docs/gis/data-rights-provenance.md).
