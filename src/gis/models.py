@@ -67,6 +67,68 @@ class RightsDecision(str, enum.Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class RightsStatus(str, enum.Enum):
+    ALLOWED = "ALLOWED"
+    DENIED = "DENIED"
+    UNKNOWN = "UNKNOWN"
+
+
+class PermittedUse(str, enum.Enum):
+    INTERNAL_ANALYSIS = "internal_analysis"
+    COMMERCIAL_USE = "commercial_use"
+    RAW_RETENTION = "raw_retention"
+    NORMALIZED_RETENTION = "normalized_retention"
+    DERIVATIVE_CREATION = "derivative_creation"
+    AGGREGATE_STATISTICS = "aggregate_statistics"
+    EXTERNAL_PUBLICATION = "external_publication"
+    RAW_REDISTRIBUTION = "raw_redistribution"
+    NORMALIZED_REDISTRIBUTION = "normalized_redistribution"
+    CUSTOMER_FACING_DISPLAY = "customer_facing_display"
+    CUSTOMER_EXPORT = "customer_export"
+    RAG_RETRIEVAL = "rag_retrieval"
+    AI_INFERENCE = "ai_inference"
+    AI_TRAINING = "ai_training"
+
+
+class AcquisitionMethod(str, enum.Enum):
+    FIRST_PARTY = "FIRST_PARTY"
+    PUBLIC_API = "PUBLIC_API"
+    AUTHENTICATED_API = "AUTHENTICATED_API"
+    LICENSED_API = "LICENSED_API"
+    OPEN_DATA = "OPEN_DATA"
+    PUBLIC_WEB = "PUBLIC_WEB"
+    USER_PROVIDED = "USER_PROVIDED"
+    MANUAL_IMPORT = "MANUAL_IMPORT"
+    OTHER = "OTHER"
+    UNKNOWN = "UNKNOWN"
+
+
+class AssetType(str, enum.Enum):
+    TABLE = "TABLE"
+    VIEW = "VIEW"
+    MODEL = "MODEL"
+    DATASET = "DATASET"
+    METRIC = "METRIC"
+    EVIDENCE = "EVIDENCE"
+    OTHER = "OTHER"
+
+
+class AssetLayer(str, enum.Enum):
+    RAW = "RAW"
+    CORE = "CORE"
+    STAGING = "STAGING"
+    INTERMEDIATE = "INTERMEDIATE"
+    ANALYTICS = "ANALYTICS"
+    EXTERNAL = "EXTERNAL"
+    OTHER = "OTHER"
+
+
+class LineageType(str, enum.Enum):
+    TRANSFORMS = "TRANSFORMS"
+    REFERENCES = "REFERENCES"
+    DERIVES = "DERIVES"
+
+
 class ConnectionType(str, enum.Enum):
     NATIVE = "NATIVE"
     BYOD = "BYOD"
@@ -99,6 +161,16 @@ class QualityFlag(str, enum.Enum):
 
 def enum_type(enum_class: type[enum.Enum], name: str) -> Enum:
     return Enum(enum_class, name=name, schema=SCHEMA, native_enum=True)
+
+
+def value_enum_type(enum_class: type[enum.Enum], name: str) -> Enum:
+    return Enum(
+        enum_class,
+        name=name,
+        schema=SCHEMA,
+        native_enum=True,
+        values_callable=lambda items: [str(item.value) for item in items],
+    )
 
 
 class Base(DeclarativeBase):
@@ -287,6 +359,38 @@ class DataRightsPolicy(Base, TimestampMixin):
     license_url: Mapped[Optional[str]] = mapped_column(String(2048))
     license_review_date: Mapped[Optional[date]] = mapped_column(Date)
     policy_notes: Mapped[Optional[str]] = mapped_column(Text)
+    policy_version: Mapped[str] = mapped_column(String(100), nullable=False, default="1")
+    effective_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    review_authority: Mapped[Optional[str]] = mapped_column(String(255))
+    documented_basis: Mapped[Optional[str]] = mapped_column(Text)
+    jurisdiction_notes: Mapped[Optional[str]] = mapped_column(Text)
+    supersedes_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id", ondelete="SET NULL")
+    )
+
+
+class DataRightsGrant(Base, TimestampMixin):
+    __tablename__ = "data_rights_grant"
+    __table_args__ = (
+        UniqueConstraint("policy_id", "permitted_use", name="uq_rights_grant_policy_use"),
+        Index("ix_rights_grant_policy", "policy_id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.data_rights_policy.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    permitted_use: Mapped[PermittedUse] = mapped_column(
+        value_enum_type(PermittedUse, "permitted_use"), nullable=False
+    )
+    status: Mapped[RightsStatus] = mapped_column(
+        enum_type(RightsStatus, "rights_status"), nullable=False, default=RightsStatus.UNKNOWN
+    )
+    reason: Mapped[Optional[str]] = mapped_column(Text)
 
 
 class DataSource(Base, TimestampMixin):
@@ -303,6 +407,14 @@ class DataSource(Base, TimestampMixin):
     default_rights_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id", ondelete="SET NULL")
     )
+    acquisition_method: Mapped[AcquisitionMethod] = mapped_column(
+        enum_type(AcquisitionMethod, "acquisition_method"),
+        nullable=False,
+        default=AcquisitionMethod.UNKNOWN,
+    )
+    authoritative_url: Mapped[Optional[str]] = mapped_column(String(2048))
+    terms_url: Mapped[Optional[str]] = mapped_column(String(2048))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class DataSourceConnection(Base, TimestampMixin):
@@ -400,10 +512,101 @@ class IngestionRun(Base):
     )
     records_received: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     records_inserted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    records_updated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     records_rejected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_summary: Mapped[Optional[str]] = mapped_column(Text)
     source_cursor: Mapped[Optional[str]] = mapped_column(Text)
+    rights_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id", ondelete="SET NULL")
+    )
+    acquisition_method: Mapped[AcquisitionMethod] = mapped_column(
+        enum_type(AcquisitionMethod, "acquisition_method"),
+        nullable=False,
+        default=AcquisitionMethod.UNKNOWN,
+    )
+    collector_name: Mapped[Optional[str]] = mapped_column(String(255))
+    collector_version: Mapped[Optional[str]] = mapped_column(String(100))
+    schema_version: Mapped[Optional[str]] = mapped_column(String(100))
+    requested_start_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    requested_end_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DataAsset(Base, TimestampMixin):
+    __tablename__ = "data_asset"
+    __table_args__ = (
+        UniqueConstraint("canonical_name", name="uq_data_asset_canonical_name"),
+        Index("ix_data_asset_layer", "layer"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    canonical_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    asset_type: Mapped[AssetType] = mapped_column(
+        enum_type(AssetType, "asset_type"), nullable=False
+    )
+    layer: Mapped[AssetLayer] = mapped_column(enum_type(AssetLayer, "asset_layer"), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+
+
+class DataAssetSource(Base, TimestampMixin):
+    __tablename__ = "data_asset_source"
+    __table_args__ = (
+        UniqueConstraint(
+            "asset_id", "data_source_id", "data_source_connection_id", name="uq_asset_source_scope"
+        ),
+        Index("ix_data_asset_source_asset", "asset_id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.data_asset.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    data_source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.data_source.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    data_source_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id", ondelete="CASCADE")
+    )
+    rights_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id", ondelete="SET NULL")
+    )
+
+
+class DataAssetLineage(Base):
+    __tablename__ = "data_asset_lineage"
+    __table_args__ = (
+        CheckConstraint("upstream_asset_id <> downstream_asset_id", name="ck_lineage_not_self"),
+        UniqueConstraint("upstream_asset_id", "downstream_asset_id", name="uq_asset_lineage_edge"),
+        Index("ix_lineage_downstream", "downstream_asset_id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    upstream_asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.data_asset.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    downstream_asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.data_asset.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    lineage_type: Mapped[LineageType] = mapped_column(
+        enum_type(LineageType, "lineage_type"), nullable=False, default=LineageType.TRANSFORMS
+    )
+    transformation_reference: Mapped[Optional[str]] = mapped_column(String(2048))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

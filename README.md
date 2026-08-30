@@ -45,3 +45,6 @@ See [the analytics guide](docs/gis/analytics.md) for dbt setup, models, metrics,
 
 The Metabase Growth Dashboard is reproducibly provisioned from checked-in SQL and configuration.
 See [the dashboard guide](docs/gis/growth-dashboard.md) for local startup and operator semantics.
+
+Versioned per-use rights decisions, fail-closed enforcement, ingestion provenance, and dbt asset
+lineage are documented in [the data-rights and provenance guide](docs/gis/data-rights-provenance.md).

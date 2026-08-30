@@ -165,7 +165,10 @@ class GSCCollector:
         if rights_policy_id is None or self.session.get(DataRightsPolicy, rights_policy_id) is None:
             raise GSCConfigurationError("no applicable data-rights policy")
         assert connection.site_id is not None
-        run = self._start_run(connection)
+        run = self._start_run(connection, source, rights_policy_id)
+        run.requested_start_at = datetime.combine(start_date, datetime.min.time(), timezone.utc)
+        run.requested_end_at = datetime.combine(end_date, datetime.max.time(), timezone.utc)
+        self.session.commit()
         completed_chunks = 0
         for chunk_start, chunk_end in date_chunks(start_date, end_date):
             try:
@@ -240,13 +243,20 @@ class GSCCollector:
             raise GSCConfigurationError("connection source not found")
         return connection, source
 
-    def _start_run(self, connection: DataSourceConnection) -> IngestionRun:
+    def _start_run(
+        self, connection: DataSourceConnection, source: DataSource, rights_policy_id: uuid.UUID
+    ) -> IngestionRun:
         run = IngestionRun(
             tenant_id=connection.tenant_id,
             site_id=connection.site_id,
             data_source_connection_id=connection.id,
             started_at=_now(),
             status=IngestionStatus.PENDING,
+            rights_policy_id=rights_policy_id,
+            acquisition_method=source.acquisition_method,
+            collector_name="gis.integrations.gsc",
+            collector_version="1",
+            schema_version="1",
         )
         self.session.add(run)
         self.session.commit()
