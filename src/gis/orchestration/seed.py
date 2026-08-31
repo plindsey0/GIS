@@ -66,6 +66,13 @@ VAHOMEMATH_CADENCE = (
         "COLLECTOR_CLI",
         True,
     ),
+    Cadence(
+        "market_intelligence",
+        "Market intelligence weekly",
+        "30 11 * * 5",
+        None,
+        "COLLECTOR_CLI",
+    ),
     Cadence("experience", "PageSpeed and CrUX weekly", "0 11 * * 4", "pagespeed", "COLLECTOR_CLI"),
     Cadence(
         "competitive_events", "Competitive events daily", "0 12 * * *", None, "COMPETITIVE_EVENTS"
@@ -144,6 +151,12 @@ def seed_vahomemath_cadence(session: Session) -> list[ScheduleDefinition]:
         ("competitive_content", "competitive_events"),
         ("competitive_technology", "competitive_events"),
         ("authority_intelligence", "competitive_events"),
+        ("serp", "market_intelligence"),
+        ("external_search", "market_intelligence"),
+        ("competitive_content", "market_intelligence"),
+        ("competitive_technology", "market_intelligence"),
+        ("competitive_events", "market_intelligence"),
+        ("authority_intelligence", "market_intelligence"),
     ):
         existing = session.scalar(
             select(PipelineDependency).where(
@@ -160,7 +173,11 @@ def seed_vahomemath_cadence(session: Session) -> list[ScheduleDefinition]:
                     site_id=site.id,
                     upstream_pipeline_id=pipelines[upstream_key].id,
                     downstream_pipeline_id=pipelines[downstream_key].id,
-                    policy=DependencyPolicy.ALL_SUCCESS,
+                    policy=(
+                        DependencyPolicy.ALWAYS
+                        if downstream_key == "market_intelligence"
+                        else DependencyPolicy.ALL_SUCCESS
+                    ),
                 )
             )
     session.commit()

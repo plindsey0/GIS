@@ -5,7 +5,7 @@
     {"name": "Content", "parent": "Competitive Intelligence"}, {"name": "Technology", "parent": "Competitive Intelligence"},
     {"name": "Authority", "parent": "Competitive Intelligence"}, {"name": "Events", "parent": "Competitive Intelligence"},
     {"name": "Operations", "parent": "GIS"}, {"name": "Governance", "parent": "GIS"},
-    {"name": "Cost", "parent": "GIS"}, {"name": "Diagnostics", "parent": "GIS"}
+    {"name": "Market Intelligence", "parent": "GIS"}, {"name": "Cost", "parent": "GIS"}, {"name": "Diagnostics", "parent": "GIS"}
   ],
   "parameters": [
     {"id": "tenant_id", "name": "Tenant ID", "slug": "tenant_id", "type": "string/=", "sectionId": "string"},
@@ -29,7 +29,8 @@
       {"name": "Executive · Capability coverage", "file": "questions/executive/capability_coverage.sql", "display": "table", "row": 31, "col": 0, "size_x": 24, "size_y": 9},
       {"name": "Executive · GIS operations", "file": "questions/executive/operations.sql", "display": "table", "row": 40, "col": 0, "size_x": 12, "size_y": 7},
       {"name": "Executive · Governance", "file": "questions/executive/governance.sql", "display": "table", "row": 40, "col": 12, "size_x": 12, "size_y": 7},
-      {"name": "Executive · Future intelligence layers", "file": "questions/executive/future_layers.sql", "display": "table", "row": 47, "col": 0, "size_x": 24, "size_y": 7}
+      {"name": "Executive · Future intelligence layers", "file": "questions/executive/future_layers.sql", "display": "table", "row": 47, "col": 0, "size_x": 24, "size_y": 7},
+      {"name": "Executive · Observable market", "file": "questions/market/market_overview.sql", "display": "table", "row": 54, "col": 0, "size_x": 24, "size_y": 7}
     ]},
     {"name": "GIS Operations & Governance", "collection": "Operations", "description": "Pipeline freshness, enabled versus disabled schedules, alerts, governance, and observed-versus-unknown cost.", "cards": [
       {"name": "Operations · Capability detail", "file": "questions/executive/capability_coverage.sql", "display": "table", "row": 0, "col": 0, "size_x": 24, "size_y": 10},
@@ -41,6 +42,14 @@
       {"name": "Competitive · Position detail", "file": "questions/executive/competitive_position.sql", "display": "table", "row": 0, "col": 0, "size_x": 24, "size_y": 10},
       {"name": "Competitive · Event evidence", "file": "questions/executive/recent_events.sql", "display": "table", "row": 10, "col": 0, "size_x": 24, "size_y": 9},
       {"name": "Competitive · Gap evidence", "file": "questions/executive/observed_gaps.sql", "display": "table", "row": 19, "col": 0, "size_x": 24, "size_y": 9}
+    ]},
+    {"name": "GIS Market Intelligence", "collection": "Market Intelligence", "description": "Historical structure of explicitly defined observable digital markets. Visibility is not revenue market share and differences are not recommendations.", "cards": [
+      {"name": "Market · Overview", "file": "questions/market/market_overview.sql", "display": "table", "row": 0, "col": 0, "size_x": 24, "size_y": 8},
+      {"name": "Market · Visibility", "file": "questions/market/market_visibility.sql", "display": "table", "row": 8, "col": 0, "size_x": 12, "size_y": 9},
+      {"name": "Market · Concentration", "file": "questions/market/market_concentration.sql", "display": "line", "visualization_settings": {"graph.dimensions": ["date"], "graph.metrics": ["observed_hhi", "top_3_share", "top_5_share"]}, "row": 8, "col": 12, "size_x": 12, "size_y": 9},
+      {"name": "Market · Segments", "file": "questions/market/market_segments.sql", "display": "table", "row": 17, "col": 0, "size_x": 12, "size_y": 9},
+      {"name": "Market · Coverage", "file": "questions/market/market_coverage.sql", "display": "table", "row": 17, "col": 12, "size_x": 12, "size_y": 9},
+      {"name": "Market · Historical change", "file": "questions/market/market_change.sql", "display": "table", "row": 26, "col": 0, "size_x": 24, "size_y": 9}
     ]}
   ]
 }

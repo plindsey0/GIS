@@ -385,6 +385,53 @@ class AnchorClassification(str, enum.Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class MarketStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    ACTIVE = "ACTIVE"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class MarketType(str, enum.Enum):
+    SEARCH_MARKET = "SEARCH_MARKET"
+    TOPIC_MARKET = "TOPIC_MARKET"
+    PRODUCT_CATEGORY = "PRODUCT_CATEGORY"
+    COMPETITOR_MARKET = "COMPETITOR_MARKET"
+    CONTENT_MARKET = "CONTENT_MARKET"
+    CUSTOM = "CUSTOM"
+
+
+class MarketMemberType(str, enum.Enum):
+    TRACKED_QUERY = "TRACKED_QUERY"
+    QUERY_PATTERN = "QUERY_PATTERN"
+    TOPIC = "TOPIC"
+    DOMAIN = "DOMAIN"
+    PAGE = "PAGE"
+    COMPETITOR = "COMPETITOR"
+    MANUAL_SEED = "MANUAL_SEED"
+
+
+class MarketInclusion(str, enum.Enum):
+    INCLUDE = "INCLUDE"
+    EXCLUDE = "EXCLUDE"
+
+
+class MarketCoverageStatus(str, enum.Enum):
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    SPARSE = "SPARSE"
+    STALE = "STALE"
+    UNKNOWN = "UNKNOWN"
+
+
+class MarketParticipantClass(str, enum.Enum):
+    OWNED = "OWNED"
+    DIRECT = "DIRECT"
+    ADJACENT = "ADJACENT"
+    PERIPHERAL = "PERIPHERAL"
+    EMERGING = "EMERGING"
+    UNKNOWN = "UNKNOWN"
+
+
 class AuthorityOwnership(str, enum.Enum):
     OWNED = "OWNED"
     COMPETITOR = "COMPETITOR"
@@ -2446,6 +2493,278 @@ class ReferringDomainObservation(Base):
     provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class MarketDefinition(Base, TimestampMixin):
+    __tablename__ = "market_definition"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("tenant_id", "site_id", "slug", "version", name="uq_market_version"),
+        Index("ix_market_definition_scope", "tenant_id", "site_id", "slug", "status"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organization.id"), nullable=False
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[MarketStatus] = mapped_column(
+        enum_type(MarketStatus, "market_status"), nullable=False
+    )
+    market_type: Mapped[MarketType] = mapped_column(
+        enum_type(MarketType, "market_type"), nullable=False
+    )
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    language_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    device: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    superseded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    supersedes_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id")
+    )
+    created_by: Mapped[Optional[str]] = mapped_column(String(255))
+    semantic_notes: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class MarketDefinitionMember(Base):
+    __tablename__ = "market_definition_member"
+    __table_args__ = (
+        UniqueConstraint(
+            "market_definition_id", "member_type", "member_key", name="uq_market_member_identity"
+        ),
+        CheckConstraint("weight IS NULL OR weight >= 0", name="ck_market_member_weight"),
+        Index("ix_market_member_definition", "market_definition_id", "rank_order"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.market_definition.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    member_type: Mapped[MarketMemberType] = mapped_column(
+        enum_type(MarketMemberType, "market_member_type"), nullable=False
+    )
+    member_key: Mapped[str] = mapped_column(Text, nullable=False)
+    member_uuid: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    inclusion: Mapped[MarketInclusion] = mapped_column(
+        enum_type(MarketInclusion, "market_inclusion"), nullable=False
+    )
+    weight: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 6))
+    rank_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    effective_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    provenance_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class MarketMetricDefinition(Base, TimestampMixin):
+    __tablename__ = "market_metric_definition"
+    __table_args__ = (
+        UniqueConstraint(
+            "metric_key", "method_key", "method_version", name="uq_market_metric_method"
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    metric_key: Mapped[str] = mapped_column(String(150), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    unit: Mapped[Optional[str]] = mapped_column(String(50))
+    method_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class MarketObservation(Base):
+    __tablename__ = "market_observation"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        CheckConstraint("configured_query_count >= 0", name="ck_market_configured_queries"),
+        CheckConstraint("observed_query_count >= 0", name="ck_market_observed_queries"),
+        CheckConstraint("query_coverage_rate BETWEEN 0 AND 1", name="ck_market_query_coverage"),
+        CheckConstraint(
+            "effective_end IS NULL OR effective_end >= effective_start",
+            name="ck_market_observation_window",
+        ),
+        Index("ix_market_observation_definition_date", "market_definition_id", "effective_date"),
+        Index(
+            "uq_market_observation_current",
+            "observation_key",
+            unique=True,
+            postgresql_where=text("effective_end IS NULL"),
+        ),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organization.id"), nullable=False
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    market_definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"), nullable=False
+    )
+    market_definition_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    ingestion_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.ingestion_run.id")
+    )
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    rights_policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    country_code: Mapped[Optional[str]] = mapped_column(String(2))
+    language_code: Mapped[Optional[str]] = mapped_column(String(16))
+    device: Mapped[Optional[str]] = mapped_column(String(32))
+    method_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    coverage_status: Mapped[MarketCoverageStatus] = mapped_column(
+        enum_type(MarketCoverageStatus, "market_coverage_status"), nullable=False
+    )
+    configured_query_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    observed_query_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    query_coverage_rate: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
+    source_coverage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    observation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_reported_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    estimated_cost: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False, default=0)
+    cost_currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    provenance_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    effective_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class MarketParticipantObservation(Base):
+    __tablename__ = "market_participant_observation"
+    __table_args__ = (
+        UniqueConstraint("market_observation_id", "domain", name="uq_market_participant_domain"),
+        CheckConstraint("visibility_share BETWEEN 0 AND 1", name="ck_market_visibility_share"),
+        CheckConstraint(
+            "volume_weighted_visibility_share IS NULL OR volume_weighted_visibility_share BETWEEN 0 AND 1",
+            name="ck_market_volume_visibility_share",
+        ),
+        Index("ix_market_participant_domain", "domain"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.market_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    ownership: Mapped[str] = mapped_column(String(32), nullable=False)
+    participant_class: Mapped[MarketParticipantClass] = mapped_column(
+        enum_type(MarketParticipantClass, "market_participant_class"), nullable=False
+    )
+    query_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    ranking_page_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    serp_appearance_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    top_3_appearances: Mapped[int] = mapped_column(Integer, nullable=False)
+    top_10_appearances: Mapped[int] = mapped_column(Integer, nullable=False)
+    top_20_appearances: Mapped[int] = mapped_column(Integer, nullable=False)
+    visibility_weight: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    visibility_share: Mapped[Decimal] = mapped_column(Numeric(12, 10), nullable=False)
+    volume_weighted_visibility: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 10))
+    volume_weighted_visibility_share: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 10))
+    query_overlap_rate: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    classification_method: Mapped[str] = mapped_column(String(100), nullable=False)
+    classification_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+
+
+class MarketSegmentObservation(Base):
+    __tablename__ = "market_segment_observation"
+    __table_args__ = (
+        UniqueConstraint(
+            "market_observation_id", "segment_type", "segment_key", name="uq_market_segment"
+        ),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.market_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    segment_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    segment_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    segment_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    query_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    participant_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_reported_search_volume: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 6))
+    observed_visibility_hhi: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 10))
+    method_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+
+
+class MarketMetricObservation(Base):
+    __tablename__ = "market_metric_observation"
+    __table_args__ = (
+        UniqueConstraint(
+            "market_observation_id",
+            "metric_key",
+            "method_key",
+            "provider",
+            name="uq_market_metric_observation",
+        ),
+        Index("ix_market_metric_key", "metric_key", "method_key"),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    market_observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.market_observation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    metric_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_metric_definition.id")
+    )
+    metric_key: Mapped[str] = mapped_column(String(150), nullable=False)
+    metric_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 10))
+    unit: Mapped[Optional[str]] = mapped_column(String(50))
+    provider: Mapped[str] = mapped_column(String(100), nullable=False, default="gis")
+    method_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
     )
 
 

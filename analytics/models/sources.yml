@@ -55,6 +55,11 @@ sources:
         config: {loaded_at_field: created_at}
       - name: referring_domain_observation
         config: {loaded_at_field: created_at}
+      - name: market_observation
+        config: {loaded_at_field: created_at}
+      - name: market_participant_observation
+      - name: market_segment_observation
+      - name: market_metric_observation
   - name: gis_core
     schema: gis_core
     description: Canonical GIS entities owned by application migrations.
@@ -104,3 +109,6 @@ sources:
         config: {loaded_at_field: created_at}
       - name: competitive_event_policy
       - name: authority_metric_definition
+      - name: market_definition
+      - name: market_definition_member
+      - name: market_metric_definition

@@ -46,6 +46,7 @@ gis-experience = "gis.integrations.experience.cli:main"
 gis-orchestrator = "gis.orchestration.cli:main"
 gis-competitive-events = "gis.competitive_events.cli:main"
 gis-authority-intelligence = "gis.integrations.authority_intelligence.cli:main"
+gis-market-intelligence = "gis.market_intelligence.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gis"]

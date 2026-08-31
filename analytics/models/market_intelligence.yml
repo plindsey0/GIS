@@ -1,0 +1,117 @@
+version: 2
+
+models:
+  - name: stg_market_definitions
+    columns:
+      - name: market_definition_id
+        data_tests: [not_null, unique]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [DRAFT, ACTIVE, SUPERSEDED]}
+  - name: stg_market_observations
+    columns:
+      - name: market_observation_id
+        data_tests: [not_null, unique]
+      - name: coverage_status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [COMPLETE, PARTIAL, SPARSE, STALE, UNKNOWN]}
+  - name: stg_market_participant_observations
+    columns:
+      - name: participant_observation_id
+        data_tests: [not_null, unique]
+      - name: participant_class
+        data_tests:
+          - accepted_values:
+              arguments: {values: [OWNED, DIRECT, ADJACENT, PERIPHERAL, EMERGING, UNKNOWN]}
+  - name: stg_market_segment_observations
+    columns:
+      - name: segment_observation_id
+        data_tests: [not_null, unique]
+  - name: stg_market_metric_observations
+    columns:
+      - name: metric_observation_id
+        data_tests: [not_null, unique]
+      - name: semantic_class
+        data_tests:
+          - accepted_values:
+              arguments: {values: [MEASURED, PROVIDER_REPORTED, GIS_DERIVED, HEURISTIC]}
+  - name: mart_market_daily
+    description: Defined observable market state; never economic TAM or revenue market share.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [tenant_id, site_id, market_definition_id, market_definition_version, date, country_code, language_code, device, method_key, method_version]
+    columns:
+      - name: market_definition_id
+        data_tests: [not_null]
+      - name: market_definition_version
+        data_tests: [not_null]
+      - name: semantics
+        data_tests:
+          - accepted_values:
+              arguments: {values: [OBSERVABLE_DIGITAL_MARKET_NOT_ECONOMIC_MARKET]}
+  - name: mart_market_participant_daily
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [market_definition_id, market_definition_version, date, domain]
+  - name: mart_market_visibility_daily
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [market_definition_id, market_definition_version, date, domain]
+    columns:
+      - name: volume_semantics
+        data_tests:
+          - accepted_values:
+              arguments: {values: [NO_PROVIDER_VOLUME_DATA, PROVIDER_REPORTED_VOLUME_WEIGHTED]}
+  - name: mart_market_concentration_daily
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [market_definition_id, market_definition_version, date]
+  - name: mart_market_segment_daily
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [market_definition_id, market_definition_version, date, segment_type, segment_key]
+    columns:
+      - name: semantics
+        data_tests:
+          - accepted_values:
+              arguments: {values: [DESCRIPTIVE_SEGMENT_NOT_OPPORTUNITY]}
+  - name: mart_market_coverage
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [market_definition_id, market_definition_version, date]
+    columns:
+      - name: data_availability
+        data_tests:
+          - accepted_values:
+              arguments: {values: [NO_DATA, AVAILABLE]}
+  - name: mart_market_demand_distribution
+    columns:
+      - name: demand_semantics
+        data_tests:
+          - accepted_values:
+              arguments: {values: [NO_PROVIDER_VOLUME_DATA, PROVIDER_REPORTED_INCOMPLETE]}
+  - name: mart_market_overlap
+    columns:
+      - name: overlap_class
+        data_tests:
+          - accepted_values:
+              arguments: {values: [OWNED, SUBSTANTIAL_OVERLAP, PARTIAL_OVERLAP, NARROW_OVERLAP]}
+  - name: mart_market_serp_structure
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: [market_definition_id, market_definition_version, date]
+  - name: mart_market_change
+    columns:
+      - name: comparability_status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [NO_COMPARABLE_PRIOR_OBSERVATION, SAME_DEFINITION_AND_METHOD_VERSION]}
