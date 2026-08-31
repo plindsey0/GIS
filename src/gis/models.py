@@ -432,6 +432,59 @@ class MarketParticipantClass(str, enum.Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class CollectionTargetType(str, enum.Enum):
+    QUERY = "QUERY"
+    DOMAIN = "DOMAIN"
+    URL = "URL"
+    TOPIC = "TOPIC"
+
+
+class CollectionTargetStatus(str, enum.Enum):
+    CANDIDATE = "CANDIDATE"
+    ACTIVE = "ACTIVE"
+    DORMANT = "DORMANT"
+    PAUSED = "PAUSED"
+    REJECTED = "REJECTED"
+    RETIRED = "RETIRED"
+
+
+class CollectionPriorityTier(str, enum.Enum):
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    DISCOVERY = "DISCOVERY"
+    DORMANT = "DORMANT"
+
+
+class CollectionCadence(str, enum.Enum):
+    DAILY = "DAILY"
+    MULTIPLE_PER_WEEK = "MULTIPLE_PER_WEEK"
+    WEEKLY = "WEEKLY"
+    MONTHLY = "MONTHLY"
+    ON_DEMAND = "ON_DEMAND"
+    NONE = "NONE"
+
+
+class CollectionBlocker(str, enum.Enum):
+    NONE = "NONE"
+    BLOCKED_BY_RIGHTS = "BLOCKED_BY_RIGHTS"
+    BUDGET_BLOCKED = "BUDGET_BLOCKED"
+    NO_PROVIDER = "NO_PROVIDER"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+    UNKNOWN_COST = "UNKNOWN_COST"
+    OPERATOR_PAUSED = "OPERATOR_PAUSED"
+
+
+class CollectionOverrideType(str, enum.Enum):
+    FORCE_ACTIVE = "FORCE_ACTIVE"
+    FORCE_PAUSED = "FORCE_PAUSED"
+    FORCE_RETIRED = "FORCE_RETIRED"
+    FORCE_PRIORITY = "FORCE_PRIORITY"
+    FORCE_CADENCE = "FORCE_CADENCE"
+    FORCE_COLLECTOR = "FORCE_COLLECTOR"
+
+
 class AuthorityOwnership(str, enum.Enum):
     OWNED = "OWNED"
     COMPETITOR = "COMPETITOR"
@@ -2766,6 +2819,298 @@ class MarketMetricObservation(Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict
     )
+
+
+class CollectionTarget(Base, TimestampMixin):
+    __tablename__ = "collection_target"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("tenant_id", "site_id", "identity_hash", name="uq_collection_target"),
+        Index("ix_collection_target_market", "market_definition_id", "market_definition_version"),
+        Index("ix_collection_target_status", "tenant_id", "site_id", "status"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    market_definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"), nullable=False
+    )
+    market_definition_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_type: Mapped[CollectionTargetType] = mapped_column(
+        enum_type(CollectionTargetType, "collection_target_type"), nullable=False
+    )
+    normalized_identity: Mapped[str] = mapped_column(Text, nullable=False)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_value: Mapped[str] = mapped_column(Text, nullable=False)
+    country_code: Mapped[Optional[str]] = mapped_column(String(2))
+    language_code: Mapped[Optional[str]] = mapped_column(String(16))
+    device: Mapped[Optional[str]] = mapped_column(String(32))
+    status: Mapped[CollectionTargetStatus] = mapped_column(
+        enum_type(CollectionTargetStatus, "collection_target_status"), nullable=False
+    )
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    paused_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    dormant_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    human_managed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    current_policy_version: Mapped[Optional[str]] = mapped_column(String(100))
+    provenance_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+
+
+class CollectionTargetEvidence(Base):
+    __tablename__ = "collection_target_evidence"
+    __table_args__ = (
+        UniqueConstraint(
+            "target_id",
+            "source_system",
+            "evidence_type",
+            "evidence_identifier",
+            name="uq_collection_target_evidence",
+        ),
+        Index("ix_collection_evidence_target", "target_id", "evidence_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    target_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.collection_target.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_system: Mapped[str] = mapped_column(String(100), nullable=False)
+    evidence_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    evidence_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
+    evidence_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    signal_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    signal_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 8))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CollectionPlanningPolicy(Base, TimestampMixin):
+    __tablename__ = "collection_planning_policy"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "policy_key", "policy_version", name="uq_collection_policy_version"
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    policy_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    weights_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    thresholds_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    cadence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class CollectorCapability(Base, TimestampMixin):
+    __tablename__ = "collector_capability"
+    __table_args__ = (
+        UniqueConstraint("capability_key", "target_type", name="uq_collector_capability_target"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    capability_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    pipeline_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.pipeline_definition.id"), nullable=False
+    )
+    target_type: Mapped[CollectionTargetType] = mapped_column(
+        enum_type(CollectionTargetType, "collection_target_type"), nullable=False
+    )
+    evidence_product: Mapped[str] = mapped_column(String(100), nullable=False)
+    estimated_cost_per_run: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    preference: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    configuration_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class CollectionPlanningRun(Base):
+    __tablename__ = "collection_planning_run"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("tenant_id", "site_id", "fingerprint", name="uq_collection_planning_run"),
+        Index("ix_collection_planning_run_scope", "tenant_id", "site_id", "evaluated_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    market_definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"), nullable=False
+    )
+    market_definition_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_planning_policy.id"), nullable=False
+    )
+    policy_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    proposed_monthly_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CollectionPlanningDecision(Base):
+    __tablename__ = "collection_planning_decision"
+    __table_args__ = (
+        UniqueConstraint("planning_run_id", "target_id", name="uq_collection_decision_target"),
+        CheckConstraint("priority_score BETWEEN 0 AND 1", name="ck_collection_priority_score"),
+        Index("ix_collection_decision_target", "target_id", "evaluated_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    planning_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.collection_planning_run.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_target.id"), nullable=False
+    )
+    policy_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    priority_score: Mapped[Decimal] = mapped_column(Numeric(10, 8), nullable=False)
+    priority_tier: Mapped[CollectionPriorityTier] = mapped_column(
+        enum_type(CollectionPriorityTier, "collection_priority_tier"), nullable=False
+    )
+    component_scores: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    unknown_components: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    computed_status: Mapped[CollectionTargetStatus] = mapped_column(
+        enum_type(CollectionTargetStatus, "collection_target_status"), nullable=False
+    )
+    effective_status: Mapped[CollectionTargetStatus] = mapped_column(
+        enum_type(CollectionTargetStatus, "collection_target_status"), nullable=False
+    )
+    computed_cadence: Mapped[CollectionCadence] = mapped_column(
+        enum_type(CollectionCadence, "collection_cadence"), nullable=False
+    )
+    effective_cadence: Mapped[CollectionCadence] = mapped_column(
+        enum_type(CollectionCadence, "collection_cadence"), nullable=False
+    )
+    primary_blocker: Mapped[CollectionBlocker] = mapped_column(
+        enum_type(CollectionBlocker, "collection_blocker"), nullable=False
+    )
+    blockers_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    override_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    explanation_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CollectionPlanItem(Base):
+    __tablename__ = "collection_plan_item"
+    __table_args__ = (
+        UniqueConstraint("decision_id", "collector_capability_id", name="uq_collection_plan_item"),
+        CheckConstraint("estimated_runs_month >= 0", name="ck_collection_plan_runs"),
+        CheckConstraint(
+            "estimated_monthly_cost IS NULL OR estimated_monthly_cost >= 0",
+            name="ck_collection_plan_cost",
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    decision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.collection_planning_decision.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    collector_capability_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collector_capability.id"), nullable=False
+    )
+    data_source_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id")
+    )
+    desired_cadence: Mapped[CollectionCadence] = mapped_column(
+        enum_type(CollectionCadence, "collection_cadence"), nullable=False
+    )
+    effective_cadence: Mapped[CollectionCadence] = mapped_column(
+        enum_type(CollectionCadence, "collection_cadence"), nullable=False
+    )
+    rights_status: Mapped[RightsStatus] = mapped_column(
+        enum_type(RightsStatus, "rights_status"), nullable=False
+    )
+    budget_decision: Mapped[BudgetDecision] = mapped_column(
+        enum_type(BudgetDecision, "budget_decision"), nullable=False
+    )
+    estimated_cost_per_run: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    estimated_runs_month: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    estimated_monthly_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    blocker: Mapped[CollectionBlocker] = mapped_column(
+        enum_type(CollectionBlocker, "collection_blocker"), nullable=False
+    )
+    scheduled_target_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.scheduled_target.id")
+    )
+    applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    explanation_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CollectionTargetOverride(Base, TimestampMixin):
+    __tablename__ = "collection_target_override"
+    __table_args__ = (
+        Index(
+            "uq_collection_override_active",
+            "target_id",
+            unique=True,
+            postgresql_where=text("active"),
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    target_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.collection_target.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    override_type: Mapped[CollectionOverrideType] = mapped_column(
+        enum_type(CollectionOverrideType, "collection_override_type"), nullable=False
+    )
+    forced_priority: Mapped[Optional[CollectionPriorityTier]] = mapped_column(
+        enum_type(CollectionPriorityTier, "collection_priority_tier")
+    )
+    forced_cadence: Mapped[Optional[CollectionCadence]] = mapped_column(
+        enum_type(CollectionCadence, "collection_cadence")
+    )
+    forced_capability_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collector_capability.id")
+    )
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    cleared_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    cleared_by: Mapped[Optional[str]] = mapped_column(String(255))
 
 
 class CompetitiveEventPolicy(Base, TimestampMixin):

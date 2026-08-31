@@ -112,3 +112,11 @@ sources:
       - name: market_definition
       - name: market_definition_member
       - name: market_metric_definition
+      - name: collection_target
+      - name: collection_target_evidence
+      - name: collection_planning_policy
+      - name: collector_capability
+      - name: collection_planning_run
+      - name: collection_planning_decision
+      - name: collection_plan_item
+      - name: collection_target_override

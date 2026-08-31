@@ -22,6 +22,7 @@ EXECUTABLES = {
     "competitive_technology": "gis-technology-intelligence",
     "authority_intelligence": "gis-authority-intelligence",
     "market_intelligence": "gis-market-intelligence",
+    "collection_planning": "gis-collection-planning",
 }
 
 

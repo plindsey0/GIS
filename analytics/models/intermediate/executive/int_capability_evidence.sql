@@ -29,5 +29,8 @@ with evidence as (
   union all
   select tenant_id, site_id, 'MARKET_INTELLIGENCE', count(*), max(created_at)
   from {{ ref('stg_market_observations') }} group by 1,2
+  union all
+  select tenant_id, site_id, 'COLLECTION_PLANNING', count(*), max(created_at)
+  from {{ ref('stg_collection_planning_runs') }} group by 1,2
 )
 select * from evidence

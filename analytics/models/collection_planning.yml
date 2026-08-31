@@ -1,0 +1,77 @@
+version: 2
+
+models:
+  - name: stg_collection_targets
+    columns:
+      - name: target_id
+        data_tests: [not_null, unique]
+      - name: target_type
+        data_tests:
+          - accepted_values:
+              arguments: {values: [QUERY, DOMAIN, URL, TOPIC]}
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [CANDIDATE, ACTIVE, DORMANT, PAUSED, REJECTED, RETIRED]}
+  - name: stg_collection_target_evidence
+    columns:
+      - name: evidence_id
+        data_tests: [not_null, unique]
+  - name: stg_collection_planning_runs
+    columns:
+      - name: planning_run_id
+        data_tests: [not_null, unique]
+  - name: stg_collection_planning_decisions
+    columns:
+      - name: decision_id
+        data_tests: [not_null, unique]
+      - name: priority_tier
+        data_tests:
+          - accepted_values:
+              arguments: {values: [CRITICAL, HIGH, MEDIUM, LOW, DISCOVERY, DORMANT]}
+  - name: stg_collection_plan_items
+    columns:
+      - name: plan_item_id
+        data_tests: [not_null, unique]
+      - name: blocker
+        data_tests:
+          - accepted_values:
+              arguments: {values: [NONE, BLOCKED_BY_RIGHTS, BUDGET_BLOCKED, NO_PROVIDER, INSUFFICIENT_EVIDENCE, UNKNOWN_COST, OPERATOR_PAUSED]}
+  - name: stg_collector_capabilities
+    columns:
+      - name: collector_capability_id
+        data_tests: [not_null, unique]
+  - name: stg_collection_target_overrides
+    columns:
+      - name: override_id
+        data_tests: [not_null, unique]
+  - name: mart_collection_target_history
+    description: One immutable target evaluation per planning run.
+    data_tests:
+      - unique_combination:
+          arguments: {combination_of_columns: [planning_run_id, target_id]}
+  - name: mart_collection_target_current
+    description: Latest evaluation per tenant/site/market-scoped target.
+    columns:
+      - name: target_id
+        data_tests: [not_null, unique]
+  - name: mart_collection_plan_current
+    description: Current target by collector-capability desired plan grain.
+    data_tests:
+      - unique_combination:
+          arguments: {combination_of_columns: [decision_id, capability_key]}
+  - name: mart_collection_priority_distribution
+  - name: mart_collection_cost_forecast
+    columns:
+      - name: cost_semantics
+        data_tests:
+          - accepted_values:
+              arguments: {values: [KNOWN, PARTIALLY_UNKNOWN]}
+  - name: mart_collection_blockers
+  - name: mart_collection_market_coverage
+    columns:
+      - name: discovery_completeness
+        data_tests:
+          - accepted_values:
+              arguments: {values: [MARKET_DISCOVERY_COMPLETENESS_UNKNOWN]}
+  - name: mart_collection_provider_mix

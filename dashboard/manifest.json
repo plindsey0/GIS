@@ -5,7 +5,7 @@
     {"name": "Content", "parent": "Competitive Intelligence"}, {"name": "Technology", "parent": "Competitive Intelligence"},
     {"name": "Authority", "parent": "Competitive Intelligence"}, {"name": "Events", "parent": "Competitive Intelligence"},
     {"name": "Operations", "parent": "GIS"}, {"name": "Governance", "parent": "GIS"},
-    {"name": "Market Intelligence", "parent": "GIS"}, {"name": "Cost", "parent": "GIS"}, {"name": "Diagnostics", "parent": "GIS"}
+    {"name": "Market Intelligence", "parent": "GIS"}, {"name": "Collection Planning", "parent": "GIS"}, {"name": "Cost", "parent": "GIS"}, {"name": "Diagnostics", "parent": "GIS"}
   ],
   "parameters": [
     {"id": "tenant_id", "name": "Tenant ID", "slug": "tenant_id", "type": "string/=", "sectionId": "string"},
@@ -30,7 +30,8 @@
       {"name": "Executive · GIS operations", "file": "questions/executive/operations.sql", "display": "table", "row": 40, "col": 0, "size_x": 12, "size_y": 7},
       {"name": "Executive · Governance", "file": "questions/executive/governance.sql", "display": "table", "row": 40, "col": 12, "size_x": 12, "size_y": 7},
       {"name": "Executive · Future intelligence layers", "file": "questions/executive/future_layers.sql", "display": "table", "row": 47, "col": 0, "size_x": 24, "size_y": 7},
-      {"name": "Executive · Observable market", "file": "questions/market/market_overview.sql", "display": "table", "row": 54, "col": 0, "size_x": 24, "size_y": 7}
+      {"name": "Executive · Observable market", "file": "questions/market/market_overview.sql", "display": "table", "row": 54, "col": 0, "size_x": 24, "size_y": 7},
+      {"name": "Executive · Collection plan", "file": "questions/collection_planning/planning_overview.sql", "display": "table", "row": 61, "col": 0, "size_x": 24, "size_y": 7}
     ]},
     {"name": "GIS Operations & Governance", "collection": "Operations", "description": "Pipeline freshness, enabled versus disabled schedules, alerts, governance, and observed-versus-unknown cost.", "cards": [
       {"name": "Operations · Capability detail", "file": "questions/executive/capability_coverage.sql", "display": "table", "row": 0, "col": 0, "size_x": 24, "size_y": 10},
@@ -50,6 +51,11 @@
       {"name": "Market · Segments", "file": "questions/market/market_segments.sql", "display": "table", "row": 17, "col": 0, "size_x": 12, "size_y": 9},
       {"name": "Market · Coverage", "file": "questions/market/market_coverage.sql", "display": "table", "row": 17, "col": 12, "size_x": 12, "size_y": 9},
       {"name": "Market · Historical change", "file": "questions/market/market_change.sql", "display": "table", "row": 26, "col": 0, "size_x": 24, "size_y": 9}
+    ]},
+    {"name": "GIS Collection Planning", "collection": "Collection Planning", "description": "Deterministic desired collection state, blockers, and forecast cost. Priority is intelligence-acquisition value, not growth-action value.", "cards": [
+      {"name": "Planning · Target overview", "file": "questions/collection_planning/planning_overview.sql", "display": "table", "row": 0, "col": 0, "size_x": 24, "size_y": 9},
+      {"name": "Planning · Blockers", "file": "questions/collection_planning/planning_blockers.sql", "display": "table", "row": 9, "col": 0, "size_x": 12, "size_y": 10},
+      {"name": "Planning · Cost forecast", "file": "questions/collection_planning/planning_costs.sql", "display": "table", "row": 9, "col": 12, "size_x": 12, "size_y": 10}
     ]}
   ]
 }
