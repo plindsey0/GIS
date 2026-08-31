@@ -537,6 +537,96 @@ class ValidationRequestStatus(str, enum.Enum):
     CANCELLED = "CANCELLED"
 
 
+class AnalyticalEntityType(str, enum.Enum):
+    SITE = "SITE"
+    DOMAIN = "DOMAIN"
+    URL = "URL"
+    QUERY = "QUERY"
+    TOPIC = "TOPIC"
+    MARKET = "MARKET"
+    MARKET_SEGMENT = "MARKET_SEGMENT"
+
+
+class IdentityRelationship(str, enum.Enum):
+    SAME_ENTITY = "SAME_ENTITY"
+    ALIAS_OF = "ALIAS_OF"
+    CANONICAL_OF = "CANONICAL_OF"
+    REDIRECTS_TO = "REDIRECTS_TO"
+    SUBDOMAIN_OF = "SUBDOMAIN_OF"
+    SAME_REGISTRABLE_DOMAIN = "SAME_REGISTRABLE_DOMAIN"
+    MEMBER_OF = "MEMBER_OF"
+    RELATED_NOT_IDENTICAL = "RELATED_NOT_IDENTICAL"
+
+
+class ResolutionStrength(str, enum.Enum):
+    EXACT = "EXACT"
+    STRONG = "STRONG"
+    SUPPORTED = "SUPPORTED"
+    WEAK = "WEAK"
+    UNRESOLVED = "UNRESOLVED"
+    CONFLICTING = "CONFLICTING"
+
+
+class AssertionStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    SUPERSEDED = "SUPERSEDED"
+    REJECTED = "REJECTED"
+
+
+class QualityDimensionType(str, enum.Enum):
+    IDENTITY_RESOLUTION = "IDENTITY_RESOLUTION"
+    FRESHNESS = "FRESHNESS"
+    COMPLETENESS = "COMPLETENESS"
+    TEMPORAL_CONTINUITY = "TEMPORAL_CONTINUITY"
+    PROVENANCE_COMPLETENESS = "PROVENANCE_COMPLETENESS"
+    SOURCE_INDEPENDENCE = "SOURCE_INDEPENDENCE"
+    CROSS_SOURCE_CORROBORATION = "CROSS_SOURCE_CORROBORATION"
+    CONSISTENCY = "CONSISTENCY"
+    METHOD_COMPATIBILITY = "METHOD_COMPATIBILITY"
+    SCOPE_COMPATIBILITY = "SCOPE_COMPATIBILITY"
+    RIGHTS_USABILITY = "RIGHTS_USABILITY"
+
+
+class QualityDimensionState(str, enum.Enum):
+    UNKNOWN = "UNKNOWN"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    BLOCKED = "BLOCKED"
+    LIMITED = "LIMITED"
+    SUPPORTED = "SUPPORTED"
+    STRONG = "STRONG"
+
+
+class SourceIndependenceState(str, enum.Enum):
+    SAME_ROOT_SOURCE = "SAME_ROOT_SOURCE"
+    DEPENDENT_DERIVATION = "DEPENDENT_DERIVATION"
+    PARTIALLY_INDEPENDENT = "PARTIALLY_INDEPENDENT"
+    INDEPENDENT = "INDEPENDENT"
+    UNKNOWN = "UNKNOWN"
+
+
+class EvidenceCompatibility(str, enum.Enum):
+    COMPATIBLE = "COMPATIBLE"
+    PARTIALLY_COMPATIBLE = "PARTIALLY_COMPATIBLE"
+    INCOMPATIBLE = "INCOMPATIBLE"
+    UNKNOWN = "UNKNOWN"
+
+
+class CorroborationState(str, enum.Enum):
+    UNSUPPORTED = "UNSUPPORTED"
+    SINGLE_SOURCE = "SINGLE_SOURCE"
+    CORROBORATED = "CORROBORATED"
+    MULTI_SOURCE_CORROBORATED = "MULTI_SOURCE_CORROBORATED"
+    CONFLICTING = "CONFLICTING"
+    INSUFFICIENT = "INSUFFICIENT"
+
+
+class RightsUsability(str, enum.Enum):
+    USABLE = "USABLE"
+    BLOCKED = "BLOCKED"
+    PARTIALLY_USABLE = "PARTIALLY_USABLE"
+    UNKNOWN = "UNKNOWN"
+
+
 class AuthorityOwnership(str, enum.Enum):
     OWNED = "OWNED"
     COMPETITOR = "COMPETITOR"
@@ -3391,6 +3481,276 @@ class DemandValidationRequest(Base, TimestampMixin):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provenance_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class AnalyticalEntity(Base, TimestampMixin):
+    __tablename__ = "analytical_entity"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("tenant_id", "site_id", "identity_hash", name="uq_analytical_entity"),
+        Index("ix_analytical_entity_scope", "tenant_id", "site_id", "entity_type"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    entity_type: Mapped[AnalyticalEntityType] = mapped_column(
+        enum_type(AnalyticalEntityType, "analytical_entity_type"), nullable=False
+    )
+    canonical_key: Mapped[str] = mapped_column(Text, nullable=False)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    country_code: Mapped[Optional[str]] = mapped_column(String(2))
+    language_code: Mapped[Optional[str]] = mapped_column(String(16))
+    device: Mapped[Optional[str]] = mapped_column(String(32))
+    method_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_reference_type: Mapped[Optional[str]] = mapped_column(String(100))
+    source_reference_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+
+
+class IdentityAssertion(Base):
+    __tablename__ = "identity_assertion"
+    __table_args__ = (
+        Index(
+            "uq_identity_assertion_current",
+            "assertion_hash",
+            unique=True,
+            postgresql_where=text("effective_end IS NULL"),
+        ),
+        Index("ix_identity_assertion_subject", "subject_entity_id", "relationship"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    subject_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False
+    )
+    object_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False
+    )
+    relationship: Mapped[IdentityRelationship] = mapped_column(
+        enum_type(IdentityRelationship, "identity_relationship"), nullable=False
+    )
+    computed_strength: Mapped[ResolutionStrength] = mapped_column(
+        enum_type(ResolutionStrength, "resolution_strength"), nullable=False
+    )
+    effective_strength: Mapped[ResolutionStrength] = mapped_column(
+        enum_type(ResolutionStrength, "resolution_strength"), nullable=False
+    )
+    resolution_method: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    assertion_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[AssertionStatus] = mapped_column(
+        enum_type(AssertionStatus, "assertion_status"), nullable=False
+    )
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    override_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    override_reason: Mapped[Optional[str]] = mapped_column(Text)
+    override_actor: Mapped[Optional[str]] = mapped_column(String(255))
+    effective_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EvidenceContract(Base, TimestampMixin):
+    __tablename__ = "evidence_contract"
+    __table_args__ = (
+        UniqueConstraint("contract_key", "contract_version", name="uq_evidence_contract_version"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    contract_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    contract_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    requirements_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class EvidenceQualityRun(Base):
+    __tablename__ = "evidence_quality_run"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("tenant_id", "site_id", "fingerprint", name="uq_evidence_quality_run"),
+        Index("ix_evidence_quality_run_scope", "tenant_id", "site_id", "assessed_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    assessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    package_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EvidencePackage(Base):
+    __tablename__ = "evidence_package"
+    __table_args__ = (
+        UniqueConstraint("identity_hash", name="uq_evidence_package_identity"),
+        Index("ix_evidence_package_current", "tenant_id", "site_id", "condition_key", "period_end"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    quality_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.evidence_quality_run.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False
+    )
+    evidence_contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_contract.id"), nullable=False
+    )
+    demand_signal_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.demand_signal.id")
+    )
+    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id")
+    )
+    market_definition_version: Mapped[Optional[int]] = mapped_column(Integer)
+    condition_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    classification: Mapped[str] = mapped_column(String(100), nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    sufficiency: Mapped[DemandEvidenceStrength] = mapped_column(
+        enum_type(DemandEvidenceStrength, "demand_evidence_strength"), nullable=False
+    )
+    identity_resolution: Mapped[ResolutionStrength] = mapped_column(
+        enum_type(ResolutionStrength, "resolution_strength"), nullable=False
+    )
+    source_independence: Mapped[SourceIndependenceState] = mapped_column(
+        enum_type(SourceIndependenceState, "source_independence_state"), nullable=False
+    )
+    corroboration: Mapped[CorroborationState] = mapped_column(
+        enum_type(CorroborationState, "corroboration_state"), nullable=False
+    )
+    rights_usability: Mapped[RightsUsability] = mapped_column(
+        enum_type(RightsUsability, "rights_usability"), nullable=False
+    )
+    conflict_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    independent_source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EvidenceQualityDimension(Base):
+    __tablename__ = "evidence_quality_dimension"
+    __table_args__ = (
+        UniqueConstraint("evidence_package_id", "dimension", name="uq_evidence_package_dimension"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    evidence_package_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.evidence_package.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    dimension: Mapped[QualityDimensionType] = mapped_column(
+        enum_type(QualityDimensionType, "quality_dimension_type"), nullable=False
+    )
+    state: Mapped[QualityDimensionState] = mapped_column(
+        enum_type(QualityDimensionState, "quality_dimension_state"), nullable=False
+    )
+    method_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    observed_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    expected_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    reasons_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EvidencePackageItem(Base):
+    __tablename__ = "evidence_package_item"
+    __table_args__ = (
+        UniqueConstraint("evidence_package_id", "evidence_key", name="uq_evidence_package_item"),
+        Index("ix_evidence_package_root", "evidence_package_id", "root_source_key"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    evidence_package_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.evidence_package.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evidence_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    evidence_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    evidence_reference_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    evidence_role: Mapped[str] = mapped_column(String(100), nullable=False)
+    root_source_key: Mapped[Optional[str]] = mapped_column(String(100))
+    independence: Mapped[SourceIndependenceState] = mapped_column(
+        enum_type(SourceIndependenceState, "source_independence_state"), nullable=False
+    )
+    method_compatibility: Mapped[EvidenceCompatibility] = mapped_column(
+        enum_type(EvidenceCompatibility, "evidence_compatibility"), nullable=False
+    )
+    scope_compatibility: Mapped[EvidenceCompatibility] = mapped_column(
+        enum_type(EvidenceCompatibility, "evidence_compatibility"), nullable=False
+    )
+    rights_usability: Mapped[RightsUsability] = mapped_column(
+        enum_type(RightsUsability, "rights_usability"), nullable=False
+    )
+    supports_claim: Mapped[Optional[bool]] = mapped_column(Boolean)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EvidenceGap(Base, TimestampMixin):
+    __tablename__ = "evidence_gap"
+    __table_args__ = (
+        UniqueConstraint("identity_hash", name="uq_evidence_gap_identity"),
+        Index("ix_evidence_gap_package", "evidence_package_id", "gap_type", "resolved_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    evidence_package_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.evidence_package.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    collection_target_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_target.id")
+    )
+    gap_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    desired_evidence_capability: Mapped[Optional[str]] = mapped_column(String(100))
+    urgency: Mapped[CollectionPriorityTier] = mapped_column(
+        enum_type(CollectionPriorityTier, "collection_priority_tier"), nullable=False
+    )
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    planning_evidence_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_target_evidence.id")
+    )
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     provenance_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 

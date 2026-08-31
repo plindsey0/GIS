@@ -1,0 +1,75 @@
+version: 2
+
+models:
+  - name: stg_analytical_entities
+    columns:
+      - name: analytical_entity_id
+        data_tests: [not_null, unique]
+      - name: entity_type
+        data_tests:
+          - accepted_values:
+              arguments: {values: [SITE, DOMAIN, URL, QUERY, TOPIC, MARKET, MARKET_SEGMENT]}
+  - name: stg_identity_assertions
+    columns:
+      - name: identity_assertion_id
+        data_tests: [not_null, unique]
+      - name: computed_strength
+        data_tests:
+          - accepted_values:
+              arguments: {values: [EXACT, STRONG, SUPPORTED, WEAK, UNRESOLVED, CONFLICTING]}
+  - name: stg_evidence_contracts
+    columns:
+      - name: evidence_contract_id
+        data_tests: [not_null, unique]
+  - name: stg_evidence_quality_runs
+    columns:
+      - name: quality_run_id
+        data_tests: [not_null, unique]
+  - name: stg_evidence_packages
+    columns:
+      - name: evidence_package_id
+        data_tests: [not_null, unique]
+      - name: sufficiency
+        data_tests:
+          - accepted_values:
+              arguments: {values: [INSUFFICIENT, LIMITED, SUPPORTED, STRONGLY_SUPPORTED]}
+  - name: stg_evidence_quality_dimensions
+    columns:
+      - name: quality_dimension_id
+        data_tests: [not_null, unique]
+      - name: state
+        data_tests:
+          - accepted_values:
+              arguments: {values: [UNKNOWN, NOT_APPLICABLE, BLOCKED, LIMITED, SUPPORTED, STRONG]}
+  - name: stg_evidence_package_items
+    columns:
+      - name: evidence_package_item_id
+        data_tests: [not_null, unique]
+  - name: stg_evidence_gaps
+    columns:
+      - name: evidence_gap_id
+        data_tests: [not_null, unique]
+  - name: mart_evidence_quality_history
+    description: One immutable claim evidence package per assessment input and method version.
+    columns:
+      - name: evidence_package_id
+        data_tests: [not_null, unique]
+  - name: mart_evidence_quality_current
+    description: Latest package per tenant/site/entity/condition/market-version grain.
+    data_tests:
+      - unique_combination:
+          arguments: {combination_of_columns: [tenant_id, site_id, analytical_entity_id, condition_key, market_definition_id, market_definition_version]}
+  - name: mart_evidence_sufficiency
+    description: Package counts by claim contract and categorical sufficiency.
+  - name: mart_evidence_conflicts
+    description: Current packages with comparable opposing claim evidence only.
+  - name: mart_evidence_corroboration
+    description: Current package counts by explicit corroboration and root-source independence.
+  - name: mart_evidence_gaps
+    description: Evidence gaps emitted to Collection Planning without collection execution.
+  - name: mart_entity_resolution
+    description: Append-oriented explainable identity assertions with computed and effective strength.
+  - name: mart_source_independence
+    description: Evidence items grouped by actual root source rather than derived row count.
+  - name: mart_evidence_contract_status
+    description: Sufficiency, compatible conflicts, and rights limitations by versioned contract.

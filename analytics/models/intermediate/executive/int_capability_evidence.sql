@@ -35,5 +35,8 @@ with evidence as (
   union all
   select tenant_id, site_id, 'EMERGING_DEMAND', count(*), max(created_at)
   from {{ ref('stg_demand_analysis_runs') }} group by 1,2
+  union all
+  select tenant_id, site_id, 'EVIDENCE_QUALITY', count(*), max(created_at)
+  from {{ ref('stg_evidence_quality_runs') }} group by 1,2
 )
 select * from evidence

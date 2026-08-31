@@ -126,3 +126,11 @@ sources:
       - name: demand_signal
       - name: demand_signal_evidence
       - name: demand_validation_request
+      - name: analytical_entity
+      - name: identity_assertion
+      - name: evidence_contract
+      - name: evidence_quality_run
+      - name: evidence_package
+      - name: evidence_quality_dimension
+      - name: evidence_package_item
+      - name: evidence_gap

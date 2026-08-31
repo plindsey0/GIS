@@ -24,6 +24,7 @@ EXECUTABLES = {
     "market_intelligence": "gis-market-intelligence",
     "collection_planning": "gis-collection-planning",
     "emerging_demand": "gis-emerging-demand",
+    "evidence_quality": "gis-evidence-quality",
 }
 
 

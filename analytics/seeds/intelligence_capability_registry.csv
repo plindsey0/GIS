@@ -11,7 +11,8 @@ AUTHORITY,Authority intelligence,UNDERSTAND,true,authority_intelligence,8,true,9
 MARKET_INTELLIGENCE,Market intelligence,UNDERSTAND,true,market_intelligence,8,true,100
 COLLECTION_PLANNING,Collection planning,UNDERSTAND,true,collection_planning,8,true,110
 EMERGING_DEMAND,Emerging demand,UNDERSTAND,true,emerging_demand,8,true,120
-OPPORTUNITY_DETECTION,Opportunity detection,DETECT,false,,0,true,130
-AI_RECOMMENDATIONS,AI recommendations,RECOMMEND,false,,0,true,140
-INTERVENTION_TRACKING,Intervention and experiment tracking,INTERVENE,false,,0,true,150
-LEARNING,Outcome learning,LEARN,false,,0,true,160
+EVIDENCE_QUALITY,Evidence quality and resolution,UNDERSTAND,true,evidence_quality,8,true,130
+OPPORTUNITY_DETECTION,Opportunity detection,DETECT,false,,0,true,140
+AI_RECOMMENDATIONS,AI recommendations,RECOMMEND,false,,0,true,150
+INTERVENTION_TRACKING,Intervention and experiment tracking,INTERVENE,false,,0,true,160
+LEARNING,Outcome learning,LEARN,false,,0,true,170
