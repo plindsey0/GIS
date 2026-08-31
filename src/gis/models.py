@@ -745,6 +745,41 @@ class OutcomeState(str, enum.Enum):
     INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
 
 
+class RecommendationStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    GENERATED = "GENERATED"
+    VALIDATED = "VALIDATED"
+    READY_FOR_REVIEW = "READY_FOR_REVIEW"
+    ACCEPTED = "ACCEPTED"
+    PARTIALLY_ACCEPTED = "PARTIALLY_ACCEPTED"
+    REJECTED = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"
+    EXPIRED = "EXPIRED"
+    INVALIDATED = "INVALIDATED"
+
+
+class RecommendationRunStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    NO_VALID_RECOMMENDATION = "NO_VALID_RECOMMENDATION"
+    BLOCKED = "BLOCKED"
+    FAILED = "FAILED"
+
+
+class CandidateValidationState(str, enum.Enum):
+    VALID = "VALID"
+    INVALID = "INVALID"
+    BLOCKED = "BLOCKED"
+
+
+class RecommendationReviewDecision(str, enum.Enum):
+    ACCEPT = "ACCEPT"
+    PARTIAL_ACCEPT = "PARTIAL_ACCEPT"
+    REJECT = "REJECT"
+    REQUEST_REGENERATION = "REQUEST_REGENERATION"
+
+
 class AuthorityOwnership(str, enum.Enum):
     OWNED = "OWNED"
     COMPETITOR = "COMPETITOR"
@@ -4112,6 +4147,106 @@ class InterventionOutcome(Base):
     identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     method_version: Mapped[str] = mapped_column(String(50), nullable=False)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class RecommendationPolicy(Base, TimestampMixin):
+    __tablename__ = "recommendation_policy"
+    __table_args__ = (UniqueConstraint("key", "version", name="uq_recommendation_policy_version"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    provider_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    model_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    policy_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class RecommendationRun(Base):
+    __tablename__ = "recommendation_run"
+    __table_args__ = (ForeignKeyConstraint(["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]), UniqueConstraint("context_hash", name="uq_recommendation_run_context"), Index("ix_recommendation_run_scope", "tenant_id", "site_id", "started_at"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id"), nullable=False)
+    recommendation_policy_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation_policy.id"), nullable=False)
+    status: Mapped[RecommendationRunStatus] = mapped_column(enum_type(RecommendationRunStatus, "recommendation_run_status"), nullable=False)
+    provider_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    model_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_configuration_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    context_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    input_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    output_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    provider_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    validation_errors_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    repair_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_reason: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class Recommendation(Base, TimestampMixin):
+    __tablename__ = "recommendation"
+    __table_args__ = (UniqueConstraint("identity_hash", name="uq_recommendation_identity"), Index("ix_recommendation_scope", "tenant_id", "site_id", "status"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation_run.id", ondelete="CASCADE"), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id"), nullable=False)
+    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
+    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"))
+    market_definition_version: Mapped[Optional[int]] = mapped_column(Integer)
+    status: Mapped[RecommendationStatus] = mapped_column(enum_type(RecommendationStatus, "recommendation_status"), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    assumptions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class RecommendationCandidate(Base, TimestampMixin):
+    __tablename__ = "recommendation_candidate"
+    __table_args__ = (UniqueConstraint("recommendation_id", "rank", name="uq_recommendation_candidate_rank"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation.id", ondelete="CASCADE"), nullable=False)
+    intervention_type_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention_type_definition.id"), nullable=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    fit: Mapped[str] = mapped_column(String(50), nullable=False)
+    validation_state: Mapped[CandidateValidationState] = mapped_column(enum_type(CandidateValidationState, "candidate_validation_state"), nullable=False)
+    parameters_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    target_metric_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    expected_direction: Mapped[ExpectedDirection] = mapped_column(enum_type(ExpectedDirection, "expected_direction"), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    assumptions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    feasibility: Mapped[FeasibilityState] = mapped_column(enum_type(FeasibilityState, "feasibility_state"), nullable=False)
+    measurement_readiness: Mapped[MeasurementReadiness] = mapped_column(enum_type(MeasurementReadiness, "measurement_readiness"), nullable=False)
+    validation_errors_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    accepted_intervention_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id"))
+
+
+class RecommendationEvidence(Base):
+    __tablename__ = "recommendation_evidence"
+    __table_args__ = (UniqueConstraint("recommendation_id", "evidence_package_id", name="uq_recommendation_evidence"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation.id", ondelete="CASCADE"), nullable=False)
+    evidence_package_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class RecommendationReview(Base):
+    __tablename__ = "recommendation_review"
+    __table_args__ = (Index("ix_recommendation_review_history", "recommendation_id", "reviewed_at"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation.id", ondelete="CASCADE"), nullable=False)
+    decision: Mapped[RecommendationReviewDecision] = mapped_column(enum_type(RecommendationReviewDecision, "recommendation_review_decision"), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason_category: Mapped[Optional[str]] = mapped_column(String(100))
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    accepted_candidate_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class CompetitiveEventPolicy(Base, TimestampMixin):

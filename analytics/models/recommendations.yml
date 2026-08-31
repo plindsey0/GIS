@@ -1,0 +1,38 @@
+version: 2
+models:
+  - name: stg_recommendation_runs
+    columns:
+      - name: recommendation_run_id
+        data_tests: [not_null, unique]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [PENDING, RUNNING, SUCCEEDED, NO_VALID_RECOMMENDATION, BLOCKED, FAILED]}
+  - name: stg_recommendations
+    columns:
+      - name: recommendation_id
+        data_tests: [not_null, unique]
+      - name: opportunity_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('stg_opportunities'), field: opportunity_id}
+  - name: stg_recommendation_candidates
+    columns:
+      - name: recommendation_candidate_id
+        data_tests: [not_null, unique]
+      - name: recommendation_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('stg_recommendations'), field: recommendation_id}
+  - name: stg_recommendation_reviews
+  - name: mart_recommendation_current
+    description: Governed recommendation state; this is not execution authorization.
+  - name: mart_recommendation_history
+  - name: mart_recommendation_by_opportunity
+  - name: mart_recommendation_candidates
+  - name: mart_recommendation_reviews
+  - name: mart_recommendation_acceptance
+  - name: mart_recommendation_rejections
+  - name: mart_recommendation_blockers
+  - name: mart_recommendation_cost
+  - name: mart_recommendation_model_performance

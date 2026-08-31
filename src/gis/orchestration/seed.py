@@ -108,6 +108,13 @@ VAHOMEMATH_CADENCE = (
         None,
         "COLLECTOR_CLI",
     ),
+    Cadence(
+        "ai_recommendations",
+        "AI recommendations daily (disabled by default)",
+        "30 14 * * *",
+        None,
+        "RECOMMENDATION_CLI",
+    ),
     Cadence("experience", "PageSpeed and CrUX weekly", "0 11 * * 4", "pagespeed", "COLLECTOR_CLI"),
     Cadence(
         "competitive_events", "Competitive events daily", "0 12 * * *", None, "COMPETITIVE_EVENTS"
@@ -205,6 +212,9 @@ def seed_vahomemath_cadence(session: Session) -> list[ScheduleDefinition]:
         ("emerging_demand", "opportunity_detection"),
         ("evidence_quality", "opportunity_detection"),
         ("opportunity_detection", "intervention_measurement"),
+        ("opportunity_detection", "ai_recommendations"),
+        ("evidence_quality", "ai_recommendations"),
+        ("intervention_measurement", "ai_recommendations"),
     ):
         existing = session.scalar(
             select(PipelineDependency).where(
@@ -231,6 +241,7 @@ def seed_vahomemath_cadence(session: Session) -> list[ScheduleDefinition]:
                             "evidence_quality",
                             "opportunity_detection",
                             "intervention_measurement",
+                            "ai_recommendations",
                         }
                         else DependencyPolicy.ALL_SUCCESS
                     ),

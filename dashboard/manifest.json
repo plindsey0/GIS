@@ -5,7 +5,7 @@
     {"name": "Content", "parent": "Competitive Intelligence"}, {"name": "Technology", "parent": "Competitive Intelligence"},
     {"name": "Authority", "parent": "Competitive Intelligence"}, {"name": "Events", "parent": "Competitive Intelligence"},
     {"name": "Operations", "parent": "GIS"}, {"name": "Governance", "parent": "GIS"},
-    {"name": "Market Intelligence", "parent": "GIS"}, {"name": "Collection Planning", "parent": "GIS"}, {"name": "Emerging Demand", "parent": "GIS"}, {"name": "Evidence Quality", "parent": "GIS"}, {"name": "Opportunities", "parent": "GIS"}, {"name": "Interventions", "parent": "GIS"}, {"name": "Cost", "parent": "GIS"}, {"name": "Diagnostics", "parent": "GIS"}
+    {"name": "Market Intelligence", "parent": "GIS"}, {"name": "Collection Planning", "parent": "GIS"}, {"name": "Emerging Demand", "parent": "GIS"}, {"name": "Evidence Quality", "parent": "GIS"}, {"name": "Opportunities", "parent": "GIS"}, {"name": "Recommendations", "parent": "GIS"}, {"name": "Interventions", "parent": "GIS"}, {"name": "Cost", "parent": "GIS"}, {"name": "Diagnostics", "parent": "GIS"}
   ],
   "parameters": [
     {"id": "tenant_id", "name": "Tenant ID", "slug": "tenant_id", "type": "string/=", "sectionId": "string"},
@@ -35,7 +35,8 @@
       {"name": "Executive · Observable demand change", "file": "questions/emerging_demand/demand_overview.sql", "display": "table", "row": 68, "col": 0, "size_x": 24, "size_y": 8},
       {"name": "Executive · Intelligence trust", "file": "questions/evidence_quality/trust_overview.sql", "display": "table", "row": 76, "col": 0, "size_x": 24, "size_y": 7},
       {"name": "Executive · Opportunities", "file": "questions/opportunities/opportunity_overview.sql", "display": "table", "row": 83, "col": 0, "size_x": 24, "size_y": 9},
-      {"name": "Executive · Intervention contracts", "file": "questions/interventions/intervention_overview.sql", "display": "table", "row": 92, "col": 0, "size_x": 24, "size_y": 9}
+      {"name": "Executive · Recommendations for human review", "file": "questions/recommendations/recommendation_overview.sql", "display": "table", "row": 92, "col": 0, "size_x": 24, "size_y": 9},
+      {"name": "Executive · Intervention contracts", "file": "questions/interventions/intervention_overview.sql", "display": "table", "row": 101, "col": 0, "size_x": 24, "size_y": 9}
     ]},
     {"name": "GIS Operations & Governance", "collection": "Operations", "description": "Pipeline freshness, enabled versus disabled schedules, alerts, governance, and observed-versus-unknown cost.", "cards": [
       {"name": "Operations · Capability detail", "file": "questions/executive/capability_coverage.sql", "display": "table", "row": 0, "col": 0, "size_x": 24, "size_y": 10},
@@ -65,6 +66,10 @@
       {"name": "Demand · Overview", "file": "questions/emerging_demand/demand_overview.sql", "display": "table", "row": 0, "col": 0, "size_x": 24, "size_y": 9},
       {"name": "Demand · Emerging and accelerating", "file": "questions/emerging_demand/emerging_accelerating.sql", "display": "table", "row": 9, "col": 0, "size_x": 12, "size_y": 10},
       {"name": "Demand · Evidence and coverage", "file": "questions/emerging_demand/evidence_coverage.sql", "display": "table", "row": 9, "col": 12, "size_x": 12, "size_y": 10}
+    ]},
+    {"name": "GIS Recommendations", "collection": "Recommendations", "description": "Governed intervention candidates for human review. Acceptance does not authorize or execute an intervention.", "cards": [
+      {"name": "Recommendations · Review queue", "file": "questions/recommendations/recommendation_overview.sql", "display": "table", "row": 0, "col": 0, "size_x": 24, "size_y": 9},
+      {"name": "Recommendations · Candidate detail", "file": "questions/recommendations/recommendation_candidates.sql", "display": "table", "row": 9, "col": 0, "size_x": 24, "size_y": 11}
     ]},
     {"name": "GIS Evidence Quality", "collection": "Evidence Quality", "description": "Explainable identity, multidimensional support, source independence, compatible conflicts, rights usability, and evidence gaps. No business-value score.", "cards": [
       {"name": "Trust · Sufficiency", "file": "questions/evidence_quality/trust_overview.sql", "display": "table", "row": 0, "col": 0, "size_x": 24, "size_y": 8},

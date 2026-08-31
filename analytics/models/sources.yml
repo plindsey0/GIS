@@ -148,4 +148,10 @@ sources:
       - name: intervention_lifecycle_event
       - name: intervention_execution
       - name: experiment
+      - name: recommendation_policy
+      - name: recommendation_run
+      - name: recommendation
+      - name: recommendation_candidate
+      - name: recommendation_evidence
+      - name: recommendation_review
       - name: intervention_outcome

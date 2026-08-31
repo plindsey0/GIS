@@ -13,6 +13,6 @@ COLLECTION_PLANNING,Collection planning,UNDERSTAND,true,collection_planning,8,tr
 EMERGING_DEMAND,Emerging demand,UNDERSTAND,true,emerging_demand,8,true,120
 EVIDENCE_QUALITY,Evidence quality and resolution,UNDERSTAND,true,evidence_quality,8,true,130
 OPPORTUNITY_DETECTION,Opportunity detection,DETECT,true,opportunity_detection,2,true,140
-AI_RECOMMENDATIONS,AI recommendations,RECOMMEND,false,,0,true,150
+AI_RECOMMENDATIONS,AI recommendations,RECOMMEND,true,ai_recommendations,2,true,150
 INTERVENTION_TRACKING,Intervention and experiment tracking,INTERVENE,true,intervention_measurement,2,true,160
 LEARNING,Outcome learning,LEARN,false,,0,true,170
