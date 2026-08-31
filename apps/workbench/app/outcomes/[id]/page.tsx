@@ -1,0 +1,6 @@
+import {ResourceDetail} from "@/components/resource-view";
+
+export default async function Page({params}: {params: Promise<{id: string}>}) {
+  const {id} = await params;
+  return <ResourceDetail kind="outcomes" id={id}/>;
+}

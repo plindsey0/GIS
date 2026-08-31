@@ -54,6 +54,7 @@ gis-evidence-quality = "gis.evidence_quality.cli:main"
 gis-opportunities = "gis.opportunities.cli:main"
 gis-interventions = "gis.interventions.cli:main"
 gis-recommendations = "gis.recommendations.cli:main"
+gis-api = "gis.api.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gis"]
