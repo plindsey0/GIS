@@ -627,6 +627,43 @@ class RightsUsability(str, enum.Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class OpportunityFamily(str, enum.Enum):
+    DEMAND = "DEMAND"
+    VISIBILITY = "VISIBILITY"
+    COMPETITIVE = "COMPETITIVE"
+    CONTENT = "CONTENT"
+    AUTHORITY = "AUTHORITY"
+    EXPERIENCE = "EXPERIENCE"
+    MARKET_STRUCTURE = "MARKET_STRUCTURE"
+    INTELLIGENCE_GAP = "INTELLIGENCE_GAP"
+
+
+class OpportunityStatus(str, enum.Enum):
+    DETECTED = "DETECTED"
+    ACTIVE = "ACTIVE"
+    WATCHING = "WATCHING"
+    RESOLVED = "RESOLVED"
+    EXPIRED = "EXPIRED"
+    DISMISSED = "DISMISSED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class OpportunityPriority(str, enum.Enum):
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    WATCH = "WATCH"
+
+
+class OpportunityRelationshipType(str, enum.Enum):
+    SUPPORTS = "SUPPORTS"
+    RELATED_TO = "RELATED_TO"
+    PARENT_OF = "PARENT_OF"
+    CHILD_OF = "CHILD_OF"
+    SUPERSEDES = "SUPERSEDES"
+
+
 class AuthorityOwnership(str, enum.Enum):
     OWNED = "OWNED"
     COMPETITOR = "COMPETITOR"
@@ -3752,6 +3789,87 @@ class EvidenceGap(Base, TimestampMixin):
     )
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     provenance_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class OpportunityDetectorPolicy(Base, TimestampMixin):
+    __tablename__ = "opportunity_detector_policy"
+    __table_args__ = (UniqueConstraint("detector_key", "detector_version", name="uq_opportunity_detector_version"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    detector_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    detector_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    family: Mapped[OpportunityFamily] = mapped_column(enum_type(OpportunityFamily, "opportunity_family"), nullable=False)
+    opportunity_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    evidence_contract_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    experimental: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    policy_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class Opportunity(Base, TimestampMixin):
+    __tablename__ = "opportunity"
+    __table_args__ = (UniqueConstraint("identity_hash", name="uq_opportunity_identity"), ForeignKeyConstraint(["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]), Index("ix_opportunity_scope", "tenant_id", "site_id", "status", "priority"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
+    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"))
+    market_definition_version: Mapped[Optional[int]] = mapped_column(Integer)
+    detector_policy_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity_detector_policy.id"), nullable=False)
+    family: Mapped[OpportunityFamily] = mapped_column(enum_type(OpportunityFamily, "opportunity_family"), nullable=False)
+    opportunity_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[OpportunityStatus] = mapped_column(enum_type(OpportunityStatus, "opportunity_status"), nullable=False)
+    computed_status: Mapped[OpportunityStatus] = mapped_column(enum_type(OpportunityStatus, "opportunity_status"), nullable=False)
+    priority: Mapped[OpportunityPriority] = mapped_column(enum_type(OpportunityPriority, "opportunity_priority"), nullable=False)
+    evidence_sufficiency: Mapped[DemandEvidenceStrength] = mapped_column(enum_type(DemandEvidenceStrength, "demand_evidence_strength"), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    condition_description: Mapped[str] = mapped_column(Text, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    condition_first_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    materiality_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    priority_components_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+
+
+class OpportunityEvaluation(Base):
+    __tablename__ = "opportunity_evaluation"
+    __table_args__ = (UniqueConstraint("evaluation_hash", name="uq_opportunity_evaluation"), Index("ix_opportunity_evaluation_history", "opportunity_id", "evaluated_at"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id", ondelete="CASCADE"), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    computed_status: Mapped[OpportunityStatus] = mapped_column(enum_type(OpportunityStatus, "opportunity_status"), nullable=False)
+    qualifies: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    evaluation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    reasons_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    blockers_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    metrics_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class OpportunityEvidence(Base):
+    __tablename__ = "opportunity_evidence"
+    __table_args__ = (UniqueConstraint("opportunity_evaluation_id", "evidence_package_id", name="uq_opportunity_evidence"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    opportunity_evaluation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity_evaluation.id", ondelete="CASCADE"), nullable=False)
+    evidence_package_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id"), nullable=False)
+    evidence_role: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class OpportunityOverride(Base):
+    __tablename__ = "opportunity_override"
+    __table_args__ = (Index("ix_opportunity_override_current", "opportunity_id", "restored_at"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id", ondelete="CASCADE"), nullable=False)
+    dismissed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    dismissed_by: Mapped[Optional[str]] = mapped_column(String(255))
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[Optional[str]] = mapped_column(String(100))
+    restored_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    restored_by: Mapped[Optional[str]] = mapped_column(String(255))
 
 
 class CompetitiveEventPolicy(Base, TimestampMixin):

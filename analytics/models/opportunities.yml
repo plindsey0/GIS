@@ -1,0 +1,45 @@
+version: 2
+models:
+  - name: stg_opportunities
+    columns:
+      - name: opportunity_id
+        data_tests: [not_null, unique]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [DETECTED, ACTIVE, WATCHING, RESOLVED, EXPIRED, DISMISSED, SUPERSEDED]}
+      - name: priority
+        data_tests:
+          - accepted_values:
+              arguments: {values: [CRITICAL, HIGH, MEDIUM, LOW, WATCH]}
+  - name: stg_opportunity_evaluations
+    columns:
+      - name: opportunity_evaluation_id
+        data_tests: [not_null, unique]
+  - name: stg_opportunity_evidence
+    columns:
+      - name: evidence_package_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('stg_evidence_packages'), field: evidence_package_id}
+  - name: mart_opportunity_current
+    description: One durable current opportunity per deterministic opportunity identity.
+    columns:
+      - name: opportunity_id
+        data_tests: [not_null, unique]
+  - name: mart_opportunity_history
+    description: Append-oriented detector evaluation history.
+  - name: mart_opportunity_daily
+    description: Opportunity counts by detection date without value-score summation.
+  - name: mart_opportunity_by_family
+    description: Current opportunities by tenant, site, family, state, and priority.
+  - name: mart_opportunity_by_market
+    description: Current opportunities by explicit market definition version.
+  - name: mart_opportunity_by_entity
+    description: Current opportunities by resolved analytical entity.
+  - name: mart_opportunity_evidence
+    description: Evaluation-to-package trust lineage without evidence fanout.
+  - name: mart_opportunity_gaps
+    description: Watching and intelligence-gap conditions awaiting stronger evidence.
+  - name: mart_opportunity_resolution
+    description: Terminal and operator-controlled opportunity lifecycle states.

@@ -51,6 +51,7 @@ gis-market-intelligence = "gis.market_intelligence.cli:main"
 gis-collection-planning = "gis.collection_planning.cli:main"
 gis-emerging-demand = "gis.emerging_demand.cli:main"
 gis-evidence-quality = "gis.evidence_quality.cli:main"
+gis-opportunities = "gis.opportunities.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gis"]

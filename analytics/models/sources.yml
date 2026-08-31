@@ -134,3 +134,8 @@ sources:
       - name: evidence_quality_dimension
       - name: evidence_package_item
       - name: evidence_gap
+      - name: opportunity_detector_policy
+      - name: opportunity
+      - name: opportunity_evaluation
+      - name: opportunity_evidence
+      - name: opportunity_override

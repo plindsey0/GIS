@@ -12,7 +12,7 @@ MARKET_INTELLIGENCE,Market intelligence,UNDERSTAND,true,market_intelligence,8,tr
 COLLECTION_PLANNING,Collection planning,UNDERSTAND,true,collection_planning,8,true,110
 EMERGING_DEMAND,Emerging demand,UNDERSTAND,true,emerging_demand,8,true,120
 EVIDENCE_QUALITY,Evidence quality and resolution,UNDERSTAND,true,evidence_quality,8,true,130
-OPPORTUNITY_DETECTION,Opportunity detection,DETECT,false,,0,true,140
+OPPORTUNITY_DETECTION,Opportunity detection,DETECT,true,opportunity_detection,2,true,140
 AI_RECOMMENDATIONS,AI recommendations,RECOMMEND,false,,0,true,150
 INTERVENTION_TRACKING,Intervention and experiment tracking,INTERVENE,false,,0,true,160
 LEARNING,Outcome learning,LEARN,false,,0,true,170
