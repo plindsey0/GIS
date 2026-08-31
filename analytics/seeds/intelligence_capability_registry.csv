@@ -10,7 +10,7 @@ COMPETITIVE_EVENTS,Competitive events,UNDERSTAND,true,competitive_events,2,true,
 AUTHORITY,Authority intelligence,UNDERSTAND,true,authority_intelligence,8,true,90
 MARKET_INTELLIGENCE,Market intelligence,UNDERSTAND,true,market_intelligence,8,true,100
 COLLECTION_PLANNING,Collection planning,UNDERSTAND,true,collection_planning,8,true,110
-EMERGING_DEMAND,Emerging demand,UNDERSTAND,false,,0,true,120
+EMERGING_DEMAND,Emerging demand,UNDERSTAND,true,emerging_demand,8,true,120
 OPPORTUNITY_DETECTION,Opportunity detection,DETECT,false,,0,true,130
 AI_RECOMMENDATIONS,AI recommendations,RECOMMEND,false,,0,true,140
 INTERVENTION_TRACKING,Intervention and experiment tracking,INTERVENE,false,,0,true,150

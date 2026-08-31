@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: stg_demand_observations
+    description: One revision-aware provider-specific demand observation; missing values remain null.
+    columns:
+      - name: demand_observation_id
+        data_tests: [not_null, unique]
+  - name: stg_demand_analysis_runs
+    columns:
+      - name: analysis_run_id
+        data_tests: [not_null, unique]
+  - name: stg_demand_signals
+    columns:
+      - name: demand_signal_id
+        data_tests: [not_null, unique]
+      - name: signal_type
+        data_tests:
+          - accepted_values:
+              arguments: {values: [FIRST_OBSERVED, EMERGING, GROWING, ACCELERATING, DECELERATING, DECLINING, STABLE, SPIKE, REVERSAL, INSUFFICIENT_HISTORY]}
+      - name: coverage_state
+        data_tests:
+          - accepted_values:
+              arguments: {values: [OBSERVED, NO_DEMAND_OBSERVED, NOT_OBSERVED, NOT_COLLECTED, INSUFFICIENT_HISTORY, PARTIAL_COVERAGE, COLLECTION_REGIME_CHANGED, UNKNOWN]}
+  - name: stg_demand_signal_evidence
+    columns:
+      - name: demand_signal_evidence_id
+        data_tests: [not_null, unique]
+      - name: signal_id
+        data_tests:
+          - relationships:
+              arguments: {to: "ref('stg_demand_signals')", field: demand_signal_id}
+  - name: stg_demand_validation_requests
+    columns:
+      - name: validation_request_id
+        data_tests: [not_null, unique]
+  - name: mart_demand_query_daily
+    description: One provider-specific query demand series point per tenant/site/market version/query/date/source.
+    data_tests:
+      - unique_combination:
+          arguments: {combination_of_columns: [tenant_id, site_id, market_definition_id, market_definition_version, collection_target_id, date, source_system]}
+  - name: mart_demand_query_trend
+    description: One immutable query trend classification per compatible source series and analysis run evidence state.
+    data_tests:
+      - unique_combination:
+          arguments: {combination_of_columns: [tenant_id, site_id, market_definition_id, collection_target_id, source_series_key, window_end, policy_version]}
+  - name: mart_demand_topic_daily
+    description: One deterministic topic signal per tenant/site/market version/topic/date.
+  - name: mart_demand_segment_daily
+    description: One deterministic market-segment signal per tenant/site/market version/segment/date.
+  - name: mart_demand_market_daily
+    description: One partial-coverage-aware market signal per tenant/site/market version/date.
+  - name: mart_emerging_demand
+    description: Query signals satisfying the versioned sustained-emergence policy; excludes first observation.
+  - name: mart_demand_acceleration
+    description: Query signals with evidence-backed positive change in comparable-period velocity.
+  - name: mart_demand_spikes
+    description: Query signals satisfying the transparent rolling median/MAD rule.
+  - name: mart_demand_decline
+    description: Query signals satisfying the versioned sustained-decline policy.
+  - name: mart_demand_evidence_coverage
+    description: Signal counts by explicit collection coverage and evidence-strength state.

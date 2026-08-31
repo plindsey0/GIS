@@ -485,6 +485,58 @@ class CollectionOverrideType(str, enum.Enum):
     FORCE_COLLECTOR = "FORCE_COLLECTOR"
 
 
+class DemandEntityType(str, enum.Enum):
+    QUERY = "QUERY"
+    TOPIC = "TOPIC"
+    MARKET_SEGMENT = "MARKET_SEGMENT"
+    MARKET = "MARKET"
+
+
+class DemandSignalType(str, enum.Enum):
+    FIRST_OBSERVED = "FIRST_OBSERVED"
+    EMERGING = "EMERGING"
+    GROWING = "GROWING"
+    ACCELERATING = "ACCELERATING"
+    DECELERATING = "DECELERATING"
+    DECLINING = "DECLINING"
+    STABLE = "STABLE"
+    SPIKE = "SPIKE"
+    REVERSAL = "REVERSAL"
+    INSUFFICIENT_HISTORY = "INSUFFICIENT_HISTORY"
+
+
+class DemandCoverageState(str, enum.Enum):
+    OBSERVED = "OBSERVED"
+    NO_DEMAND_OBSERVED = "NO_DEMAND_OBSERVED"
+    NOT_OBSERVED = "NOT_OBSERVED"
+    NOT_COLLECTED = "NOT_COLLECTED"
+    INSUFFICIENT_HISTORY = "INSUFFICIENT_HISTORY"
+    PARTIAL_COVERAGE = "PARTIAL_COVERAGE"
+    COLLECTION_REGIME_CHANGED = "COLLECTION_REGIME_CHANGED"
+    UNKNOWN = "UNKNOWN"
+
+
+class DemandEvidenceStrength(str, enum.Enum):
+    INSUFFICIENT = "INSUFFICIENT"
+    LIMITED = "LIMITED"
+    SUPPORTED = "SUPPORTED"
+    STRONGLY_SUPPORTED = "STRONGLY_SUPPORTED"
+
+
+class DemandEvidenceRole(str, enum.Enum):
+    PRIMARY_DEMAND_EVIDENCE = "PRIMARY_DEMAND_EVIDENCE"
+    SUPPORTING_OWNED_SIGNAL = "SUPPORTING_OWNED_SIGNAL"
+    SUPPORTING_COMPETITIVE_SIGNAL = "SUPPORTING_COMPETITIVE_SIGNAL"
+    COLLECTION_COVERAGE_EVIDENCE = "COLLECTION_COVERAGE_EVIDENCE"
+
+
+class ValidationRequestStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    SATISFIED = "SATISFIED"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
+
+
 class AuthorityOwnership(str, enum.Enum):
     OWNED = "OWNED"
     COMPETITOR = "COMPETITOR"
@@ -3111,6 +3163,235 @@ class CollectionTargetOverride(Base, TimestampMixin):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     cleared_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     cleared_by: Mapped[Optional[str]] = mapped_column(String(255))
+
+
+class DemandObservation(Base):
+    __tablename__ = "demand_observation"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        CheckConstraint("value IS NULL OR value >= 0", name="ck_demand_observation_value"),
+        CheckConstraint(
+            "effective_end IS NULL OR effective_end >= effective_start",
+            name="ck_demand_observation_window",
+        ),
+        Index(
+            "uq_demand_observation_current",
+            "observation_key",
+            unique=True,
+            postgresql_where=text("effective_end IS NULL"),
+        ),
+        Index(
+            "ix_demand_observation_series",
+            "tenant_id",
+            "site_id",
+            "market_definition_id",
+            "entity_key",
+            "observed_date",
+        ),
+        {"schema": RAW_SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    market_definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"), nullable=False
+    )
+    market_definition_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    collection_target_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_target.id")
+    )
+    entity_type: Mapped[DemandEntityType] = mapped_column(
+        enum_type(DemandEntityType, "demand_entity_type"), nullable=False
+    )
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    observed_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_system: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id")
+    )
+    source_record_id: Mapped[Optional[str]] = mapped_column(String(255))
+    source_metric: Mapped[str] = mapped_column(String(150), nullable=False)
+    value: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 8))
+    unit: Mapped[str] = mapped_column(String(50), nullable=False)
+    resolution_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    country_code: Mapped[Optional[str]] = mapped_column(String(2))
+    language_code: Mapped[Optional[str]] = mapped_column(String(16))
+    device: Mapped[Optional[str]] = mapped_column(String(32))
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    coverage_state: Mapped[DemandCoverageState] = mapped_column(
+        enum_type(DemandCoverageState, "demand_coverage_state"), nullable=False
+    )
+    method_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    rights_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id"), nullable=False
+    )
+    observation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provenance_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    effective_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DemandAnalysisRun(Base):
+    __tablename__ = "demand_analysis_run"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("tenant_id", "site_id", "fingerprint", name="uq_demand_analysis_run"),
+        Index("ix_demand_analysis_scope", "tenant_id", "site_id", "analyzed_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    market_definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"), nullable=False
+    )
+    market_definition_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    signal_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DemandSignal(Base):
+    __tablename__ = "demand_signal"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_run_id",
+            "entity_type",
+            "entity_key",
+            "source_series_key",
+            "signal_type",
+            name="uq_demand_signal_run_entity",
+        ),
+        Index("ix_demand_signal_entity", "collection_target_id", "window_end"),
+        Index("ix_demand_signal_market", "market_definition_id", "signal_type", "window_end"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    analysis_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.demand_analysis_run.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    market_definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"), nullable=False
+    )
+    market_definition_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    collection_target_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_target.id")
+    )
+    entity_type: Mapped[DemandEntityType] = mapped_column(
+        enum_type(DemandEntityType, "demand_entity_type"), nullable=False
+    )
+    entity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    source_series_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    signal_type: Mapped[DemandSignalType] = mapped_column(
+        enum_type(DemandSignalType, "demand_signal_type"), nullable=False
+    )
+    window_key: Mapped[str] = mapped_column(String(20), nullable=False)
+    window_start: Mapped[date] = mapped_column(Date, nullable=False)
+    window_end: Mapped[date] = mapped_column(Date, nullable=False)
+    current_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 8))
+    prior_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 8))
+    absolute_change: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 8))
+    relative_change: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8))
+    velocity: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 10))
+    prior_velocity: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 10))
+    acceleration: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 10))
+    evidence_strength: Mapped[DemandEvidenceStrength] = mapped_column(
+        enum_type(DemandEvidenceStrength, "demand_evidence_strength"), nullable=False
+    )
+    coverage_state: Mapped[DemandCoverageState] = mapped_column(
+        enum_type(DemandCoverageState, "demand_coverage_state"), nullable=False
+    )
+    observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    collection_regime_changed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    policy_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    reasons_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    metrics_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DemandSignalEvidence(Base):
+    __tablename__ = "demand_signal_evidence"
+    __table_args__ = (
+        UniqueConstraint("signal_id", "evidence_key", name="uq_demand_signal_evidence"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    signal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.demand_signal.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    demand_observation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{RAW_SCHEMA}.demand_observation.id")
+    )
+    role: Mapped[DemandEvidenceRole] = mapped_column(
+        enum_type(DemandEvidenceRole, "demand_evidence_role"), nullable=False
+    )
+    source_system: Mapped[str] = mapped_column(String(100), nullable=False)
+    evidence_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    semantic_class: Mapped[EventSemanticClass] = mapped_column(
+        enum_type(EventSemanticClass, "event_semantic_class"), nullable=False
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DemandValidationRequest(Base, TimestampMixin):
+    __tablename__ = "demand_validation_request"
+    __table_args__ = (
+        UniqueConstraint("identity_hash", name="uq_demand_validation_request"),
+        Index("ix_demand_validation_target", "collection_target_id", "status", "expires_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    signal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.demand_signal.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    collection_target_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_target.id"), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    desired_evidence_capability: Mapped[str] = mapped_column(String(100), nullable=False)
+    urgency: Mapped[CollectionPriorityTier] = mapped_column(
+        enum_type(CollectionPriorityTier, "collection_priority_tier"), nullable=False
+    )
+    status: Mapped[ValidationRequestStatus] = mapped_column(
+        enum_type(ValidationRequestStatus, "validation_request_status"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provenance_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
 class CompetitiveEventPolicy(Base, TimestampMixin):

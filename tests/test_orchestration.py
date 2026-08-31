@@ -379,7 +379,7 @@ def test_vahomemath_cadence_seed_is_idempotent_and_inactive(session: Session) ->
     scope(session)
     first = seed_vahomemath_cadence(session)
     second = seed_vahomemath_cadence(session)
-    assert len(first) == len(second) == 12
+    assert len(first) == len(second) == 13
     assert {item.id for item in first} == {item.id for item in second}
     assert all(item.status is ScheduleStatus.DISABLED for item in second)
 

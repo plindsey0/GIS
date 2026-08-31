@@ -60,6 +60,8 @@ sources:
       - name: market_participant_observation
       - name: market_segment_observation
       - name: market_metric_observation
+      - name: demand_observation
+        config: {loaded_at_field: created_at}
   - name: gis_core
     schema: gis_core
     description: Canonical GIS entities owned by application migrations.
@@ -120,3 +122,7 @@ sources:
       - name: collection_planning_decision
       - name: collection_plan_item
       - name: collection_target_override
+      - name: demand_analysis_run
+      - name: demand_signal
+      - name: demand_signal_evidence
+      - name: demand_validation_request
