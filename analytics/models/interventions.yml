@@ -1,0 +1,40 @@
+version: 2
+models:
+  - name: stg_interventions
+    columns:
+      - name: intervention_id
+        data_tests: [not_null, unique]
+      - name: primary_opportunity_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('stg_opportunities'), field: opportunity_id}
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [DRAFT, PROPOSED, APPROVED, REJECTED, SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED, MEASURING, MEASURED, ARCHIVED]}
+  - name: stg_intervention_lifecycle
+  - name: stg_measurement_contracts
+    columns:
+      - name: measurement_contract_id
+        data_tests: [not_null, unique]
+  - name: stg_experiments
+    columns:
+      - name: experiment_id
+        data_tests: [not_null, unique]
+  - name: stg_intervention_outcomes
+    columns:
+      - name: outcome_id
+        data_tests: [not_null, unique]
+  - name: mart_intervention_current
+    description: One current row per structured intervention.
+  - name: mart_intervention_history
+    description: Append-oriented lifecycle decisions and transitions.
+  - name: mart_intervention_by_type
+  - name: mart_intervention_by_opportunity
+  - name: mart_intervention_measurement_readiness
+  - name: mart_intervention_execution
+  - name: mart_intervention_outcome
+    description: Observed outcomes without causal attribution.
+  - name: mart_experiment_current
+  - name: mart_experiment_measurement
+  - name: mart_intervention_blockers

@@ -139,3 +139,13 @@ sources:
       - name: opportunity_evaluation
       - name: opportunity_evidence
       - name: opportunity_override
+      - name: intervention_type_definition
+      - name: intervention_metric_definition
+      - name: intervention
+      - name: intervention_hypothesis
+      - name: measurement_contract
+      - name: measurement_metric
+      - name: intervention_lifecycle_event
+      - name: intervention_execution
+      - name: experiment
+      - name: intervention_outcome

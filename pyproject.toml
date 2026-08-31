@@ -52,6 +52,7 @@ gis-collection-planning = "gis.collection_planning.cli:main"
 gis-emerging-demand = "gis.emerging_demand.cli:main"
 gis-evidence-quality = "gis.evidence_quality.cli:main"
 gis-opportunities = "gis.opportunities.cli:main"
+gis-interventions = "gis.interventions.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gis"]

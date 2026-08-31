@@ -664,6 +664,87 @@ class OpportunityRelationshipType(str, enum.Enum):
     SUPERSEDES = "SUPERSEDES"
 
 
+class InterventionFamily(str, enum.Enum):
+    CONTENT = "CONTENT"
+    SEO = "SEO"
+    EXPERIENCE = "EXPERIENCE"
+    CONVERSION = "CONVERSION"
+    TECHNICAL = "TECHNICAL"
+    INTERNAL_LINKING = "INTERNAL_LINKING"
+    AUTHORITY = "AUTHORITY"
+    RESEARCH_ASSET = "RESEARCH_ASSET"
+    COLLECTION = "COLLECTION"
+
+
+class InterventionStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    PROPOSED = "PROPOSED"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    SCHEDULED = "SCHEDULED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+    MEASURING = "MEASURING"
+    MEASURED = "MEASURED"
+    ARCHIVED = "ARCHIVED"
+
+
+class FeasibilityState(str, enum.Enum):
+    FEASIBLE = "FEASIBLE"
+    BLOCKED = "BLOCKED"
+    PARTIALLY_FEASIBLE = "PARTIALLY_FEASIBLE"
+    UNKNOWN = "UNKNOWN"
+
+
+class MeasurementReadiness(str, enum.Enum):
+    READY = "READY"
+    PARTIAL = "PARTIAL"
+    NOT_READY = "NOT_READY"
+    UNKNOWN = "UNKNOWN"
+
+
+class MetricRole(str, enum.Enum):
+    PRIMARY = "PRIMARY"
+    SECONDARY = "SECONDARY"
+    GUARDRAIL = "GUARDRAIL"
+
+
+class ExpectedDirection(str, enum.Enum):
+    INCREASE = "INCREASE"
+    DECREASE = "DECREASE"
+    IMPROVE = "IMPROVE"
+    MAINTAIN = "MAINTAIN"
+
+
+class ExperimentType(str, enum.Enum):
+    OBSERVATIONAL_BEFORE_AFTER = "OBSERVATIONAL_BEFORE_AFTER"
+    A_B_TEST = "A_B_TEST"
+    HOLDOUT = "HOLDOUT"
+    MATCHED_CONTROL = "MATCHED_CONTROL"
+    TIME_SERIES = "TIME_SERIES"
+
+
+class ExperimentStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    READY = "READY"
+    RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
+    COMPLETED = "COMPLETED"
+    INVALIDATED = "INVALIDATED"
+    CANCELLED = "CANCELLED"
+
+
+class OutcomeState(str, enum.Enum):
+    POSITIVE = "POSITIVE"
+    NEGATIVE = "NEGATIVE"
+    NEUTRAL = "NEUTRAL"
+    MIXED = "MIXED"
+    INCONCLUSIVE = "INCONCLUSIVE"
+    NOT_MEASURABLE = "NOT_MEASURABLE"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+
+
 class AuthorityOwnership(str, enum.Enum):
     OWNED = "OWNED"
     COMPETITOR = "COMPETITOR"
@@ -3870,6 +3951,167 @@ class OpportunityOverride(Base):
     category: Mapped[Optional[str]] = mapped_column(String(100))
     restored_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     restored_by: Mapped[Optional[str]] = mapped_column(String(255))
+
+
+class InterventionTypeDefinition(Base, TimestampMixin):
+    __tablename__ = "intervention_type_definition"
+    __table_args__ = (UniqueConstraint("key", "version", name="uq_intervention_type_version"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    family: Mapped[InterventionFamily] = mapped_column(enum_type(InterventionFamily, "intervention_family"), nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(50), nullable=False)
+    autonomy_level: Mapped[str] = mapped_column(String(50), nullable=False, default="HUMAN_APPROVAL_REQUIRED")
+    reversible: Mapped[Optional[bool]] = mapped_column(Boolean)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    schema_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class MetricDefinition(Base, TimestampMixin):
+    __tablename__ = "intervention_metric_definition"
+    __table_args__ = (UniqueConstraint("key", "version", name="uq_intervention_metric_version"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_system: Mapped[str] = mapped_column(String(100), nullable=False)
+    unit: Mapped[str] = mapped_column(String(100), nullable=False)
+    grain: Mapped[str] = mapped_column(String(100), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class Intervention(Base, TimestampMixin):
+    __tablename__ = "intervention"
+    __table_args__ = (ForeignKeyConstraint(["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]), UniqueConstraint("identity_hash", name="uq_intervention_identity"), Index("ix_intervention_scope", "tenant_id", "site_id", "status"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    primary_opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id"), nullable=False)
+    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
+    intervention_type_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention_type_definition.id"), nullable=False)
+    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"))
+    market_definition_version: Mapped[Optional[int]] = mapped_column(Integer)
+    status: Mapped[InterventionStatus] = mapped_column(enum_type(InterventionStatus, "intervention_status"), nullable=False)
+    feasibility: Mapped[FeasibilityState] = mapped_column(enum_type(FeasibilityState, "feasibility_state"), nullable=False)
+    measurement_readiness: Mapped[MeasurementReadiness] = mapped_column(enum_type(MeasurementReadiness, "measurement_readiness"), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    parameters_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    constraints_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    risk_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    effort: Mapped[Optional[str]] = mapped_column(String(10))
+    estimated_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4))
+    actual_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4))
+    proposed_by: Mapped[Optional[str]] = mapped_column(String(255))
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class InterventionHypothesis(Base):
+    __tablename__ = "intervention_hypothesis"
+    __table_args__ = (UniqueConstraint("intervention_id", name="uq_intervention_hypothesis"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"), nullable=False)
+    target_metric_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    expected_direction: Mapped[ExpectedDirection] = mapped_column(enum_type(ExpectedDirection, "expected_direction"), nullable=False)
+    target_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_magnitude: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class MeasurementContract(Base, TimestampMixin):
+    __tablename__ = "measurement_contract"
+    __table_args__ = (UniqueConstraint("intervention_id", "version", name="uq_measurement_contract_version"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    baseline_strategy: Mapped[str] = mapped_column(String(50), nullable=False)
+    baseline_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    baseline_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    measurement_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    measurement_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    washout_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    comparison_method: Mapped[str] = mapped_column(String(50), nullable=False)
+    minimum_evidence: Mapped[DemandEvidenceStrength] = mapped_column(enum_type(DemandEvidenceStrength, "demand_evidence_strength"), nullable=False)
+    freshness_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    exclusions_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+
+
+class MeasurementMetric(Base):
+    __tablename__ = "measurement_metric"
+    __table_args__ = (UniqueConstraint("measurement_contract_id", "metric_definition_id", "role", name="uq_measurement_metric_role"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    measurement_contract_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.measurement_contract.id", ondelete="CASCADE"), nullable=False)
+    metric_definition_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention_metric_definition.id"), nullable=False)
+    role: Mapped[MetricRole] = mapped_column(enum_type(MetricRole, "metric_role"), nullable=False)
+    expected_direction: Mapped[ExpectedDirection] = mapped_column(enum_type(ExpectedDirection, "expected_direction"), nullable=False)
+
+
+class InterventionLifecycleEvent(Base):
+    __tablename__ = "intervention_lifecycle_event"
+    __table_args__ = (Index("ix_intervention_lifecycle_history", "intervention_id", "occurred_at"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"), nullable=False)
+    from_status: Mapped[Optional[InterventionStatus]] = mapped_column(enum_type(InterventionStatus, "intervention_status"))
+    to_status: Mapped[InterventionStatus] = mapped_column(enum_type(InterventionStatus, "intervention_status"), nullable=False)
+    actor: Mapped[Optional[str]] = mapped_column(String(255))
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class InterventionExecution(Base):
+    __tablename__ = "intervention_execution"
+    __table_args__ = (Index("ix_intervention_execution_history", "intervention_id", "actual_started_at"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"), nullable=False)
+    planned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    actual_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    actual_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    executor_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    actual_parameters_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    artifact_reference: Mapped[Optional[str]] = mapped_column(Text)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class Experiment(Base, TimestampMixin):
+    __tablename__ = "experiment"
+    __table_args__ = (ForeignKeyConstraint(["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]), Index("ix_experiment_scope", "tenant_id", "site_id", "status"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id"), nullable=False)
+    measurement_contract_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.measurement_contract.id"), nullable=False)
+    experiment_type: Mapped[ExperimentType] = mapped_column(enum_type(ExperimentType, "experiment_type"), nullable=False)
+    status: Mapped[ExperimentStatus] = mapped_column(enum_type(ExperimentStatus, "experiment_status"), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    invalidation_reason: Mapped[Optional[str]] = mapped_column(String(100))
+    planned_sample_size: Mapped[Optional[int]] = mapped_column(Integer)
+    observed_sample_size: Mapped[Optional[int]] = mapped_column(Integer)
+    contamination_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+
+
+class InterventionOutcome(Base):
+    __tablename__ = "intervention_outcome"
+    __table_args__ = (UniqueConstraint("identity_hash", name="uq_intervention_outcome_identity"), Index("ix_intervention_outcome_history", "intervention_id", "evaluated_at"), {"schema": SCHEMA})
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"), nullable=False)
+    measurement_contract_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.measurement_contract.id"), nullable=False)
+    state: Mapped[OutcomeState] = mapped_column(enum_type(OutcomeState, "outcome_state"), nullable=False)
+    expectation_result: Mapped[str] = mapped_column(String(50), nullable=False)
+    baseline_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    post_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    absolute_change: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    relative_change: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    evidence_sufficiency: Mapped[DemandEvidenceStrength] = mapped_column(enum_type(DemandEvidenceStrength, "demand_evidence_strength"), nullable=False)
+    completeness: Mapped[str] = mapped_column(String(50), nullable=False)
+    causal_attribution: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class CompetitiveEventPolicy(Base, TimestampMixin):
