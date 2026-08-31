@@ -25,6 +25,7 @@ from gis.models import (
     MarketDefinition,
     MarketDefinitionMember,
     Opportunity,
+    PipelineDefinition,
     Recommendation,
     ScheduleDefinition,
     Site,
@@ -258,8 +259,9 @@ class WorkbenchQueries:
         self.site(tenant_id, site_id)
         schedules = list(
             self.session.execute(
-                select(ScheduleDefinition, FreshnessState)
+                select(ScheduleDefinition, FreshnessState, PipelineDefinition)
                 .outerjoin(FreshnessState, FreshnessState.schedule_id == ScheduleDefinition.id)
+                .join(PipelineDefinition, PipelineDefinition.id == ScheduleDefinition.pipeline_id)
                 .where(
                     ScheduleDefinition.tenant_id == tenant_id, ScheduleDefinition.site_id == site_id
                 )
@@ -272,8 +274,22 @@ class WorkbenchQueries:
                     "status": row.status.value,
                     "latest_success": encoded(fresh.last_successful_at) if fresh else None,
                     "stale_since": encoded(fresh.stale_since) if fresh else None,
+                    "reason": (
+                        "Intentionally disabled: this pipeline can consume paid provider credits."
+                        if row.status.value == "DISABLED" and pipeline.paid_provider
+                        else "Disabled pending safe operator configuration."
+                        if row.status.value == "DISABLED"
+                        and row.configuration_json.get("requires_operator_configuration")
+                        else "Active zero-cost local processing schedule."
+                        if row.status.value == "ENABLED"
+                        and pipeline.handler_key
+                        in {"DBT", "LOCAL_PROCESSING", "COMPETITIVE_EVENTS"}
+                        else None
+                    ),
+                    "pipeline_key": pipeline.key,
+                    "paid_provider": pipeline.paid_provider,
                 }
-                for row, fresh in schedules
+                for row, fresh, pipeline in schedules
             ],
             "fixture_ai_provider": True,
             "production_ai_operational": False,

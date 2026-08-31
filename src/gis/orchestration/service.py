@@ -336,6 +336,8 @@ class Worker:
             run.ingestion_run_id = result.ingestion_run_id
             run.actual_provider_cost = result.actual_cost
             run.currency = result.currency
+            run.error_classification = None
+            run.error_detail = None
             self._record_cost(run, pipeline, completed)
             self._update_freshness(run, True, completed)
             self.session.commit()
@@ -424,6 +426,11 @@ class Worker:
             TriggerType.BACKFILL,
             TriggerType.RETRY,
         }:
+            return "RUN"
+        if all(item.policy is DependencyPolicy.ALWAYS for item in dependencies):
+            # ALWAYS means the downstream processor is allowed to run with whatever
+            # upstream state is currently available, including an intentionally
+            # disabled collector with no execution in the dependency window.
             return "RUN"
         statuses: list[OrchestrationStatus | None] = []
         dependency_window = timedelta(

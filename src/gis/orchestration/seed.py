@@ -154,6 +154,13 @@ def seed_vahomemath_cadence(session: Session) -> list[ScheduleDefinition]:
             session.add(pipeline)
             session.flush()
         pipelines[item.key] = pipeline
+        if item.key in {
+            "collection_planning",
+            "emerging_demand",
+            "evidence_quality",
+            "opportunity_detection",
+        }:
+            pipeline.handler_key = "LOCAL_PROCESSING"
         schedule = session.scalar(
             select(ScheduleDefinition).where(
                 ScheduleDefinition.tenant_id == tenant.id,
@@ -216,6 +223,22 @@ def seed_vahomemath_cadence(session: Session) -> list[ScheduleDefinition]:
         ("evidence_quality", "ai_recommendations"),
         ("intervention_measurement", "ai_recommendations"),
     ):
+        dependency_policy = (
+            DependencyPolicy.ALWAYS
+            if downstream_key
+            in {
+                "dbt_core",
+                "competitive_events",
+                "market_intelligence",
+                "collection_planning",
+                "emerging_demand",
+                "evidence_quality",
+                "opportunity_detection",
+                "intervention_measurement",
+                "ai_recommendations",
+            }
+            else DependencyPolicy.ALL_SUCCESS
+        )
         existing = session.scalar(
             select(PipelineDependency).where(
                 PipelineDependency.tenant_id == tenant.id,
@@ -231,21 +254,10 @@ def seed_vahomemath_cadence(session: Session) -> list[ScheduleDefinition]:
                     site_id=site.id,
                     upstream_pipeline_id=pipelines[upstream_key].id,
                     downstream_pipeline_id=pipelines[downstream_key].id,
-                    policy=(
-                        DependencyPolicy.ALWAYS
-                        if downstream_key
-                        in {
-                            "market_intelligence",
-                            "collection_planning",
-                            "emerging_demand",
-                            "evidence_quality",
-                            "opportunity_detection",
-                            "intervention_measurement",
-                            "ai_recommendations",
-                        }
-                        else DependencyPolicy.ALL_SUCCESS
-                    ),
+                    policy=dependency_policy,
                 )
             )
+        else:
+            existing.policy = dependency_policy
     session.commit()
     return schedules

@@ -199,6 +199,31 @@ def test_dependency_policies(
     assert result and result.status is expected
 
 
+def test_always_dependency_does_not_wait_for_disabled_upstream(session: Session) -> None:
+    tenant, site, upstream_pipeline = scope(session)
+    downstream = PipelineDefinition(key=f"down-{uuid.uuid4()}", name="Down", handler_key="FIXTURE")
+    session.add(downstream)
+    session.commit()
+    Orchestrator(session).add_dependency(
+        tenant.id, upstream_pipeline.id, downstream.id, DependencyPolicy.ALWAYS, site.id
+    )
+    candidate = OrchestrationRun(
+        tenant_id=tenant.id,
+        site_id=site.id,
+        pipeline_id=downstream.id,
+        trigger_type=TriggerType.SCHEDULED,
+        status=OrchestrationStatus.PENDING,
+        scheduled_for=NOW,
+        available_at=NOW,
+    )
+    session.add(candidate)
+    session.commit()
+    result = Worker(session, {"FIXTURE": lambda _session, _run: PipelineResult()}, "test").run_once(
+        NOW
+    )
+    assert result and result.status is OrchestrationStatus.SUCCEEDED
+
+
 def test_success_retry_history_max_attempt_and_worker_idempotency(session: Session) -> None:
     tenant, site, pipeline = scope(session)
     item = schedule(session, tenant, site, pipeline, max_attempts=2)
@@ -217,6 +242,7 @@ def test_success_retry_history_max_attempt_and_worker_idempotency(session: Sessi
     assert first and first.status is OrchestrationStatus.RETRY_WAIT
     second = worker.run_once(NOW + timedelta(seconds=10))
     assert second and second.status is OrchestrationStatus.SUCCEEDED
+    assert second.error_classification is None and second.error_detail is None
     attempts = session.scalars(
         select(ExecutionAttempt)
         .where(ExecutionAttempt.orchestration_run_id == execution.id)
@@ -298,12 +324,12 @@ def test_budget_allow_block_and_actual_cost_accounting(session: Session) -> None
     assert evaluate_budget(session, run, NOW)[0].value == "ALLOW"
     Worker(
         session, {"FIXTURE": lambda _s, _r: PipelineResult(actual_cost=Decimal("2"))}, "test"
-    ).run_once(NOW + timedelta(days=1))
+    ).run_once(run.available_at + timedelta(days=1))
     ledger = session.scalar(select(CostLedgerEntry))
     assert ledger and ledger.amount == Decimal("2")
     second = Orchestrator(session).request_run(tenant.id, pipeline.id, site_id=site.id)
     result = Worker(session, {"FIXTURE": lambda _s, _r: PipelineResult()}, "test").run_once(
-        NOW + timedelta(days=1)
+        second.available_at + timedelta(days=1)
     )
     assert result and result.id == second.id and result.status is OrchestrationStatus.BLOCKED
 
@@ -338,7 +364,9 @@ def test_rights_unknown_propagates_without_handler_call(session: Session) -> Non
         called = True
         return PipelineResult()
 
-    result = Worker(session, {"FIXTURE": handler}, "test").run_once(NOW + timedelta(days=1))
+    result = Worker(session, {"FIXTURE": handler}, "test").run_once(
+        run.available_at + timedelta(days=1)
+    )
     assert result and result.id == run.id and result.error_classification == "RIGHTS_BLOCK"
     assert called is False
 

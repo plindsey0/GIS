@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -34,7 +35,14 @@ def dbt_handler(session: Session, run: OrchestrationRun) -> PipelineResult:
     if not project.is_dir() or not profiles.is_dir():
         raise ValueError("configured dbt project/profiles directory does not exist")
     completed = subprocess.run(
-        ["dbt", "build", "--project-dir", str(project), "--profiles-dir", str(profiles)],
+        [
+            str(Path(sys.executable).with_name("dbt")),
+            "build",
+            "--project-dir",
+            str(project),
+            "--profiles-dir",
+            str(profiles),
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -114,9 +122,51 @@ def competitive_events_handler(session: Session, run: OrchestrationRun) -> Pipel
     return PipelineResult(actual_cost=Decimal("0"))
 
 
+def local_processing_handler(session: Session, run: OrchestrationRun) -> PipelineResult:
+    """Run allowlisted database-only intelligence processors with no provider access."""
+    pipeline = session.get(PipelineDefinition, run.pipeline_id)
+    if not pipeline or not run.site_id:
+        raise ValueError("local processing requires a pipeline and site scope")
+    market_id = run.configuration_json.get("market_id")
+    if pipeline.key in {"collection_planning", "emerging_demand"} and not market_id:
+        raise ValueError("market-scoped local processing requires market_id")
+    if pipeline.key == "collection_planning":
+        from gis.collection_planning.service import CollectionPlanningService
+        from gis.models import MarketDefinition
+
+        market = session.get(MarketDefinition, market_id)
+        if not market or market.tenant_id != run.tenant_id or market.site_id != run.site_id:
+            raise ValueError("configured market is outside the orchestration scope")
+        service = CollectionPlanningService(session)
+        service.discover(market)
+        service.plan(market)
+    elif pipeline.key == "emerging_demand":
+        from gis.emerging_demand.service import EmergingDemandService
+        from gis.models import MarketDefinition
+
+        market = session.get(MarketDefinition, market_id)
+        if not market or market.tenant_id != run.tenant_id or market.site_id != run.site_id:
+            raise ValueError("configured market is outside the orchestration scope")
+        service = EmergingDemandService(session)
+        service.materialize_stored_evidence(market)
+        service.analyze(run.tenant_id, run.site_id, market.id)
+    elif pipeline.key == "evidence_quality":
+        from gis.evidence_quality.service import EvidenceQualityService
+
+        EvidenceQualityService(session).assess(run.tenant_id, run.site_id)
+    elif pipeline.key == "opportunity_detection":
+        from gis.opportunities.service import OpportunityService
+
+        OpportunityService(session).detect(run.tenant_id, run.site_id)
+    else:
+        raise ValueError(f"pipeline {pipeline.key} is not an allowlisted local processor")
+    return PipelineResult(actual_cost=Decimal("0"))
+
+
 def default_handlers() -> dict[str, PipelineHandler]:
     return {
         "DBT": dbt_handler,
         "COLLECTOR_CLI": collector_cli_handler,
         "COMPETITIVE_EVENTS": competitive_events_handler,
+        "LOCAL_PROCESSING": local_processing_handler,
     }
