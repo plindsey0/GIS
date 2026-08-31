@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -93,7 +93,6 @@ class EmergingDemandService:
             "gis_raw.serp_observation",
             "gis_raw.competitive_content_observation",
             "gis_core.collection_target",
-            "gis_core.collection_planning_decision",
         ):
             upstream = register_asset(
                 self.session,
@@ -165,7 +164,9 @@ class EmergingDemandService:
                 ExternalSearchObservation.tenant_id == market.tenant_id,
                 ExternalSearchObservation.site_id == market.site_id,
                 ExternalSearchObservation.effective_end.is_(None),
-                ExternalKeywordRanking.search_volume.is_not(None),
+                ExternalSearchObservation.country_code == market.country_code,
+                ExternalSearchObservation.language_code == market.language_code,
+                ExternalSearchObservation.device == market.device,
             )
             .order_by(ExternalSearchObservation.observed_date, ExternalKeywordRanking.id)
         ).all()
@@ -179,75 +180,97 @@ class EmergingDemandService:
             rights = evaluate_policy_use(self.session, policy, PermittedUse.DERIVATIVE_CREATION)
             if rights.status is not RightsStatus.ALLOWED:
                 continue
-            identity = digest(
-                {
-                    "target": str(target.id),
-                    "date": parent.observed_date,
-                    "source": "external_search",
-                    "metric": "PROVIDER_SEARCH_VOLUME",
-                    "country": parent.country_code,
-                    "language": parent.language_code,
-                    "device": parent.device,
-                }
-            )
-            if identity in seen:
-                continue
-            seen.add(identity)
-            content_hash = digest(
-                {
-                    "parent": parent.content_hash,
-                    "volume": keyword.search_volume,
-                    "keyword": keyword.normalized_keyword,
-                }
-            )
-            current = self.session.scalar(
-                select(DemandObservation).where(
-                    DemandObservation.observation_key == identity,
-                    DemandObservation.effective_end.is_(None),
+            points: list[tuple[date, int, str, int]] = []
+            for monthly in keyword.monthly_searches or []:
+                try:
+                    point_date = date(int(monthly["year"]), int(monthly["month"]), 1)
+                    point_value = int(monthly["search_volume"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if point_value >= 0:
+                    points.append((point_date, point_value, "PROVIDER_MONTHLY_SEARCH_VOLUME", 30))
+            if keyword.search_volume is not None:
+                current_month = parent.observed_date.replace(day=1)
+                if not any(point_date == current_month for point_date, _, _, _ in points):
+                    points.append(
+                        (parent.observed_date, keyword.search_volume, "PROVIDER_SEARCH_VOLUME", 28)
+                    )
+            for point_date, point_value, source_metric, resolution_days in sorted(points):
+                identity = digest(
+                    {
+                        "target": str(target.id),
+                        "date": point_date,
+                        "source": "external_search",
+                        "metric": source_metric,
+                        "country": parent.country_code,
+                        "language": parent.language_code,
+                        "device": parent.device,
+                        "market_version": market.version,
+                    }
                 )
-            )
-            if current and current.content_hash == content_hash:
-                continue
-            now = utcnow()
-            if current:
-                current.effective_end = now
-            self.session.add(
-                DemandObservation(
-                    tenant_id=market.tenant_id,
-                    site_id=market.site_id,
-                    market_definition_id=market.id,
-                    market_definition_version=market.version,
-                    collection_target_id=target.id,
-                    entity_type=DemandEntityType.QUERY,
-                    entity_key=target.normalized_identity,
-                    observed_date=parent.observed_date,
-                    observed_at=parent.observed_at,
-                    source_system="external_search",
-                    source_connection_id=parent.data_source_connection_id,
-                    source_record_id=str(keyword.id),
-                    source_metric="PROVIDER_SEARCH_VOLUME",
-                    value=Decimal(keyword.search_volume),
-                    unit="provider_searches",
-                    resolution_days=28,
-                    country_code=parent.country_code,
-                    language_code=parent.language_code,
-                    device=parent.device,
-                    semantic_class=EventSemanticClass.PROVIDER_REPORTED,
-                    coverage_state=DemandCoverageState.OBSERVED,
-                    method_key="EXTERNAL_SEARCH_PROVIDER_VOLUME",
-                    method_version="1",
-                    rights_policy_id=parent.rights_policy_id,
-                    observation_key=identity,
-                    content_hash=content_hash,
-                    provenance_metadata={
-                        "external_search_observation_id": str(parent.id),
-                        "external_keyword_ranking_id": str(keyword.id),
-                        "provider_metric_not_universal_demand": True,
-                    },
-                    effective_start=now,
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                content_hash = digest(
+                    {
+                        "parent": parent.content_hash,
+                        "volume": point_value,
+                        "keyword": keyword.normalized_keyword,
+                        "metric": source_metric,
+                        "date": point_date,
+                    }
                 )
-            )
-            created += 1
+                current = self.session.scalar(
+                    select(DemandObservation).where(
+                        DemandObservation.observation_key == identity,
+                        DemandObservation.effective_end.is_(None),
+                    )
+                )
+                if current and current.content_hash == content_hash:
+                    continue
+                now = utcnow()
+                if current:
+                    current.effective_end = now
+                self.session.add(
+                    DemandObservation(
+                        tenant_id=market.tenant_id,
+                        site_id=market.site_id,
+                        market_definition_id=market.id,
+                        market_definition_version=market.version,
+                        collection_target_id=target.id,
+                        entity_type=DemandEntityType.QUERY,
+                        entity_key=target.normalized_identity,
+                        observed_date=point_date,
+                        observed_at=parent.observed_at,
+                        source_system="external_search",
+                        source_connection_id=parent.data_source_connection_id,
+                        source_record_id=str(keyword.id),
+                        source_metric=source_metric,
+                        value=Decimal(point_value),
+                        unit="provider_searches",
+                        resolution_days=resolution_days,
+                        country_code=parent.country_code,
+                        language_code=parent.language_code,
+                        device=parent.device,
+                        semantic_class=EventSemanticClass.PROVIDER_REPORTED,
+                        coverage_state=DemandCoverageState.OBSERVED,
+                        method_key="EXTERNAL_SEARCH_PROVIDER_VOLUME",
+                        method_version="2",
+                        rights_policy_id=parent.rights_policy_id,
+                        observation_key=identity,
+                        content_hash=content_hash,
+                        provenance_metadata={
+                            "external_search_observation_id": str(parent.id),
+                            "external_keyword_ranking_id": str(keyword.id),
+                            "external_search_content_hash": parent.content_hash,
+                            "historical_monthly_point": source_metric
+                            == "PROVIDER_MONTHLY_SEARCH_VOLUME",
+                            "provider_metric_not_universal_demand": True,
+                        },
+                        effective_start=now,
+                    )
+                )
+                created += 1
         self.session.flush()
         return created
 

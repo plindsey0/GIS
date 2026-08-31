@@ -9,6 +9,8 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from gis.collection_planning.service import CollectionPlanningService
+from gis.emerging_demand.service import EmergingDemandService
 from gis.integrations.external_search.cli import estimate_cost
 from gis.integrations.external_search.dataforseo import (
     COMPETITORS_URL,
@@ -25,8 +27,11 @@ from gis.integrations.external_search.service import (
     normalize_ranking_url,
 )
 from gis.integrations.serp.cli import configure_connection
+from gis.market_intelligence.service import MarketIntelligenceService
 from gis.models import (
+    CollectionTargetEvidence,
     DataRightsPolicy,
+    DemandObservation,
     ExternalCompetitorObservation,
     ExternalKeywordRanking,
     ExternalSearchObservation,
@@ -35,6 +40,7 @@ from gis.models import (
     RightsDecision,
     Site,
     Tenant,
+    TrackedQuery,
 )
 from gis.seed import seed
 
@@ -255,3 +261,100 @@ def test_malformed_canonical_item_persists_failed_run(session: Session) -> None:
     )
     assert run.status is IngestionStatus.FAILED and run.error_count == 1
     assert session.scalar(select(func.count()).select_from(ExternalSearchObservation)) == 0
+
+
+def test_stored_external_keywords_feed_planning_and_monthly_demand(session: Session) -> None:
+    site, connection_id = setup_scope(session)
+    item = ranking_item()
+    item["keyword_data"]["keyword_info"]["monthly_searches"] = [
+        {"year": 2026, "month": month, "search_volume": 10_000 + month} for month in range(1, 5)
+    ]
+    ExternalSearchCollector(session, FakeProvider([item])).sync(
+        connection_id, site.id, request(), estimated_cost=Decimal("0.01224")
+    )
+    observation = session.scalar(select(ExternalSearchObservation))
+    assert observation
+    policy = session.get(DataRightsPolicy, observation.rights_policy_id)
+    assert policy
+    policy.derived_storage_allowed = RightsDecision.ALLOWED
+    session.commit()
+    tenant = session.scalar(select(Tenant).where(Tenant.slug == "vahomemath"))
+    assert tenant
+    query = TrackedQuery(
+        tenant_id=tenant.id,
+        site_id=site.id,
+        query_text="baseline market query",
+        normalized_query="baseline market query",
+        country_code="US",
+        language_code="en",
+        device="desktop",
+        requested_depth=100,
+    )
+    session.add(query)
+    session.flush()
+    market = MarketIntelligenceService(session).define(
+        tenant_id=tenant.id,
+        site_id=site.id,
+        name="Stored external evidence market",
+        slug=f"external-evidence-{uuid.uuid4()}",
+        tracked_query_ids=[query.id],
+    )
+    planning = CollectionPlanningService(session)
+    first = planning.discover(market)
+    second = planning.discover(market)
+    external_target = next(row for row in first if row.normalized_identity == "va loan calculator")
+    assert {row.id for row in first} == {row.id for row in second}
+    evidence = session.scalars(
+        select(CollectionTargetEvidence).where(
+            CollectionTargetEvidence.target_id == external_target.id,
+            CollectionTargetEvidence.source_system == "EXTERNAL_SEARCH",
+        )
+    ).all()
+    assert len(evidence) == 1
+    demand = EmergingDemandService(session)
+    assert demand.materialize_stored_evidence(market) == 5
+    assert demand.materialize_stored_evidence(market) == 0
+    observations = session.scalars(
+        select(DemandObservation)
+        .where(DemandObservation.collection_target_id == external_target.id)
+        .order_by(DemandObservation.observed_date)
+    ).all()
+    assert [row.value for row in observations] == [
+        Decimal("10001"),
+        Decimal("10002"),
+        Decimal("10003"),
+        Decimal("10004"),
+        Decimal("12100"),
+    ]
+    assert all(row.market_definition_version == market.version for row in observations)
+    assert sum(row.provenance_metadata["historical_monthly_point"] for row in observations) == 4
+
+
+def test_external_keyword_discovery_fails_closed_on_rights(session: Session) -> None:
+    site, connection_id = setup_scope(session)
+    ExternalSearchCollector(session, FakeProvider([ranking_item()])).sync(
+        connection_id, site.id, request(), estimated_cost=Decimal("0.01224")
+    )
+    tenant = session.scalar(select(Tenant).where(Tenant.slug == "vahomemath"))
+    assert tenant
+    query = TrackedQuery(
+        tenant_id=tenant.id,
+        site_id=site.id,
+        query_text="baseline market query",
+        normalized_query="baseline market query",
+        country_code="US",
+        language_code="en",
+        device="desktop",
+        requested_depth=100,
+    )
+    session.add(query)
+    session.flush()
+    market = MarketIntelligenceService(session).define(
+        tenant_id=tenant.id,
+        site_id=site.id,
+        name="Rights closed market",
+        slug=f"rights-closed-{uuid.uuid4()}",
+        tracked_query_ids=[query.id],
+    )
+    targets = CollectionPlanningService(session).discover(market)
+    assert all(row.normalized_identity != "va loan calculator" for row in targets)

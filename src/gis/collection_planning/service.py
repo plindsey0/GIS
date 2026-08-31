@@ -45,8 +45,11 @@ from gis.models import (
     CollectorCapability,
     ConnectionStatus,
     CostBudget,
+    DataRightsPolicy,
     DataSourceConnection,
     EventSemanticClass,
+    ExternalKeywordRanking,
+    ExternalSearchObservation,
     GSCSearchObservation,
     MarketDefinition,
     MarketDefinitionMember,
@@ -65,7 +68,7 @@ from gis.models import (
 )
 from gis.orchestration.schedule import next_occurrence
 from gis.provenance.lineage import register_asset, register_lineage
-from gis.provenance.service import evaluate_connection_use
+from gis.provenance.service import evaluate_connection_use, evaluate_policy_use
 
 MAX_DISCOVERY_ROWS = 10_000
 
@@ -424,6 +427,52 @@ class CollectionPlanningService:
                 signal_name="owned_site_signal",
                 signal_value=min(Decimal(1), row.impressions / Decimal(1000)),
                 metadata={"impressions": str(row.impressions), "clicks": str(row.clicks)},
+            )
+            discovered[target.id] = target
+        external_rows = self.session.execute(
+            select(ExternalKeywordRanking, ExternalSearchObservation)
+            .join(
+                ExternalSearchObservation,
+                ExternalSearchObservation.id
+                == ExternalKeywordRanking.external_search_observation_id,
+            )
+            .where(
+                ExternalSearchObservation.tenant_id == market.tenant_id,
+                ExternalSearchObservation.site_id == market.site_id,
+                ExternalSearchObservation.effective_end.is_(None),
+                ExternalSearchObservation.country_code == market.country_code,
+                ExternalSearchObservation.language_code == market.language_code,
+                ExternalSearchObservation.device == market.device,
+            )
+            .order_by(
+                ExternalSearchObservation.observed_at,
+                ExternalKeywordRanking.normalized_keyword,
+                ExternalKeywordRanking.id,
+            )
+            .limit(MAX_DISCOVERY_ROWS)
+        ).all()
+        for keyword, parent in external_rows:
+            policy = self.session.get(DataRightsPolicy, parent.rights_policy_id)
+            rights = evaluate_policy_use(self.session, policy, PermittedUse.DERIVATIVE_CREATION)
+            if rights.status is not RightsStatus.ALLOWED:
+                continue
+            target = self.register_target(
+                market,
+                CollectionTargetType.QUERY,
+                keyword.keyword,
+                source_system="EXTERNAL_SEARCH",
+                evidence_type="EXTERNAL_KEYWORD_RANKING",
+                evidence_identifier=str(keyword.id),
+                evidence_at=parent.observed_at,
+                semantic_class=EventSemanticClass.PROVIDER_REPORTED,
+                signal_name="competitor_signal",
+                signal_value=Decimal("0.70"),
+                metadata={
+                    "external_search_observation_id": str(parent.id),
+                    "ranking_domain": keyword.ranking_domain,
+                    "position": keyword.position,
+                    "rights_policy_id": str(parent.rights_policy_id),
+                },
             )
             discovered[target.id] = target
         observations = self.session.scalars(
