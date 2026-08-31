@@ -99,7 +99,7 @@ Configure `.env`:
 ```bash
 GIS_API_OPERATOR_KEY=<generate-a-private-local-value>
 GIS_API_CORS_ORIGINS=http://localhost:3000
-GIS_API_BASE_URL=http://localhost:8000
+GIS_API_BASE_URL=http://127.0.0.1:8000
 NEXT_PUBLIC_GIS_TENANT_ID=<tenant-uuid>
 NEXT_PUBLIC_GIS_WORKBENCH_SITE_ID=<site-uuid>
 NEXT_PUBLIC_METABASE_URL=http://localhost:3030

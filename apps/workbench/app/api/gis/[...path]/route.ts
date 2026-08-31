@@ -2,7 +2,10 @@ import {NextRequest, NextResponse} from "next/server";
 
 async function forward(request: NextRequest, context: {params: Promise<{path: string[]}>}) {
   const {path} = await context.params;
-  const base = process.env.GIS_API_BASE_URL ?? "http://localhost:8000";
+  // Use the same explicit IPv4 loopback address that gis-api binds to. On
+  // machines where localhost resolves to ::1 first, another service can own
+  // the IPv6 side of port 8000 and return an unrelated HTML response.
+  const base = process.env.GIS_API_BASE_URL ?? "http://127.0.0.1:8000";
   const target = new URL(`/${path.join("/")}`, base);
   target.search = request.nextUrl.search;
   const headers = new Headers({"Content-Type": "application/json", "X-GIS-Role": "ADMIN"});
