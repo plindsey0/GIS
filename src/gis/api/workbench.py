@@ -25,6 +25,8 @@ from gis.models import (
     EvidencePackage,
     EvidencePackageItem,
     EvidenceQualityDimension,
+    ExperienceMeasurementType,
+    ExperienceObservation,
     Experiment,
     ExternalKeywordRanking,
     ExternalSearchObservation,
@@ -577,6 +579,30 @@ class WorkbenchQueries:
 
     def capability_status(self, tenant_id: uuid.UUID, site_id: uuid.UUID) -> dict[str, Any]:
         self.site(tenant_id, site_id)
+        lab_count = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(ExperienceObservation)
+                .where(
+                    ExperienceObservation.tenant_id == tenant_id,
+                    ExperienceObservation.site_id == site_id,
+                    ExperienceObservation.measurement_type == ExperienceMeasurementType.LAB,
+                )
+            )
+            or 0
+        )
+        field_count = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(ExperienceObservation)
+                .where(
+                    ExperienceObservation.tenant_id == tenant_id,
+                    ExperienceObservation.site_id == site_id,
+                    ExperienceObservation.measurement_type == ExperienceMeasurementType.FIELD,
+                )
+            )
+            or 0
+        )
         disabled_reasons = {
             "gsc": "Governance blocked: stored GSC evidence uses an unreviewed rights policy; retrieval remains disabled until rights and credentials are both validated.",
             "ga4": "Governance blocked: stored GA4 evidence uses an unreviewed rights policy; retrieval remains disabled until rights and credentials are both validated.",
@@ -590,6 +616,7 @@ class WorkbenchQueries:
         active_reasons = {
             "gsc": "Active zero-cost authenticated Google collection schedule; read-only property access validated.",
             "ga4": "Active zero-cost authenticated Google collection schedule; read-only property access validated.",
+            "experience": f"Active validated zero-cost PageSpeed schedule; {lab_count} LAB observations are stored; CrUX FIELD data is {'available' if field_count else 'currently unavailable (not an error)'}.",
         }
         schedules = list(
             self.session.execute(
@@ -655,6 +682,12 @@ class WorkbenchQueries:
             ],
             "fixture_ai_provider": True,
             "production_ai_operational": False,
+            "experience": {
+                "lab_observations": lab_count,
+                "field_observations": field_count,
+                "crux_state": "DATA_AVAILABLE" if field_count else "NO_FIELD_DATA_AVAILABLE",
+                "semantics": "Lighthouse LAB observations are never represented as CrUX FIELD data.",
+            },
         }
 
     def market_detail(

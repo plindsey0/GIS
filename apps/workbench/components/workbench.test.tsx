@@ -35,10 +35,11 @@ describe("GIS Workbench", () => {
   });
 
   it("shows rights/provider status and unknown freshness without zero", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => answer({items: [{schedule: "ai_recommendations", status: "DISABLED", latest_success: null, stale_since: null}], fixture_ai_provider: true, production_ai_operational: false})));
+    vi.stubGlobal("fetch", vi.fn(() => answer({items: [{schedule: "ai_recommendations", status: "DISABLED", latest_success: null, stale_since: null}], experience: {lab_observations: 8, field_observations: 0, crux_state: "NO_FIELD_DATA_AVAILABLE", semantics: "Lighthouse LAB observations are never represented as CrUX FIELD data."}, fixture_ai_provider: true, production_ai_operational: false})));
     render(<SystemPage/>);
     expect(await screen.findByText(/Fixture \/ development recommendation provider/)).toBeInTheDocument();
     expect(screen.getByText("Unknown")).toBeInTheDocument();
+    expect(screen.getByText(/8 Lighthouse LAB observations/)).toBeInTheDocument();
   });
 
   it("accepts a recommendation only into a draft intervention workflow", async () => {

@@ -29,6 +29,8 @@ def test_activation_is_explicit_source_scoped_and_idempotent(session: Session) -
         "dataforseo",
         "direct_http",
         "direct_technology",
+        "pagespeed",
+        "crux",
     }
     for source_key, policy_id in first.items():
         source = session.scalar(select(DataSource).where(DataSource.key == source_key))

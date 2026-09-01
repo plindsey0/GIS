@@ -16,6 +16,7 @@ from gis.models import (
     DataRightsPolicy,
     DataSource,
     DataSourceConnection,
+    ExperienceObservation,
     ExternalSearchObservation,
     GA4AcquisitionObservation,
     GA4EventObservation,
@@ -110,6 +111,13 @@ REVIEWED_POLICIES = (
         PRIVATE_ANALYTICS_ALLOWED - {PermittedUse.RAW_RETENTION},
         PRIVATE_ANALYTICS_DENIED | {PermittedUse.RAW_RETENTION},
         "Operator-approved analysis of already-collected public technology signals. Raw-body retention and redistribution remain prohibited.",
+    ),
+    ReviewedPolicy(
+        "Google PageSpeed and CrUX public API reviewed rights",
+        ("pagespeed", "crux"),
+        PRIVATE_ANALYTICS_ALLOWED,
+        PRIVATE_ANALYTICS_DENIED,
+        "Operator-approved use of Google PageSpeed Insights and Chrome UX Report public API data for deterministic performance analysis, historical storage, derived metrics, evidence generation, aggregation, and private GIS display. Automated retrieval is permitted only while it remains validated zero-cost and within configured quota controls; this is an operational review, not a legal determination.",
     ),
 )
 
@@ -227,6 +235,7 @@ def activate_reviewed_policies(session: Session, tenant_id: uuid.UUID) -> dict[s
         (Conversion, policies["first_party"]),
         (CompetitiveContentObservation, policies["direct_http"]),
         (TechnologyObservation, policies["direct_technology"]),
+        (ExperienceObservation, policies["pagespeed"]),
     )
     for model, policy in scoped_updates:
         values: dict[str, object] = {"rights_policy_id": policy.id}
@@ -244,8 +253,10 @@ def activate_safe_schedules(
     market_id: uuid.UUID,
     gsc_connection_id: uuid.UUID,
     ga4_connection_id: uuid.UUID,
+    experience_connection_id: uuid.UUID | None = None,
     *,
     google_validated: bool,
+    experience_validated: bool = False,
 ) -> dict[str, str]:
     """Enable only proven zero-cost schedules; paid/provider templates are untouched."""
     if not google_validated:
@@ -254,7 +265,9 @@ def activate_safe_schedules(
         row.key: row
         for row in session.scalars(
             select(DataSource).where(
-                DataSource.key.in_(("google_search_console", "ga4", "dataforseo"))
+                DataSource.key.in_(
+                    ("google_search_console", "ga4", "dataforseo", "pagespeed", "crux")
+                )
             )
         )
     }
@@ -262,6 +275,8 @@ def activate_safe_schedules(
         "gsc": session.get(DataSourceConnection, gsc_connection_id),
         "ga4": session.get(DataSourceConnection, ga4_connection_id),
     }
+    if experience_connection_id:
+        connections["experience"] = session.get(DataSourceConnection, experience_connection_id)
     for key, source_key in (("gsc", "google_search_console"), ("ga4", "ga4")):
         connection = connections[key]
         source = sources.get(source_key)
@@ -274,6 +289,21 @@ def activate_safe_schedules(
             or connection.status is not ConnectionStatus.ACTIVE
         ):
             raise ValueError(f"{key} connection is not active in the requested scope")
+    if experience_connection_id:
+        connection = connections["experience"]
+        source = sources.get("pagespeed")
+        if not experience_validated:
+            raise ValueError("experience schedule requires explicit successful validation")
+        if (
+            not connection
+            or not source
+            or connection.tenant_id != tenant_id
+            or connection.site_id != site_id
+            or connection.data_source_id != source.id
+            or connection.status is not ConnectionStatus.ACTIVE
+            or connection.credential_reference != "env:GIS_PAGESPEED_API_KEY"
+        ):
+            raise ValueError("experience connection is not active in the requested scope")
 
     configured: dict[str, str] = {}
     schedules = session.scalars(
@@ -282,7 +312,14 @@ def activate_safe_schedules(
         .where(
             ScheduleDefinition.tenant_id == tenant_id,
             ScheduleDefinition.site_id == site_id,
-            PipelineDefinition.key.in_(("gsc", "ga4", "market_intelligence")),
+            PipelineDefinition.key.in_(
+                (
+                    "gsc",
+                    "ga4",
+                    "market_intelligence",
+                    *(("experience",) if experience_connection_id else ()),
+                )
+            ),
         )
     ).all()
     for schedule in schedules:
@@ -293,18 +330,30 @@ def activate_safe_schedules(
             assert connection
             schedule.data_source_connection_id = connection.id
             schedule.rights_policy_id = connection.rights_policy_id
+            arguments = ["sync", "--connection", str(connection.id)]
+            if pipeline.key == "experience":
+                arguments.extend(
+                    [
+                        "--target",
+                        "https://www.vahomemath.com",
+                        "--form-factor",
+                        "MOBILE",
+                        "--scope",
+                        "URL",
+                    ]
+                )
+            else:
+                arguments.extend(["--recent-days", "7"])
             schedule.configuration_json = {
-                "arguments": [
-                    "sync",
-                    "--connection",
-                    str(connection.id),
-                    "--recent-days",
-                    "7",
-                ],
+                "arguments": arguments,
                 "actual_cost": "0",
                 "timeout_seconds": 900,
                 "requires_operator_configuration": False,
-                "validation": "read-only property access confirmed 2026-09-01",
+                "validation": (
+                    "operator confirmed enabled APIs, zero-cost quota, restricted credentials, and successful live collection on 2026-09-01"
+                    if pipeline.key == "experience"
+                    else "read-only property access confirmed 2026-09-01"
+                ),
             }
         else:
             policy_id = sources["dataforseo"].default_rights_policy_id
@@ -324,7 +373,10 @@ def activate_safe_schedules(
             schedule.cron_expression, schedule.timezone, datetime.now(timezone.utc)
         )
         configured[pipeline.key] = schedule.status.value
-    if set(configured) != {"gsc", "ga4", "market_intelligence"}:
+    expected = {"gsc", "ga4", "market_intelligence"}
+    if experience_connection_id:
+        expected.add("experience")
+    if set(configured) != expected:
         raise ValueError("required safe schedule definitions are missing")
     session.commit()
     return configured

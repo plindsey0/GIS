@@ -10,7 +10,7 @@ from pathlib import Path
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from gis.models import IngestionRun, OrchestrationRun, PipelineDefinition
+from gis.models import DataSourceConnection, IngestionRun, OrchestrationRun, PipelineDefinition
 from gis.orchestration.service import PipelineHandler, PipelineResult
 
 EXECUTABLES = {
@@ -27,6 +27,42 @@ EXECUTABLES = {
     "emerging_demand": "gis-emerging-demand",
     "evidence_quality": "gis-evidence-quality",
 }
+PAGESPEED_SECRET_FILE = Path.home() / ".config/gis/secrets/pagespeed.env"
+
+
+def collector_environment(
+    session: Session,
+    run: OrchestrationRun,
+    pipeline: PipelineDefinition,
+    *,
+    secret_file: Path = PAGESPEED_SECRET_FILE,
+) -> dict[str, str]:
+    environment = os.environ.copy()
+    if pipeline.key != "experience":
+        return environment
+    connection = (
+        session.get(DataSourceConnection, run.data_source_connection_id)
+        if run.data_source_connection_id
+        else None
+    )
+    reference = connection.credential_reference if connection else None
+    if not reference or not reference.startswith("env:"):
+        raise ValueError("experience collection requires an environment credential reference")
+    variable = reference.removeprefix("env:")
+    if environment.get(variable):
+        return environment
+    try:
+        if secret_file.stat().st_mode & 0o077:
+            raise ValueError("PageSpeed secret file permissions must be owner-only")
+        lines = secret_file.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise ValueError("PageSpeed secret file is unavailable") from error
+    for line in lines:
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == variable and value:
+            environment[variable] = value
+            return environment
+    raise ValueError("referenced PageSpeed credential is unavailable")
 
 
 def dbt_handler(session: Session, run: OrchestrationRun) -> PipelineResult:
@@ -79,7 +115,7 @@ def collector_cli_handler(session: Session, run: OrchestrationRun) -> PipelineRe
         capture_output=True,
         text=True,
         timeout=int(run.configuration_json.get("timeout_seconds", 3600)),
-        env=os.environ.copy(),
+        env=collector_environment(session, run, pipeline),
     )
     if completed.returncode:
         raise RuntimeError(completed.stderr[-2000:] or completed.stdout[-2000:])

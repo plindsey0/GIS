@@ -46,7 +46,9 @@ def parser() -> argparse.ArgumentParser:
     schedules.add_argument("--market", type=uuid.UUID, required=True)
     schedules.add_argument("--gsc-connection", type=uuid.UUID, required=True)
     schedules.add_argument("--ga4-connection", type=uuid.UUID, required=True)
+    schedules.add_argument("--experience-connection", type=uuid.UUID)
     schedules.add_argument("--google-validated", action="store_true")
+    schedules.add_argument("--experience-validated", action="store_true")
     return root
 
 
@@ -69,7 +71,9 @@ def run(arguments: list[str] | None = None) -> int:
                 args.market,
                 args.gsc_connection,
                 args.ga4_connection,
+                args.experience_connection,
                 google_validated=args.google_validated,
+                experience_validated=args.experience_validated,
             )
             _print({"configured": configured})
             return 0

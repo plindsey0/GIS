@@ -14,6 +14,7 @@ from gis.integrations.experience.pagespeed import (
     normalize_pagespeed,
     normalize_target,
 )
+from gis.integrations.experience.service import safe_error_summary
 from gis.integrations.serp.cli import add_query
 from gis.integrations.serp.dataforseo import (
     API_URL,
@@ -49,6 +50,11 @@ from gis.models import (
     TrackedQuery,
 )
 from gis.seed import seed
+
+
+def test_pagespeed_error_summary_is_bounded_and_sanitized() -> None:
+    assert safe_error_summary(RuntimeError("PageSpeed HTTP 429")) == "PageSpeed HTTP 429"
+    assert safe_error_summary(RuntimeError("secret=do-not-leak")) == "RuntimeError"
 
 
 class FakeSerpProvider:

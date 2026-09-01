@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -12,6 +13,7 @@ from gis.integrations.experience.pagespeed import (
     normalize_target,
 )
 from gis.models import (
+    ConnectionStatus,
     DataRightsPolicy,
     DataSource,
     DataSourceConnection,
@@ -95,10 +97,17 @@ class ExperienceCollector:
             run.records_received = len(rows)
             run.records_inserted = len(rows)
             run.status = IngestionStatus.SUCCEEDED
+            connection.status = ConnectionStatus.ACTIVE
+            connection.last_successful_sync_at = observed_at
         except Exception as error:
             run.status = IngestionStatus.FAILED
             run.error_count = 1
-            run.error_summary = type(error).__name__
-        run.completed_at = datetime.now(timezone.utc)
+            run.error_summary = safe_error_summary(error)
+        connection.last_attempted_sync_at = run.completed_at = datetime.now(timezone.utc)
         self.session.commit()
         return run
+
+
+def safe_error_summary(error: Exception) -> str:
+    match = re.fullmatch(r"PageSpeed HTTP ([45][0-9]{2})", str(error))
+    return f"PageSpeed HTTP {match.group(1)}" if match else type(error).__name__

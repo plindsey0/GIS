@@ -5,7 +5,7 @@ import json
 import os
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from gis.db import session_factory
@@ -19,6 +19,8 @@ from gis.models import (
     ExperienceObservation,
     ExperienceScope,
     FormFactor,
+    IngestionRun,
+    IngestionStatus,
     Site,
     Tenant,
 )
@@ -106,7 +108,28 @@ def run(arguments: list[str] | None = None) -> int:
                 if connection is None:
                     raise ValueError("connection not found")
                 _key(connection.credential_reference)
-                output = {"connection_id": str(connection.id), "status": "CONFIGURATION_VALID"}
+                latest_success = session.scalar(
+                    select(func.max(IngestionRun.completed_at)).where(
+                        IngestionRun.data_source_connection_id == connection.id,
+                        IngestionRun.status == IngestionStatus.SUCCEEDED,
+                    )
+                )
+                if latest_success:
+                    connection.status = ConnectionStatus.ACTIVE
+                    connection.last_successful_sync_at = latest_success
+                    connection.last_attempted_sync_at = max(
+                        filter(None, (connection.last_attempted_sync_at, latest_success))
+                    )
+                    session.commit()
+                output = {
+                    "connection_id": str(connection.id),
+                    "status": (
+                        "ACTIVE"
+                        if connection.status is ConnectionStatus.ACTIVE
+                        else "CONFIGURATION_VALID"
+                    ),
+                    "validated_from_successful_ingestion": bool(latest_success),
+                }
             elif args.command == "sync":
                 connection = session.get(DataSourceConnection, args.connection)
                 if connection is None:
