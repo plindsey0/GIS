@@ -7,8 +7,9 @@ export function PageHeader({eyebrow, title, description}: {eyebrow: string; titl
 export function StatusBadge({children, domain = "neutral"}: {children: ReactNode; domain?: string}) {
   return <span className={`badge badge-${domain}`}>{children}</span>;
 }
-export function MetricCard({label, value, detail}: {label: string; value: number | string | null; detail: string}) {
-  return <article className="metric"><p>{label}</p><strong>{value ?? "—"}</strong><small>{detail}</small></article>;
+export function MetricCard({label, value, detail, href}: {label: string; value: number | string | null; detail: string; href?: string}) {
+  const content = <article className="metric"><p>{label}</p><strong>{value ?? "—"}</strong><small>{detail}</small></article>;
+  return href ? <Link className="metricLink" href={href}>{content}</Link> : content;
 }
 export function EmptyState({title, detail}: {title: string; detail: string}) {
   return <div className="state" role="status"><h2>{title}</h2><p>{detail}</p></div>;

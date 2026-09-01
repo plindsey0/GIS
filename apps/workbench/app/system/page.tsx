@@ -1,2 +1,2 @@
-import {SystemPage} from "@/components/system";
-export default function Page() { return <SystemPage/>; }
+import {SystemOverview} from "@/components/system-explorer";
+export default function Page() { return <SystemOverview/>; }

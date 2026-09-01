@@ -1,2 +1,3 @@
 import {OpportunityInbox} from "@/components/opportunity-inbox";
-export default function Page() { return <OpportunityInbox/>; }
+import {OpportunityEvaluationSummary} from "@/components/opportunity-evaluation";
+export default function Page() { return <><OpportunityInbox/><OpportunityEvaluationSummary/></>; }

@@ -7,10 +7,12 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from test_collection_planning import scope as collection_scope
 from test_opportunities import NOW, package
 
 from gis.api.app import app
 from gis.api.routes import database
+from gis.collection_planning.service import CollectionPlanningService
 from gis.models import (
     DemandEvidenceStrength,
     Intervention,
@@ -282,3 +284,82 @@ def test_read_surfaces_empty_unknown_and_no_activation(
         ]
         is False
     )
+
+
+def test_semantic_evidence_inventory_detail_and_diagnostics(
+    client: TestClient, session: Session
+) -> None:
+    tenant, site, _ = scope(session)
+    response = client.get(
+        "/api/v1/evidence/packages",
+        params={**params(tenant.id, site.id), "limit": 100},
+        headers=headers(),
+    )
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["label"] and item["label"] != item["id"]
+    assert item["status"] != "UNKNOWN"
+    detail = client.get(
+        f"/api/v1/evidence/packages/{item['id']}",
+        params=params(tenant.id, site.id),
+        headers=headers(),
+    ).json()["data"]
+    assert detail["label"] and "opportunity_evaluation" in detail
+    diagnostics = client.get(
+        "/api/v1/opportunity-evaluations",
+        params=params(tenant.id, site.id),
+        headers=headers(),
+    ).json()
+    assert diagnostics["evaluated"] >= 1
+    assert diagnostics["items"][0]["closest"]["conditions"]
+
+
+def test_collection_pagination_filter_search_detail_and_isolation(
+    client: TestClient, session: Session
+) -> None:
+    tenant, site, market = collection_scope(session)
+    target = CollectionPlanningService(session).discover(market)[0]
+    session.flush()
+    response = client.get(
+        "/api/v1/collection",
+        params={
+            **params(tenant.id, site.id),
+            "target_type": "QUERY",
+            "search": "loan calculator",
+            "page": 1,
+            "limit": 25,
+            "sort": "name",
+            "order": "asc",
+        },
+        headers=headers(),
+    )
+    assert response.status_code == 200 and response.json()["total"] == 1
+    assert response.json()["items"][0]["status_explanation"]
+    detail = client.get(
+        f"/api/v1/collection/{target.id}",
+        params=params(tenant.id, site.id),
+        headers=headers(),
+    )
+    assert detail.status_code == 200 and detail.json()["label"] == target.display_value
+    isolated = client.get(
+        f"/api/v1/collection/{target.id}",
+        params={"tenant_id": uuid.uuid4(), "site_id": site.id},
+        headers=headers(),
+    )
+    assert isolated.status_code == 404
+
+
+def test_system_pipeline_source_run_and_data_flow_views(
+    client: TestClient, session: Session
+) -> None:
+    seed(session, hostname="vahomemath.test")
+    tenant = session.scalar(select(Tenant).where(Tenant.slug == "vahomemath"))
+    site = session.scalar(select(Site).where(Site.slug == "vahomemath"))
+    assert tenant and site
+    scoped_params = params(tenant.id, site.id)
+    pipelines = client.get("/api/v1/system/pipelines", params=scoped_params, headers=headers())
+    sources = client.get("/api/v1/system/sources", params=scoped_params, headers=headers())
+    flow = client.get("/api/v1/system/data-flow", params=scoped_params, headers=headers())
+    assert pipelines.status_code == sources.status_code == flow.status_code == 200
+    assert sources.json()["items"][0]["label"]
+    assert "methodology" in flow.json()

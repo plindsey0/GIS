@@ -1,2 +1,2 @@
-import {ResourceList} from "@/components/resource-view";
-export default function Page() { return <ResourceList kind="markets"/>; }
+import {Explorer} from "@/components/explorer";
+export default function Page() { return <Explorer title="Markets" description="The observable competitive and search universes against which GIS evaluates demand, visibility, evidence, and opportunities." endpoint="/api/v1/markets" empty="No governed markets are defined." columns={[{key:"label",label:"Market"},{key:"type",label:"Type"},{key:"status",label:"Status"},{key:"country_code",label:"Geography"},{key:"language_code",label:"Language"},{key:"device",label:"Device"},{key:"updated_at",label:"Updated",format:"date"}]}/>; }

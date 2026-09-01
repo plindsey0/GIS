@@ -24,8 +24,8 @@ describe("GIS Workbench", () => {
   it("renders the epistemically accurate opportunity empty state", async () => {
     vi.stubGlobal("fetch", vi.fn(() => answer({items: [], page: 1, limit: 25, total: 0})));
     render(<OpportunityInbox/>);
-    expect(await screen.findByText(/No qualifying opportunities are currently supported/)).toBeInTheDocument();
-    expect(screen.getByText(/coverage may still be incomplete/i)).toBeInTheDocument();
+    expect(await screen.findByText(/No evidence package currently satisfies/)).toBeInTheDocument();
+    expect(screen.getByText(/exact conditions passed or failed/i)).toBeInTheDocument();
   });
 
   it("renders API failures instead of failing silently", async () => {

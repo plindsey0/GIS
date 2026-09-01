@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type {Metadata} from "next";
 import "./globals.css";
+import "./exploration.css";
+import "./polish.css";
 
 export const metadata: Metadata = {title: "GIS Intelligence Workbench", description: "Governed growth decision intelligence"};
 const links = [["/", "Overview"], ["/opportunities", "Opportunities"], ["/recommendations", "Recommendations"], ["/interventions", "Interventions"], ["/evidence", "Evidence"], ["/markets", "Market"], ["/collection", "Collection"], ["/experiments", "Experiments"], ["/outcomes", "Outcomes"], ["/system", "System"]];

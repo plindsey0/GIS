@@ -20,6 +20,22 @@ from gis.api.schemas import (
     ResourceDetail,
     SiteContext,
 )
+from gis.api.semantics import (
+    collection_detail as semantic_collection_detail,
+)
+from gis.api.semantics import (
+    collection_inventory,
+    evidence_gap_detail,
+    evidence_inventory,
+    opportunity_diagnostics,
+)
+from gis.api.semantics import (
+    evidence_detail as semantic_evidence_detail,
+)
+from gis.api.semantics import (
+    market_detail as semantic_market_detail,
+)
+from gis.api.system import SystemQueries
 from gis.api.workbench import WorkbenchQueries, row_data
 from gis.db import session_factory
 from gis.interventions.service import InterventionService
@@ -496,9 +512,28 @@ def evidence_packages(
     site_id: uuid.UUID,
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=100),
+    search: Optional[str] = Query(default=None, max_length=200),
+    entity_type: Optional[str] = None,
+    sufficiency: Optional[str] = None,
+    source: Optional[str] = None,
+    sort: str = Query("updated", pattern="^(name|updated|status|freshness)$"),
+    order: str = Query("desc", pattern="^(asc|desc)$"),
     session: Session = Depends(database),
 ) -> dict[str, Any]:
-    return WorkbenchQueries(session).simple_page(EvidencePackage, tenant_id, site_id, page, limit)
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    return evidence_inventory(
+        session,
+        tenant_id,
+        site_id,
+        page=page,
+        limit=limit,
+        search=search,
+        entity_type=entity_type,
+        sufficiency=sufficiency,
+        source=source,
+        sort=sort,
+        order=order,
+    )
 
 
 @router.get(
@@ -512,7 +547,25 @@ def evidence_detail(
     site_id: uuid.UUID,
     session: Session = Depends(database),
 ) -> ResourceDetail:
-    return WorkbenchQueries(session).evidence(resource_id, tenant_id, site_id)
+    data = semantic_evidence_detail(session, resource_id, tenant_id, site_id)
+    return ResourceDetail(
+        id=resource_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        resource_type="evidence_package",
+        data=data,
+    )
+
+
+@router.get("/evidence/gaps/{resource_id}", dependencies=[Depends(require_role(Role.READ))])
+def evidence_gap(
+    resource_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    return evidence_gap_detail(session, resource_id, tenant_id, site_id)
 
 
 @router.get("/markets", dependencies=[Depends(require_role(Role.READ))])
@@ -523,7 +576,19 @@ def markets(
     limit: int = Query(25, ge=1, le=100),
     session: Session = Depends(database),
 ) -> dict[str, Any]:
-    return WorkbenchQueries(session).simple_page(MarketDefinition, tenant_id, site_id, page, limit)
+    result = WorkbenchQueries(session).simple_page(
+        MarketDefinition, tenant_id, site_id, page, limit
+    )
+    result["items"] = [
+        {
+            **item,
+            "label": item["name"],
+            "type": item["market_type"],
+            "href": f"/markets/{item['id']}",
+        }
+        for item in result["items"]
+    ]
+    return result
 
 
 @router.get(
@@ -537,7 +602,10 @@ def market_detail(
     site_id: uuid.UUID,
     session: Session = Depends(database),
 ) -> ResourceDetail:
-    return WorkbenchQueries(session).market_detail(resource_id, tenant_id, site_id)
+    data = semantic_market_detail(session, resource_id, tenant_id, site_id)
+    return ResourceDetail(
+        id=resource_id, tenant_id=tenant_id, site_id=site_id, resource_type="market", data=data
+    )
 
 
 @router.get("/collection", dependencies=[Depends(require_role(Role.READ))])
@@ -546,9 +614,47 @@ def collection(
     site_id: uuid.UUID,
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=100),
+    search: Optional[str] = Query(default=None, max_length=200),
+    target_type: Optional[str] = None,
+    status: Optional[str] = None,
+    sort: str = Query("updated", pattern="^(name|updated|status|type)$"),
+    order: str = Query("desc", pattern="^(asc|desc)$"),
     session: Session = Depends(database),
 ) -> dict[str, Any]:
-    return WorkbenchQueries(session).collection(tenant_id, site_id, page, limit)
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    return collection_inventory(
+        session,
+        tenant_id,
+        site_id,
+        page=page,
+        limit=limit,
+        search=search,
+        target_type=target_type,
+        status=status,
+        sort=sort,
+        order=order,
+    )
+
+
+@router.get("/collection/{resource_id}", dependencies=[Depends(require_role(Role.READ))])
+def collection_target_detail(
+    resource_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    return semantic_collection_detail(session, resource_id, tenant_id, site_id)
+
+
+@router.get("/opportunity-evaluations", dependencies=[Depends(require_role(Role.READ))])
+def opportunity_evaluation_summary(
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    return opportunity_diagnostics(session, tenant_id, site_id)
 
 
 @router.get("/experiments", dependencies=[Depends(require_role(Role.READ))])
@@ -652,3 +758,69 @@ def outcome_detail(
     return ResourceDetail(
         id=row.id, tenant_id=tenant_id, site_id=site_id, resource_type="outcome", data=data
     )
+
+
+@router.get("/system/pipelines", dependencies=[Depends(require_role(Role.READ))])
+def system_pipelines(
+    tenant_id: uuid.UUID, site_id: uuid.UUID, session: Session = Depends(database)
+) -> dict[str, Any]:
+    return SystemQueries(session).pipelines(tenant_id, site_id)
+
+
+@router.get("/system/pipelines/{pipeline_key}", dependencies=[Depends(require_role(Role.READ))])
+def system_pipeline_detail(
+    pipeline_key: str,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    return SystemQueries(session).pipeline_detail(pipeline_key, tenant_id, site_id)
+
+
+@router.get("/system/runs", dependencies=[Depends(require_role(Role.READ))])
+def system_runs(
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=100),
+    status: Optional[str] = None,
+    pipeline_key: Optional[str] = None,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    return SystemQueries(session).runs(
+        tenant_id, site_id, page=page, limit=limit, status=status, pipeline_key=pipeline_key
+    )
+
+
+@router.get("/system/runs/{resource_id}", dependencies=[Depends(require_role(Role.READ))])
+def system_run_detail(
+    resource_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    return SystemQueries(session).run_detail(resource_id, tenant_id, site_id)
+
+
+@router.get("/system/sources", dependencies=[Depends(require_role(Role.READ))])
+def system_sources(
+    tenant_id: uuid.UUID, site_id: uuid.UUID, session: Session = Depends(database)
+) -> dict[str, Any]:
+    return SystemQueries(session).sources(tenant_id, site_id)
+
+
+@router.get("/system/sources/{source_key}", dependencies=[Depends(require_role(Role.READ))])
+def system_source_detail(
+    source_key: str,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    return SystemQueries(session).source_detail(source_key, tenant_id, site_id)
+
+
+@router.get("/system/data-flow", dependencies=[Depends(require_role(Role.READ))])
+def system_data_flow(
+    tenant_id: uuid.UUID, site_id: uuid.UUID, session: Session = Depends(database)
+) -> dict[str, Any]:
+    return SystemQueries(session).data_flow(tenant_id, site_id)

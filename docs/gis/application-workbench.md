@@ -144,3 +144,65 @@ Metabase remains at the configured `NEXT_PUBLIC_METABASE_URL` and is linked from
 - No database migration is required for Epic 8.5.
 
 Future work can add verified authentication and commercial tenant membership, Epic 9B execution, specialized opportunity engines, Epic 27 learning, customer-side integrations, and productized multi-tenancy without changing the API/domain-service boundary.
+
+## Semantic exploration model
+
+The Workbench presents governed objects by human identity—market name, query, domain, URL, evidence subject, pipeline name, or source name—while keeping UUIDs in technical metadata. Evidence status comes from `EvidencePackage.sufficiency`; the package model has no generic `status` field. A bare `UNKNOWN` in the original interface was therefore a presentation fallback, not an evidence-quality conclusion.
+
+Reusable explorer and detail components provide linkable URL-state pagination, 25/50/100 page sizes, search, domain filters, human timestamps, metric-aware numbers, breadcrumbs, meaningful empty states, relationship sections, and progressive disclosure for provenance and rights. Evidence packages, gaps, markets, collection targets, pipelines, sources, and runs have stable detail routes.
+
+Collection target states retain their actual lifecycle semantics:
+
+- `CANDIDATE`: discovered and evaluated, but not promoted into an applied plan.
+- `ACTIVE`: included in the applied collection plan.
+- `DORMANT`: retained but not currently prioritized.
+- `PAUSED`: deliberately suspended without retirement.
+- `REJECTED`: explicitly excluded after evaluation.
+- `RETIRED`: no longer eligible for routine collection.
+
+The collection detail view exposes discovery evidence, the latest planning decision, deterministic component scores, unknown components, blocker, cadence, collector plan, demand signals, evidence gaps, and market relationship where stored.
+
+## Opportunity explainability
+
+`GET /api/v1/opportunity-evaluations` runs read-only diagnostics from the same `DETECTORS` registry and detector version used by `OpportunityService`. It does not write evaluation rows, create opportunities, or change thresholds. Each package/detector pair exposes contract, classification, rights, conflicts, required entity context, and sufficiency conditions with required and observed values.
+
+The current stored packages do not qualify because their classifications are `STABLE`, `DECLINING`, or `FIRST_OBSERVED`; the existing detectors require `EMERGING` or `ACCELERATING`. The interface reports closest candidates by explicit conditions satisfied, not a probability, hidden score, predicted lift, or ROI.
+
+## System observability
+
+System is organized around Overview, Pipelines, Data Sources, Data Flow, and Run History. Pipeline details show maintained purpose, collector/local classification, schedule and human cadence, run history, volume, cost, budgets, dependencies, reliability, and transparent health. Source details use registered `DataSource`, `DataSourceConnection`, rights, ingestion, pipeline, asset-source, and lineage metadata; credential references and secret-like configuration keys are never returned.
+
+Pipeline health uses explicit states: `HEALTHY`, `STALE`, `FAILING`, `DISABLED`, `NOT_APPLICABLE`, and `INSUFFICIENT_HISTORY`. It is not an opaque score. Thirty-day reliability compares enabled-schedule occurrences with orchestration attempts. A missed execution is an enabled schedule occurrence without an attempt inside the displayed timing tolerance. Disabled schedules never accrue misses, and fewer than two expected executions is reported as insufficient history.
+
+The data-flow view renders only registered source-to-pipeline assignments, `PipelineDependency`, `DataAssetSource`, and `DataAssetLineage` edges. Missing metadata is identified as unmapped rather than inferred.
+
+```mermaid
+flowchart TD
+  S[Sources] --> C[Collection targets and collectors]
+  C --> O[Observations]
+  O --> SG[Signals]
+  SG --> E[Evidence packages and gaps]
+  E --> M[Market context]
+  M --> OE[Opportunity evaluation]
+  OE --> OP[Opportunities]
+  OP --> R[Recommendations]
+  R --> I[Draft interventions]
+  I --> X[Approved experiments]
+  X --> OUT[Observed outcomes]
+  OUT --> E
+```
+
+The flow remains human governed: recommendation acceptance creates a draft intervention, approval is separate, and no Workbench read view activates schedules, collectors, providers, or execution.
+
+## Page purpose model
+
+- Overview: what should the operator know now?
+- Opportunities: where might VAHomeMath improve, and why did evidence qualify or fail?
+- Recommendations: what should a reviewer consider?
+- Interventions: what has a human decided to do?
+- Evidence: what does GIS know and how reliable is it?
+- Market: what bounded environment is being observed?
+- Collection: what is observed, missing, planned, or blocked?
+- Experiments: what is deliberately being tested?
+- Outcomes: what changed after action, without claiming causality?
+- System: can GIS currently produce trustworthy intelligence, and what depends on each source or pipeline?

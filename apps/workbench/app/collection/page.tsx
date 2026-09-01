@@ -1,2 +1,5 @@
-import {ResourceList} from "@/components/resource-view";
-export default function Page() { return <ResourceList kind="collection"/>; }
+import {Explorer} from "@/components/explorer";
+
+export default function Page() {
+  return <Explorer title="Collection" description="What GIS is observing and why. Candidate means discovered and evaluated, but not promoted into an applied collection plan." endpoint="/api/v1/collection" empty="No collection targets match this view." columns={[{key: "label", label: "Target"}, {key: "type", label: "Type"}, {key: "status", label: "Status"}, {key: "priority", label: "Priority"}, {key: "cadence", label: "Cadence"}, {key: "blocker", label: "Blocker"}, {key: "updated_at", label: "Updated", format: "date"}]} filters={[{name: "target_type", label: "Target type", options: [{value: "QUERY", label: "Queries"}, {value: "DOMAIN", label: "Domains"}, {value: "URL", label: "URLs"}]}, {name: "status", label: "Status", options: [{value: "CANDIDATE", label: "Candidate"}, {value: "ACTIVE", label: "Active"}, {value: "PAUSED", label: "Paused"}, {value: "DORMANT", label: "Dormant"}, {value: "REJECTED", label: "Rejected"}, {value: "RETIRED", label: "Retired"}]}]}/>;
+}
