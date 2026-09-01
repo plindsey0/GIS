@@ -263,6 +263,19 @@ def test_read_surfaces_empty_unknown_and_no_activation(
         assert response.status_code == 200
     overview = client.get("/api/v1/overview", params=scoped_params, headers=headers()).json()
     assert overview["unknown_values_are_zero"] is False
+    assert overview["search"] == {
+        "stored_observations": 0,
+        "latest_observation": None,
+        "rights_state": "UNKNOWN",
+        "blocker": "No governed source observations are stored.",
+        "clicks": None,
+        "impressions": None,
+        "ctr": None,
+        "average_position": None,
+        "observed_query_count": None,
+    }
+    assert overview["evidence"]["status"] == "NOT_PRODUCED"
+    assert overview["collection_health"]["targets"] == 0
     assert (
         client.get("/api/v1/capabilities", params=scoped_params, headers=headers()).json()[
             "production_ai_operational"

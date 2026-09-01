@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.orm import Session
 
 from gis.api.errors import ApiError
@@ -14,22 +14,41 @@ from gis.models import (
     CollectionPlanItem,
     CollectionPlanningDecision,
     CollectionTarget,
+    CompetitiveContentObservation,
+    CompetitiveEvent,
+    DataRightsPolicy,
+    DemandAnalysisRun,
+    DemandObservation,
+    DemandSignal,
     EvidenceGap,
     EvidencePackage,
     EvidencePackageItem,
     EvidenceQualityDimension,
     Experiment,
+    ExternalKeywordRanking,
+    ExternalSearchObservation,
     FreshnessState,
+    GA4EventObservation,
+    GA4LandingPageObservation,
+    GSCSearchObservation,
     Intervention,
     InterventionOutcome,
     MarketDefinition,
     MarketDefinitionMember,
+    MarketObservation,
+    MarketParticipantObservation,
     Opportunity,
+    PermittedUse,
     PipelineDefinition,
     Recommendation,
     ScheduleDefinition,
+    SerpObservation,
+    SerpResult,
     Site,
+    TechnologyDetection,
+    TechnologyObservation,
 )
+from gis.provenance.service import evaluate_policy_use
 
 
 def encoded(value: Any) -> Any:
@@ -231,6 +250,152 @@ class WorkbenchQueries:
                 or 0
             )
 
+        def current_count(model: Any) -> int:
+            conditions = [model.tenant_id == tenant_id, model.site_id == site_id]
+            if hasattr(model, "effective_end"):
+                conditions.append(model.effective_end.is_(None))
+            return (
+                self.session.scalar(select(func.count()).select_from(model).where(*conditions)) or 0
+            )
+
+        def latest(model: Any, column: Any) -> Any:
+            conditions = [model.tenant_id == tenant_id, model.site_id == site_id]
+            if hasattr(model, "effective_end"):
+                conditions.append(model.effective_end.is_(None))
+            return encoded(self.session.scalar(select(func.max(column)).where(*conditions)))
+
+        def source_rights(model: Any) -> tuple[bool, str | None]:
+            policy_ids = set(
+                self.session.scalars(
+                    select(model.rights_policy_id).where(
+                        model.tenant_id == tenant_id,
+                        model.site_id == site_id,
+                        *(
+                            [model.effective_end.is_(None)]
+                            if hasattr(model, "effective_end")
+                            else []
+                        ),
+                    )
+                )
+            )
+            if not policy_ids:
+                return False, "No governed source observations are stored."
+            blocked: list[str] = []
+            for policy_id in policy_ids:
+                policy = self.session.get(DataRightsPolicy, policy_id)
+                for use in (
+                    PermittedUse.AGGREGATE_STATISTICS,
+                    PermittedUse.CUSTOMER_FACING_DISPLAY,
+                ):
+                    decision = evaluate_policy_use(self.session, policy, use)
+                    if decision.status.value != "ALLOWED":
+                        blocked.append(
+                            f"{policy.name if policy else policy_id}: {use.value}={decision.status.value}"
+                        )
+            return not blocked, "; ".join(sorted(set(blocked))) or None
+
+        gsc_count = current_count(GSCSearchObservation)
+        gsc_allowed, gsc_blocker = source_rights(GSCSearchObservation)
+        ga4_count = current_count(GA4EventObservation)
+        ga4_allowed, ga4_blocker = source_rights(GA4EventObservation)
+        serp_count = current_count(SerpObservation)
+        serp_allowed, serp_blocker = source_rights(SerpObservation)
+        demand_count = current_count(DemandObservation)
+        external_count = current_count(ExternalSearchObservation)
+        external_allowed, external_blocker = source_rights(ExternalSearchObservation)
+
+        search_metrics = {
+            "stored_observations": gsc_count,
+            "latest_observation": latest(GSCSearchObservation, GSCSearchObservation.observed_at),
+            "rights_state": "USABLE" if gsc_allowed else "UNKNOWN",
+            "blocker": gsc_blocker,
+            "clicks": None,
+            "impressions": None,
+            "ctr": None,
+            "average_position": None,
+            "observed_query_count": None,
+        }
+        if gsc_allowed:
+            filters = [
+                GSCSearchObservation.tenant_id == tenant_id,
+                GSCSearchObservation.site_id == site_id,
+                GSCSearchObservation.effective_end.is_(None),
+            ]
+            clicks, impressions, position, queries = self.session.execute(
+                select(
+                    func.sum(GSCSearchObservation.clicks),
+                    func.sum(GSCSearchObservation.impressions),
+                    func.avg(GSCSearchObservation.position),
+                    func.count(distinct(GSCSearchObservation.query_hash)),
+                ).where(*filters)
+            ).one()
+            search_metrics.update(
+                clicks=encoded(clicks),
+                impressions=encoded(impressions),
+                ctr=encoded(clicks / impressions) if impressions else None,
+                average_position=encoded(position),
+                observed_query_count=queries,
+            )
+
+        traffic_metrics = {
+            "stored_event_observations": ga4_count,
+            "stored_landing_page_observations": current_count(GA4LandingPageObservation),
+            "latest_observation": latest(GA4EventObservation, GA4EventObservation.observed_at),
+            "rights_state": "USABLE" if ga4_allowed else "UNKNOWN",
+            "blocker": ga4_blocker,
+            "events": None,
+            "users": None,
+            "sessions": None,
+        }
+        if ga4_allowed:
+            base = [
+                GA4EventObservation.tenant_id == tenant_id,
+                GA4EventObservation.site_id == site_id,
+                GA4EventObservation.effective_end.is_(None),
+            ]
+            events, users = self.session.execute(
+                select(
+                    func.sum(GA4EventObservation.event_count),
+                    func.sum(GA4EventObservation.total_users),
+                ).where(*base)
+            ).one()
+            sessions = self.session.scalar(
+                select(func.sum(GA4LandingPageObservation.sessions)).where(
+                    GA4LandingPageObservation.tenant_id == tenant_id,
+                    GA4LandingPageObservation.site_id == site_id,
+                    GA4LandingPageObservation.effective_end.is_(None),
+                )
+            )
+            traffic_metrics.update(
+                events=encoded(events), users=encoded(users), sessions=encoded(sessions)
+            )
+
+        market = self.session.scalar(
+            select(MarketDefinition)
+            .where(
+                MarketDefinition.tenant_id == tenant_id,
+                MarketDefinition.site_id == site_id,
+                MarketDefinition.status == "ACTIVE",
+            )
+            .order_by(MarketDefinition.version.desc())
+            .limit(1)
+        )
+        target_types = {
+            encoded(target_type): total
+            for target_type, total in self.session.execute(
+                select(CollectionTarget.target_type, func.count())
+                .where(
+                    CollectionTarget.tenant_id == tenant_id,
+                    CollectionTarget.site_id == site_id,
+                )
+                .group_by(CollectionTarget.target_type)
+            ).all()
+        }
+        collection_total = count(CollectionTarget)
+        competitive_events = count(CompetitiveEvent)
+        competitive_content = current_count(CompetitiveContentObservation)
+        technology_observations = current_count(TechnologyObservation)
+
         return {
             "opportunities_to_review": count(
                 Opportunity, Opportunity.status.in_(["ACTIVE", "WATCHING"])
@@ -252,11 +417,150 @@ class WorkbenchQueries:
                 .where(Intervention.tenant_id == tenant_id, Intervention.site_id == site_id)
             )
             or 0,
+            "search": search_metrics,
+            "traffic": traffic_metrics,
+            "visibility": {
+                "stored_serp_observations": serp_count,
+                "stored_serp_results": self.session.scalar(
+                    select(func.count())
+                    .select_from(SerpResult)
+                    .join(SerpObservation)
+                    .where(
+                        SerpObservation.tenant_id == tenant_id,
+                        SerpObservation.site_id == site_id,
+                        SerpObservation.effective_end.is_(None),
+                    )
+                )
+                or 0,
+                "latest_observation": latest(SerpObservation, SerpObservation.observed_at),
+                "rights_state": "USABLE" if serp_allowed else "UNKNOWN",
+                "blocker": serp_blocker,
+                "tracked_query_count": None if not serp_allowed else serp_count,
+            },
+            "market": {
+                "id": str(market.id) if market else None,
+                "name": market.name if market else None,
+                "version": market.version if market else None,
+                "definition_member_count": self.session.scalar(
+                    select(func.count())
+                    .select_from(MarketDefinitionMember)
+                    .where(MarketDefinitionMember.market_definition_id == market.id)
+                )
+                if market
+                else 0,
+                "observation_count": count(MarketObservation),
+                "participant_count": self.session.scalar(
+                    select(func.count())
+                    .select_from(MarketParticipantObservation)
+                    .join(MarketObservation)
+                    .where(
+                        MarketObservation.tenant_id == tenant_id,
+                        MarketObservation.site_id == site_id,
+                        MarketObservation.effective_end.is_(None),
+                    )
+                )
+                or 0,
+            },
+            "demand": {
+                "stored_external_keywords": self.session.scalar(
+                    select(func.count())
+                    .select_from(ExternalKeywordRanking)
+                    .join(ExternalSearchObservation)
+                    .where(
+                        ExternalSearchObservation.tenant_id == tenant_id,
+                        ExternalSearchObservation.site_id == site_id,
+                        ExternalSearchObservation.effective_end.is_(None),
+                    )
+                )
+                or 0,
+                "stored_external_observations": external_count,
+                "demand_observations": demand_count,
+                "demand_signals": self.session.scalar(
+                    select(func.count())
+                    .select_from(DemandSignal)
+                    .join(DemandAnalysisRun)
+                    .where(
+                        DemandAnalysisRun.tenant_id == tenant_id,
+                        DemandAnalysisRun.site_id == site_id,
+                    )
+                )
+                or 0,
+                "latest_provider_observation": latest(
+                    ExternalSearchObservation, ExternalSearchObservation.observed_at
+                ),
+                "rights_state": "USABLE" if external_allowed else "UNKNOWN",
+                "blocker": external_blocker,
+                "provider_specific_volume": None,
+            },
+            "evidence": {
+                "packages": count(EvidencePackage),
+                "gaps": self.session.scalar(
+                    select(func.count())
+                    .select_from(EvidenceGap)
+                    .join(EvidencePackage)
+                    .where(
+                        EvidencePackage.tenant_id == tenant_id, EvidencePackage.site_id == site_id
+                    )
+                )
+                or 0,
+                "status": "NOT_PRODUCED" if count(EvidencePackage) == 0 else "AVAILABLE",
+                "explanation": external_blocker
+                or "No qualifying demand signals have been produced.",
+            },
+            "competitive": {
+                "content_observations": competitive_content,
+                "technology_observations": technology_observations,
+                "technology_detections": self.session.scalar(
+                    select(func.count())
+                    .select_from(TechnologyDetection)
+                    .join(TechnologyObservation)
+                    .where(
+                        TechnologyObservation.tenant_id == tenant_id,
+                        TechnologyObservation.site_id == site_id,
+                        TechnologyObservation.effective_end.is_(None),
+                    )
+                )
+                or 0,
+                "events": competitive_events,
+                "latest_event": encoded(
+                    self.session.scalar(
+                        select(func.max(CompetitiveEvent.event_time)).where(
+                            CompetitiveEvent.tenant_id == tenant_id,
+                            CompetitiveEvent.site_id == site_id,
+                        )
+                    )
+                ),
+                "rights_state": "USABLE",
+            },
+            "collection_health": {
+                "targets": collection_total,
+                "query_targets": target_types.get("QUERY", 0),
+                "domain_targets": target_types.get("DOMAIN", 0),
+                "url_targets": target_types.get("URL", 0),
+                "latest_update": encoded(
+                    self.session.scalar(
+                        select(func.max(CollectionTarget.updated_at)).where(
+                            CollectionTarget.tenant_id == tenant_id,
+                            CollectionTarget.site_id == site_id,
+                        )
+                    )
+                ),
+            },
             "unknown_values_are_zero": False,
         }
 
     def capability_status(self, tenant_id: uuid.UUID, site_id: uuid.UUID) -> dict[str, Any]:
         self.site(tenant_id, site_id)
+        disabled_reasons = {
+            "gsc": "Governance blocked: stored GSC evidence uses an unreviewed rights policy; retrieval remains disabled until rights and credentials are both validated.",
+            "ga4": "Governance blocked: stored GA4 evidence uses an unreviewed rights policy; retrieval remains disabled until rights and credentials are both validated.",
+            "experience": "Not configured: PageSpeed/CrUX quota and credentials have not been validated for unattended zero-cost collection.",
+            "competitive_content": "Intentionally disabled: this collector performs new external HTTP retrieval; stored content is still available to local dbt and event processing.",
+            "competitive_technology": "Intentionally disabled: this collector performs new external retrieval; stored detections remain available to local processing.",
+            "market_intelligence": "Governance blocked: local synthesis requires stored SERP/external-search evidence whose aggregation rights remain UNKNOWN.",
+            "intervention_measurement": "Not applicable yet: there are no approved interventions or measurement contracts to process.",
+            "ai_recommendations": "Not applicable yet: there are no qualifying opportunities; external LLM providers remain unconfigured.",
+        }
         schedules = list(
             self.session.execute(
                 select(ScheduleDefinition, FreshnessState, PipelineDefinition)
@@ -277,6 +581,8 @@ class WorkbenchQueries:
                     "reason": (
                         "Intentionally disabled: this pipeline can consume paid provider credits."
                         if row.status.value == "DISABLED" and pipeline.paid_provider
+                        else disabled_reasons.get(pipeline.key)
+                        if row.status.value == "DISABLED" and pipeline.key in disabled_reasons
                         else "Disabled pending safe operator configuration."
                         if row.status.value == "DISABLED"
                         and row.configuration_json.get("requires_operator_configuration")

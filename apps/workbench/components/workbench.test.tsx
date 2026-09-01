@@ -1,4 +1,4 @@
-import {fireEvent, render, screen, waitFor} from "@testing-library/react";
+import {cleanup, fireEvent, render, screen, waitFor} from "@testing-library/react";
 import {afterEach, describe, expect, it, vi} from "vitest";
 import {InterventionApproval, RecommendationReview} from "./decision-workflow";
 import {OpportunityInbox} from "./opportunity-inbox";
@@ -8,14 +8,15 @@ import {SystemPage} from "./system";
 function answer(body: unknown, ok = true, status = 200) {
   return Promise.resolve({ok, status, json: () => Promise.resolve(body)} as Response);
 }
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("GIS Workbench", () => {
   it("renders the decision overview and preserves zero as a real count", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => answer({opportunities_to_review: 0, recommendations_to_review: 2, interventions_to_approve: 1, active_interventions: 0, experiments_running: 0, recent_outcomes: 0, unknown_values_are_zero: false})));
+    vi.stubGlobal("fetch", vi.fn(() => answer({opportunities_to_review: 0, recommendations_to_review: 2, interventions_to_approve: 1, active_interventions: 0, experiments_running: 0, recent_outcomes: 0, search: {stored_observations: 146, latest_observation: "2026-08-27", rights_state: "UNKNOWN", blocker: "rights review", clicks: null, impressions: null}, traffic: {stored_event_observations: 282, stored_landing_page_observations: 23, latest_observation: "2026-08-28", rights_state: "UNKNOWN", blocker: "rights review", sessions: null}, visibility: {stored_serp_observations: 1, stored_serp_results: 100}, market: {name: "VA Loan Calculator Search Market", version: 1, definition_member_count: 1, observation_count: 0}, demand: {stored_external_keywords: 10, demand_observations: 0, demand_signals: 0, rights_state: "UNKNOWN"}, evidence: {packages: 0, gaps: 0, status: "NOT_PRODUCED", explanation: "Rights review required."}, competitive: {content_observations: 2, technology_detections: 2, events: 4, latest_event: "2026-08-30"}, collection_health: {targets: 251, query_targets: 87, domain_targets: 75, url_targets: 89, latest_update: "2026-08-31"}, unknown_values_are_zero: false})));
     render(<OverviewPage/>);
     expect(screen.getByText("Loading current GIS state…")).toBeInTheDocument();
-    expect(await screen.findByText("Decision overview")).toBeInTheDocument();
+    expect(await screen.findByText("Intelligence overview")).toBeInTheDocument();
+    expect(screen.getByText("Stored GSC observations").parentElement).toHaveTextContent("146");
     expect(screen.getByText("Recommendations to review").parentElement).toHaveTextContent("2");
     expect(screen.getByText(/acceptance creates a draft/i)).toBeInTheDocument();
   });
