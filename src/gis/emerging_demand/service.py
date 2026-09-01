@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from gis.collection_planning.analysis import digest
 from gis.emerging_demand.analysis import POLICY_VERSION, Point, classify
+from gis.integrations.external_search.scope import country_scope
 from gis.models import (
     AssetLayer,
     AssetType,
@@ -164,7 +165,7 @@ class EmergingDemandService:
                 ExternalSearchObservation.tenant_id == market.tenant_id,
                 ExternalSearchObservation.site_id == market.site_id,
                 ExternalSearchObservation.effective_end.is_(None),
-                ExternalSearchObservation.country_code == market.country_code,
+                country_scope(market.country_code),
                 ExternalSearchObservation.language_code == market.language_code,
                 ExternalSearchObservation.device == market.device,
             )

@@ -24,6 +24,7 @@ from gis.collection_planning.analysis import (
 )
 from gis.integrations.authority_intelligence.analysis import normalize_domain
 from gis.integrations.content_intelligence.extraction import normalize_url
+from gis.integrations.external_search.scope import country_scope
 from gis.integrations.serp.service import normalize_query
 from gis.models import (
     AssetLayer,
@@ -440,7 +441,7 @@ class CollectionPlanningService:
                 ExternalSearchObservation.tenant_id == market.tenant_id,
                 ExternalSearchObservation.site_id == market.site_id,
                 ExternalSearchObservation.effective_end.is_(None),
-                ExternalSearchObservation.country_code == market.country_code,
+                country_scope(market.country_code),
                 ExternalSearchObservation.language_code == market.language_code,
                 ExternalSearchObservation.device == market.device,
             )

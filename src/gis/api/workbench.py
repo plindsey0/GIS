@@ -17,6 +17,7 @@ from gis.models import (
     CompetitiveContentObservation,
     CompetitiveEvent,
     DataRightsPolicy,
+    DataSourceConnection,
     DemandAnalysisRun,
     DemandObservation,
     DemandSignal,
@@ -38,6 +39,7 @@ from gis.models import (
     MarketObservation,
     MarketParticipantObservation,
     Opportunity,
+    OrchestrationRun,
     PermittedUse,
     PipelineDefinition,
     Recommendation,
@@ -303,6 +305,26 @@ class WorkbenchQueries:
         demand_count = current_count(DemandObservation)
         external_count = current_count(ExternalSearchObservation)
         external_allowed, external_blocker = source_rights(ExternalSearchObservation)
+        latest_demand_date = self.session.scalar(
+            select(func.max(DemandObservation.observed_date)).where(
+                DemandObservation.tenant_id == tenant_id,
+                DemandObservation.site_id == site_id,
+                DemandObservation.effective_end.is_(None),
+            )
+        )
+        current_provider_volume = (
+            self.session.scalar(
+                select(func.sum(DemandObservation.value)).where(
+                    DemandObservation.tenant_id == tenant_id,
+                    DemandObservation.site_id == site_id,
+                    DemandObservation.observed_date == latest_demand_date,
+                    DemandObservation.effective_end.is_(None),
+                )
+            )
+            if external_allowed and latest_demand_date
+            else None
+        )
+        evidence_package_count = count(EvidencePackage)
 
         search_metrics = {
             "stored_observations": gsc_count,
@@ -490,10 +512,10 @@ class WorkbenchQueries:
                 ),
                 "rights_state": "USABLE" if external_allowed else "UNKNOWN",
                 "blocker": external_blocker,
-                "provider_specific_volume": None,
+                "provider_specific_volume": encoded(current_provider_volume),
             },
             "evidence": {
-                "packages": count(EvidencePackage),
+                "packages": evidence_package_count,
                 "gaps": self.session.scalar(
                     select(func.count())
                     .select_from(EvidenceGap)
@@ -503,9 +525,13 @@ class WorkbenchQueries:
                     )
                 )
                 or 0,
-                "status": "NOT_PRODUCED" if count(EvidencePackage) == 0 else "AVAILABLE",
+                "status": "NOT_PRODUCED" if evidence_package_count == 0 else "AVAILABLE",
                 "explanation": external_blocker
-                or "No qualifying demand signals have been produced.",
+                or (
+                    f"{evidence_package_count} governed evidence packages were produced from stored demand signals."
+                    if evidence_package_count
+                    else "No qualifying demand signals have been produced."
+                ),
             },
             "competitive": {
                 "content_observations": competitive_content,
@@ -561,6 +587,10 @@ class WorkbenchQueries:
             "intervention_measurement": "Not applicable yet: there are no approved interventions or measurement contracts to process.",
             "ai_recommendations": "Not applicable yet: there are no qualifying opportunities; external LLM providers remain unconfigured.",
         }
+        active_reasons = {
+            "gsc": "Active zero-cost authenticated Google collection schedule; read-only property access validated.",
+            "ga4": "Active zero-cost authenticated Google collection schedule; read-only property access validated.",
+        }
         schedules = list(
             self.session.execute(
                 select(ScheduleDefinition, FreshnessState, PipelineDefinition)
@@ -571,12 +601,36 @@ class WorkbenchQueries:
                 )
             ).all()
         )
+
+        def latest_success(
+            schedule: ScheduleDefinition,
+            freshness: FreshnessState | None,
+            pipeline: PipelineDefinition,
+        ) -> Any:
+            if freshness and freshness.last_successful_at:
+                return encoded(freshness.last_successful_at)
+            if schedule.data_source_connection_id:
+                connection = self.session.get(
+                    DataSourceConnection, schedule.data_source_connection_id
+                )
+                if connection and connection.last_successful_sync_at:
+                    return encoded(connection.last_successful_sync_at)
+            completed_at = self.session.scalar(
+                select(func.max(OrchestrationRun.completed_at)).where(
+                    OrchestrationRun.tenant_id == tenant_id,
+                    OrchestrationRun.site_id == site_id,
+                    OrchestrationRun.pipeline_id == pipeline.id,
+                    OrchestrationRun.status == "SUCCEEDED",
+                )
+            )
+            return encoded(completed_at)
+
         return {
             "items": [
                 {
                     "schedule": row.name,
                     "status": row.status.value,
-                    "latest_success": encoded(fresh.last_successful_at) if fresh else None,
+                    "latest_success": latest_success(row, fresh, pipeline),
                     "stale_since": encoded(fresh.stale_since) if fresh else None,
                     "reason": (
                         "Intentionally disabled: this pipeline can consume paid provider credits."
@@ -590,6 +644,8 @@ class WorkbenchQueries:
                         if row.status.value == "ENABLED"
                         and pipeline.handler_key
                         in {"DBT", "LOCAL_PROCESSING", "COMPETITIVE_EVENTS"}
+                        else active_reasons.get(pipeline.key)
+                        if row.status.value == "ENABLED"
                         else None
                     ),
                     "pipeline_key": pipeline.key,

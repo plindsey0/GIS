@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from gis.models import IngestionRun, OrchestrationRun, PipelineDefinition
@@ -128,18 +128,49 @@ def local_processing_handler(session: Session, run: OrchestrationRun) -> Pipelin
     if not pipeline or not run.site_id:
         raise ValueError("local processing requires a pipeline and site scope")
     market_id = run.configuration_json.get("market_id")
-    if pipeline.key in {"collection_planning", "emerging_demand"} and not market_id:
+    if (
+        pipeline.key
+        in {
+            "market_intelligence",
+            "collection_planning",
+            "emerging_demand",
+        }
+        and not market_id
+    ):
         raise ValueError("market-scoped local processing requires market_id")
-    if pipeline.key == "collection_planning":
+    if pipeline.key == "market_intelligence":
+        from gis.market_intelligence.service import MarketIntelligenceService
+        from gis.models import DataRightsPolicy, MarketDefinition, SerpObservation
+
+        market = session.get(MarketDefinition, market_id)
+        configured_policy_id = run.rights_policy_id or run.configuration_json.get(
+            "rights_policy_id"
+        )
+        policy = session.get(DataRightsPolicy, configured_policy_id)
+        if not market or market.tenant_id != run.tenant_id or market.site_id != run.site_id:
+            raise ValueError("configured market is outside the orchestration scope")
+        if not policy or policy.tenant_id != run.tenant_id:
+            raise ValueError("market processing requires a tenant-scoped rights policy")
+        effective_date = session.scalar(
+            select(func.max(SerpObservation.observed_date)).where(
+                SerpObservation.tenant_id == run.tenant_id,
+                SerpObservation.site_id == run.site_id,
+                SerpObservation.effective_end.is_(None),
+            )
+        )
+        if not effective_date:
+            raise ValueError("market processing requires stored current SERP evidence")
+        MarketIntelligenceService(session).observe(market, effective_date, policy)
+    elif pipeline.key == "collection_planning":
         from gis.collection_planning.service import CollectionPlanningService
         from gis.models import MarketDefinition
 
         market = session.get(MarketDefinition, market_id)
         if not market or market.tenant_id != run.tenant_id or market.site_id != run.site_id:
             raise ValueError("configured market is outside the orchestration scope")
-        service = CollectionPlanningService(session)
-        service.discover(market)
-        service.plan(market)
+        planning_service = CollectionPlanningService(session)
+        planning_service.discover(market)
+        planning_service.plan(market)
     elif pipeline.key == "emerging_demand":
         from gis.emerging_demand.service import EmergingDemandService
         from gis.models import MarketDefinition
@@ -147,9 +178,9 @@ def local_processing_handler(session: Session, run: OrchestrationRun) -> Pipelin
         market = session.get(MarketDefinition, market_id)
         if not market or market.tenant_id != run.tenant_id or market.site_id != run.site_id:
             raise ValueError("configured market is outside the orchestration scope")
-        service = EmergingDemandService(session)
-        service.materialize_stored_evidence(market)
-        service.analyze(run.tenant_id, run.site_id, market.id)
+        demand_service = EmergingDemandService(session)
+        demand_service.materialize_stored_evidence(market)
+        demand_service.analyze(run.tenant_id, run.site_id, market.id)
     elif pipeline.key == "evidence_quality":
         from gis.evidence_quality.service import EvidenceQualityService
 

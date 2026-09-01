@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import uuid
 from pathlib import Path
 
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from gis.models import (
     PermittedUse,
     RightsStatus,
 )
+from gis.provenance.activation import activate_reviewed_policies, activate_safe_schedules
 from gis.provenance.lineage import register_dbt_manifest, trace_asset
 from gis.provenance.service import evaluate_asset_use, evaluate_source_use
 
@@ -36,6 +38,15 @@ def parser() -> argparse.ArgumentParser:
     )
     register = commands.add_parser("register-dbt")
     register.add_argument("--manifest", type=Path, default=Path("analytics/target/manifest.json"))
+    activate = commands.add_parser("activate-reviewed")
+    activate.add_argument("--tenant", type=uuid.UUID, required=True)
+    schedules = commands.add_parser("activate-safe-schedules")
+    schedules.add_argument("--tenant", type=uuid.UUID, required=True)
+    schedules.add_argument("--site", type=uuid.UUID, required=True)
+    schedules.add_argument("--market", type=uuid.UUID, required=True)
+    schedules.add_argument("--gsc-connection", type=uuid.UUID, required=True)
+    schedules.add_argument("--ga4-connection", type=uuid.UUID, required=True)
+    schedules.add_argument("--google-validated", action="store_true")
     return root
 
 
@@ -46,6 +57,22 @@ def _print(value: object) -> None:
 def run(arguments: list[str] | None = None) -> int:
     args = parser().parse_args(arguments)
     with session_factory()() as session:
+        if args.command == "activate-reviewed":
+            activated = activate_reviewed_policies(session, args.tenant)
+            _print({"activated": {key: str(value) for key, value in activated.items()}})
+            return 0
+        if args.command == "activate-safe-schedules":
+            configured = activate_safe_schedules(
+                session,
+                args.tenant,
+                args.site,
+                args.market,
+                args.gsc_connection,
+                args.ga4_connection,
+                google_validated=args.google_validated,
+            )
+            _print({"configured": configured})
+            return 0
         if args.command == "register-dbt":
             if not args.manifest.is_file():
                 _print({"error": "manifest not found", "path": str(args.manifest)})

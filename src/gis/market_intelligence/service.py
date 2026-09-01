@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from gis.integrations.external_search.scope import country_scope
 from gis.market_intelligence.analysis import (
     CLASSIFICATION_METHOD,
     CLASSIFICATION_VERSION,
@@ -378,6 +379,9 @@ class MarketIntelligenceService:
                 ExternalSearchObservation.tenant_id == definition.tenant_id,
                 ExternalSearchObservation.observed_date == effective_date,
                 ExternalSearchObservation.effective_end.is_(None),
+                country_scope(definition.country_code),
+                ExternalSearchObservation.language_code == definition.language_code,
+                ExternalSearchObservation.device == definition.device,
                 ExternalKeywordRanking.normalized_keyword.in_(normalized_queries),
             )
             .limit(MAX_RESULTS)

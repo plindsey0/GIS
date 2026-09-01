@@ -274,6 +274,8 @@ def test_stored_external_keywords_feed_planning_and_monthly_demand(session: Sess
     )
     observation = session.scalar(select(ExternalSearchObservation))
     assert observation
+    # Legacy imports may carry only DataForSEO's canonical location code.
+    observation.country_code = None
     policy = session.get(DataRightsPolicy, observation.rights_policy_id)
     assert policy
     policy.derived_storage_allowed = RightsDecision.ALLOWED

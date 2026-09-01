@@ -155,6 +155,7 @@ def seed_vahomemath_cadence(session: Session) -> list[ScheduleDefinition]:
             session.flush()
         pipelines[item.key] = pipeline
         if item.key in {
+            "market_intelligence",
             "collection_planning",
             "emerging_demand",
             "evidence_quality",
