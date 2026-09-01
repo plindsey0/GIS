@@ -206,3 +206,19 @@ The flow remains human governed: recommendation acceptance creates a draft inter
 - Experiments: what is deliberately being tested?
 - Outcomes: what changed after action, without claiming causality?
 - System: can GIS currently produce trustworthy intelligence, and what depends on each source or pipeline?
+- Learn GIS: what the product is, how its concepts and workflows fit together, and where its trust boundaries apply?
+
+## Product documentation as a quality requirement
+
+The first-class `/docs` Workbench area is operator-facing product documentation, not an API reference or developer README. Its structured, version-controlled content lives in `apps/workbench/content/docs.ts`; rendering, navigation, search, anchors, live-state callouts, and responsive presentation are reusable application concerns rather than scattered page strings.
+
+Documentation explains stable concepts and methodology. Live System pages remain authoritative for transient source connections, schedules, runs, reliability, records, rights, cost, quotas, health, and dependencies. Small documentation callouts may query existing APIs, but maintained prose must never hardcode current counts or imply a live state.
+
+Every future epic that adds or materially changes a source family, pipeline family, domain object, detector, lifecycle, governance rule, or primary Workbench section must update the corresponding product documentation and glossary in the same change. New content should:
+
+- use actual backend lifecycle and rights semantics;
+- distinguish conceptual behavior from current environment state;
+- link to live source, pipeline, lineage, evidence, or decision views instead of copying runtime facts;
+- state empty, unknown, blocked, and insufficient-history behavior explicitly;
+- preserve human review and execution boundaries;
+- include or update a catalog test when it adds a required operator journey.
