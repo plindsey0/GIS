@@ -126,3 +126,50 @@ class TargetOverrideInput(BaseModel):
     value: Decimal
     actor: str = Field(min_length=1, max_length=255)
     rationale: str = Field(min_length=1, max_length=2000)
+
+
+class ProviderPolicyInput(BaseModel):
+    actor: str = Field(min_length=1, max_length=255)
+    reason: Optional[str] = Field(default=None, max_length=2000)
+    data_source_connection_id: Optional[uuid.UUID] = None
+    currency: str = Field(default="USD", pattern="^[A-Z]{3}$")
+    daily_soft_budget: Optional[Decimal] = Field(default=None, ge=0)
+    daily_hard_budget: Optional[Decimal] = Field(default=None, ge=0)
+    monthly_soft_budget: Optional[Decimal] = Field(default=None, ge=0)
+    monthly_hard_budget: Optional[Decimal] = Field(default=None, ge=0)
+    per_run_hard_budget: Optional[Decimal] = Field(default=None, ge=0)
+    daily_request_limit: Optional[int] = Field(default=None, ge=0)
+    monthly_request_limit: Optional[int] = Field(default=None, ge=0)
+    per_run_request_limit: Optional[int] = Field(default=None, ge=0)
+    allow_unknown_cost: bool = False
+    timezone: str = "UTC"
+
+
+class ProviderActionInput(DecisionInput):
+    action: str = Field(pattern="^(ENABLE|DISABLE|PAUSE|RESUME)$")
+
+
+class ProviderCapabilityInput(BaseModel):
+    actor: str = Field(min_length=1, max_length=255)
+    enabled: bool
+    cadence: str = Field(pattern="^(MANUAL_ONLY|DAILY|WEEKLY|MONTHLY|CUSTOM_INTERVAL)$")
+
+
+class ProviderTargetInput(BaseModel):
+    actor: str = Field(min_length=1, max_length=255)
+    target_type: str = Field(pattern="^(QUERY|DOMAIN|URL|MARKET|SITE|CUSTOM)$")
+    target_value: str = Field(min_length=1, max_length=2000)
+    priority: str = Field(default="STANDARD", pattern="^(LOW|STANDARD|HIGH|CRITICAL)$")
+
+
+class ProviderTargetStatusInput(BaseModel):
+    actor: str = Field(min_length=1, max_length=255)
+    enabled: bool
+
+
+class ProviderPreflightInput(BaseModel):
+    capability_key: str = Field(min_length=1, max_length=100)
+    target_values: list[str] = Field(default_factory=list, max_length=1000)
+    estimated_requests: int = Field(ge=0)
+    estimated_units: Decimal = Field(ge=0)
+    reserve: bool = False

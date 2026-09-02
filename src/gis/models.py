@@ -5768,3 +5768,239 @@ class OperationalAlert(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ProviderDefinition(Base, TimestampMixin):
+    __tablename__ = "provider_definition"
+    __table_args__ = ({"schema": SCHEMA},)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider_key: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_class: Mapped[str] = mapped_column(String(50), nullable=False)
+    pricing_model: Mapped[str] = mapped_column(String(50), nullable=False, default="UNKNOWN")
+    implementation_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    is_commercial: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    documentation_url: Mapped[Optional[str]] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+
+
+class ProviderCapability(Base, TimestampMixin):
+    __tablename__ = "provider_capability"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "capability_key", name="uq_provider_capability"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.provider_definition.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    capability_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    unit_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    supports_scheduling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_manual_run: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_target_scope: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    default_freshness_seconds: Mapped[Optional[int]] = mapped_column(Integer)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+
+
+class ProviderCollectionPolicy(Base, TimestampMixin):
+    __tablename__ = "provider_collection_policy"
+    __table_args__ = (
+        Index(
+            "uq_provider_policy_scope",
+            "tenant_id",
+            "site_id",
+            "provider_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+        Index("ix_provider_policy_scope", "tenant_id", "site_id", "status"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organization.id")
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.provider_definition.id"), nullable=False
+    )
+    data_source_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id")
+    )
+    master_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="DISABLED")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    daily_soft_budget: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    daily_hard_budget: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    monthly_soft_budget: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    monthly_hard_budget: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    per_run_hard_budget: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    daily_request_limit: Mapped[Optional[int]] = mapped_column(Integer)
+    monthly_request_limit: Mapped[Optional[int]] = mapped_column(Integer)
+    per_run_request_limit: Mapped[Optional[int]] = mapped_column(Integer)
+    allow_unknown_cost: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    effective_start_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    effective_end_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False, default="UTC")
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class ProviderCapabilityPolicy(Base, TimestampMixin):
+    __tablename__ = "provider_capability_policy"
+    __table_args__ = (
+        UniqueConstraint(
+            "collection_policy_id", "capability_id", name="uq_provider_capability_policy"
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    collection_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.provider_collection_policy.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    capability_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.provider_capability.id"), nullable=False
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cadence: Mapped[str] = mapped_column(String(50), nullable=False, default="MANUAL_ONLY")
+    schedule_configuration_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    freshness_target_seconds: Mapped[Optional[int]] = mapped_column(Integer)
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="STANDARD")
+    per_run_limit: Mapped[Optional[int]] = mapped_column(Integer)
+    configuration_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class ProviderCollectionTarget(Base, TimestampMixin):
+    __tablename__ = "provider_collection_target"
+    __table_args__ = (
+        UniqueConstraint(
+            "capability_policy_id",
+            "target_type",
+            "target_reference_id",
+            "target_value",
+            name="uq_provider_collection_target",
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    capability_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.provider_capability_policy.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_reference_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    target_value: Mapped[Optional[str]] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="STANDARD")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+
+
+class ProviderPricingConfiguration(Base, TimestampMixin):
+    __tablename__ = "provider_pricing_configuration"
+    __table_args__ = (
+        Index("ix_provider_pricing_effective", "provider_id", "effective_start_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.provider_definition.id"), nullable=False
+    )
+    capability_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.provider_capability.id")
+    )
+    pricing_model: Mapped[str] = mapped_column(String(50), nullable=False)
+    unit_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    units_per_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    provenance: Mapped[str] = mapped_column(String(50), nullable=False)
+    effective_start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_end_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class ProviderUsageEvent(Base):
+    __tablename__ = "provider_usage_event"
+    __table_args__ = (
+        Index("ix_provider_usage_scope_time", "tenant_id", "provider_id", "occurred_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.provider_definition.id"), nullable=False
+    )
+    capability_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.provider_capability.id")
+    )
+    collection_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.provider_collection_policy.id")
+    )
+    data_source_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    ingestion_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unit_count: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, default=Decimal("0")
+    )
+    unit_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    estimated_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    actual_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    reserved_cost: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False, default=Decimal("0")
+    )
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    cost_semantics: Mapped[str] = mapped_column(String(50), nullable=False)
+    provider_request_id: Mapped[Optional[str]] = mapped_column(String(255))
+    provider_job_id: Mapped[Optional[str]] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ProviderPolicyAuditEvent(Base):
+    __tablename__ = "provider_policy_audit_event"
+    __table_args__ = (
+        Index("ix_provider_audit_scope_time", "tenant_id", "provider_id", "occurred_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    provider_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    collection_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+    before_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    after_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

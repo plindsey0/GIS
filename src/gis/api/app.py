@@ -43,7 +43,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH", "PUT"],
         allow_headers=["Content-Type", "X-GIS-Operator-Key", "X-GIS-Role"],
     )
 

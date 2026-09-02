@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from dataclasses import asdict
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -20,6 +21,12 @@ from gis.api.schemas import (
     Health,
     OpportunitySummary,
     Page,
+    ProviderActionInput,
+    ProviderCapabilityInput,
+    ProviderPolicyInput,
+    ProviderPreflightInput,
+    ProviderTargetInput,
+    ProviderTargetStatusInput,
     RecommendationReviewInput,
     ResourceDetail,
     SiteContext,
@@ -79,15 +86,191 @@ from gis.models import (
     TargetFamily,
 )
 from gis.opportunities.service import OpportunityService
+from gis.provider_control.service import ProviderControlService
 from gis.recommendations.provider import FixtureRecommendationProvider
 from gis.recommendations.service import RecommendationService
-
-router = APIRouter(prefix="/api/v1")
 
 
 def database() -> Session:  # type: ignore[misc]
     with session_factory()() as session:
         yield session
+
+
+router = APIRouter(prefix="/api/v1")
+
+
+@router.get("/providers", dependencies=[Depends(require_role(Role.READ))])
+def providers(
+    tenant_id: uuid.UUID, site_id: uuid.UUID, session: Session = Depends(database)
+) -> dict[str, Any]:
+    return ProviderControlService(session).inventory(tenant_id, site_id)
+
+
+@router.get("/providers/{provider_key}", dependencies=[Depends(require_role(Role.READ))])
+def provider_detail(
+    provider_key: str,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        return ProviderControlService(session).detail(tenant_id, site_id, provider_key)
+    except ValueError as exc:
+        raise ApiError(404, "PROVIDER_NOT_FOUND", str(exc)) from exc
+
+
+@router.put("/providers/{provider_key}/policy", dependencies=[Depends(require_role(Role.ADMIN))])
+def provider_policy(
+    provider_key: str,
+    payload: ProviderPolicyInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    service = ProviderControlService(session)
+    try:
+        service.configure(
+            tenant_id,
+            site_id,
+            provider_key,
+            payload.model_dump(exclude={"actor", "reason"}),
+            payload.actor,
+            payload.reason,
+        )
+    except (ValueError, KeyError) as exc:
+        raise ApiError(409, "PROVIDER_POLICY_INVALID", str(exc)) from exc
+    session.commit()
+    return service.detail(tenant_id, site_id, provider_key)
+
+
+@router.post("/providers/{provider_key}/actions", dependencies=[Depends(require_role(Role.ADMIN))])
+def provider_action(
+    provider_key: str,
+    payload: ProviderActionInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    service = ProviderControlService(session)
+    try:
+        service.transition(
+            tenant_id, site_id, provider_key, payload.action, payload.actor, payload.reason
+        )
+    except ValueError as exc:
+        raise ApiError(409, "PROVIDER_ACTION_BLOCKED", str(exc)) from exc
+    session.commit()
+    return service.detail(tenant_id, site_id, provider_key)
+
+
+@router.put(
+    "/providers/{provider_key}/capabilities/{capability_key}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def provider_capability_policy(
+    provider_key: str,
+    capability_key: str,
+    payload: ProviderCapabilityInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    service = ProviderControlService(session)
+    try:
+        service.set_capability(
+            tenant_id,
+            site_id,
+            provider_key,
+            capability_key,
+            payload.enabled,
+            payload.cadence,
+            payload.actor,
+        )
+    except ValueError as exc:
+        raise ApiError(409, "PROVIDER_CAPABILITY_INVALID", str(exc)) from exc
+    session.commit()
+    return service.detail(tenant_id, site_id, provider_key)
+
+
+@router.post(
+    "/providers/{provider_key}/capabilities/{capability_key}/targets",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def provider_target(
+    provider_key: str,
+    capability_key: str,
+    payload: ProviderTargetInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    service = ProviderControlService(session)
+    try:
+        service.add_target(
+            tenant_id,
+            site_id,
+            provider_key,
+            capability_key,
+            payload.target_type,
+            payload.target_value,
+            payload.priority,
+            payload.actor,
+        )
+    except ValueError as exc:
+        raise ApiError(409, "PROVIDER_TARGET_INVALID", str(exc)) from exc
+    session.commit()
+    return service.detail(tenant_id, site_id, provider_key)
+
+
+@router.put(
+    "/providers/{provider_key}/targets/{target_id}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def provider_target_status(
+    provider_key: str,
+    target_id: uuid.UUID,
+    payload: ProviderTargetStatusInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    service = ProviderControlService(session)
+    try:
+        service.set_target_enabled(
+            tenant_id, site_id, provider_key, target_id, payload.enabled, payload.actor
+        )
+    except ValueError as exc:
+        raise ApiError(404, "PROVIDER_TARGET_NOT_FOUND", str(exc)) from exc
+    session.commit()
+    return service.detail(tenant_id, site_id, provider_key)
+
+
+@router.post(
+    "/providers/{provider_key}/preflight", dependencies=[Depends(require_role(Role.ADMIN))]
+)
+def provider_preflight(
+    provider_key: str,
+    payload: ProviderPreflightInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    service = ProviderControlService(session)
+    try:
+        result = service.preflight(
+            tenant_id,
+            site_id,
+            provider_key,
+            payload.capability_key,
+            payload.target_values,
+            payload.estimated_requests,
+            payload.estimated_units,
+            payload.reserve,
+        )
+    except ValueError as exc:
+        raise ApiError(409, "PROVIDER_PREFLIGHT_BLOCKED", str(exc)) from exc
+    if payload.reserve:
+        session.commit()
+    return asdict(result)
 
 
 def scoped(

@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: mart_provider_usage_daily
+    description: Provider-neutral daily request, unit, reservation, and governed-cost ledger.
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: provider_key
+        tests: [not_null]
+      - name: usage_date
+        tests: [not_null]
+  - name: mart_provider_budget_status
+    description: Current monthly spend relative to explicitly configured provider policy limits.
+    columns:
+      - name: tenant_id
+        tests: [not_null]
+      - name: provider_key
+        tests: [not_null]
+      - name: budget_state
+        tests:
+          - accepted_values:
+              arguments:
+                values: [BLOCKED_NO_BUDGET, HARD_LIMIT_REACHED, SOFT_LIMIT_REACHED, WITHIN_LIMIT]

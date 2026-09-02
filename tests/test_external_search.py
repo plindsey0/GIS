@@ -30,6 +30,7 @@ from gis.integrations.serp.cli import configure_connection
 from gis.market_intelligence.service import MarketIntelligenceService
 from gis.models import (
     CollectionTargetEvidence,
+    ConnectionStatus,
     DataRightsPolicy,
     DemandObservation,
     ExternalCompetitorObservation,
@@ -37,11 +38,13 @@ from gis.models import (
     ExternalSearchObservation,
     IngestionStatus,
     Organization,
+    ProviderPricingConfiguration,
     RightsDecision,
     Site,
     Tenant,
     TrackedQuery,
 )
+from gis.provider_control.service import ProviderControlService
 from gis.seed import seed
 
 OBSERVED = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
@@ -126,6 +129,56 @@ def setup_scope(session: Session) -> tuple[Site, uuid.UUID]:
     connection = configure_connection(
         session, "vahomemath", "vahomemath", "env:DATAFORSEO_CREDENTIAL_JSON"
     )
+    connection.status = ConnectionStatus.ACTIVE
+    control = ProviderControlService(session)
+    provider = control.provider("dataforseo")
+    capability = control.capability(provider.id, "DOMAIN_SEARCH_INTELLIGENCE")
+    control.configure(
+        site.tenant_id,
+        site.id,
+        "dataforseo",
+        {
+            "data_source_connection_id": connection.id,
+            "monthly_hard_budget": Decimal("100"),
+            "per_run_request_limit": 1,
+            "allow_unknown_cost": True,
+        },
+        "test-admin",
+        "fixture setup",
+    )
+    control.set_capability(
+        site.tenant_id,
+        site.id,
+        "dataforseo",
+        "DOMAIN_SEARCH_INTELLIGENCE",
+        True,
+        "MANUAL_ONLY",
+        "test-admin",
+    )
+    control.add_target(
+        site.tenant_id,
+        site.id,
+        "dataforseo",
+        "DOMAIN_SEARCH_INTELLIGENCE",
+        "DOMAIN",
+        "vahomemath.test",
+        "STANDARD",
+        "test-admin",
+    )
+    session.add(
+        ProviderPricingConfiguration(
+            provider_id=provider.id,
+            capability_id=capability.id,
+            pricing_model="PER_REQUEST",
+            unit_price=Decimal("0.01224"),
+            units_per_price=Decimal("1"),
+            currency="USD",
+            provenance="TEST_FIXTURE",
+            effective_start_at=datetime.now(timezone.utc),
+        )
+    )
+    control.transition(site.tenant_id, site.id, "dataforseo", "ENABLE", "test-admin", None)
+    session.flush()
     return site, connection.id
 
 

@@ -82,6 +82,14 @@ sources:
       - name: telemetry_transport_batch
       - name: data_source
       - name: data_source_connection
+      - name: provider_definition
+      - name: provider_capability
+      - name: provider_collection_policy
+      - name: provider_capability_policy
+      - name: provider_collection_target
+      - name: provider_pricing_configuration
+      - name: provider_usage_event
+      - name: provider_policy_audit_event
       - name: data_rights_policy
       - name: tracked_query
       - name: competitive_content_cohort

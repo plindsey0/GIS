@@ -5,6 +5,7 @@ import {OpportunityInbox} from "./opportunity-inbox";
 import {OverviewPage} from "./overview";
 import {SystemPage} from "./system";
 import {GoalCreate, GoalMap, GoalsExplorer} from "./goals";
+import {ProviderDetail, ProvidersPage} from "./providers";
 
 vi.mock("next/navigation", () => ({useRouter: () => ({push: vi.fn()})}));
 
@@ -14,6 +15,23 @@ function answer(body: unknown, ok = true, status = 200) {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("GIS Workbench", () => {
+  it("keeps provider connection and collection authorization visibly separate", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => answer({items:[{key:"dataforseo",name:"DataForSEO",description:"Commercial search intelligence",provider_class:"PAID_USAGE_BASED",pricing_model:"PER_REQUEST",implementation_status:"IMPLEMENTED",is_commercial:true,connection_state:"CONNECTED",collection_state:"CONNECTED_DISABLED",blocking_reason:"POLICY_DISABLED",last_collection:null,next_collection:null,budget:{spent_day:"0",spent_month:"0",monthly_soft:null,monthly_hard:null,per_run_hard:null},capabilities:[],usage:[],policy:null}],summary:{connected:1,enabled:0,paid_enabled:0,spend_month:"0",monthly_hard_budget:"0",attention:1}})));
+    render(<ProvidersPage/>);
+    expect(await screen.findByText("DataForSEO")).toBeInTheDocument();
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+    expect(screen.getByText("Connected disabled")).toBeInTheDocument();
+    expect(screen.getByText("Policy disabled")).toBeInTheDocument();
+  });
+
+  it("requires confirmation before enabling commercial collection", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => answer({key:"dataforseo",name:"DataForSEO",description:"Commercial search intelligence",provider_class:"PAID_USAGE_BASED",pricing_model:"PER_REQUEST",implementation_status:"IMPLEMENTED",is_commercial:true,connection_state:"CONNECTED",collection_state:"CONNECTED_DISABLED",blocking_reason:"POLICY_DISABLED",last_collection:null,next_collection:null,budget:{spent_day:"0",spent_month:"0",monthly_soft:"8",monthly_hard:"10",per_run_hard:"2"},capabilities:[{key:"SERP_COLLECTION",name:"SERP collection",description:"SERPs",enabled:true,cadence:"DAILY",supports_manual_run:true,supports_scheduling:true,targets:[{id:"t1",type:"QUERY",value:"va loan calculator",priority:"HIGH",enabled:true}]}],usage:[],policy:{master_enabled:false,status:"DISABLED",connection_id:"c1",allow_unknown_cost:false}})));
+    render(<ProviderDetail providerKey="dataforseo"/>);
+    fireEvent.click(await screen.findByRole("button", {name:"Enable collection"}));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Monthly hard budget");
+    expect(screen.getByRole("button", {name:"Enable Collection"})).toBeEnabled();
+  });
+
   it("renders the authoritative goals empty state", async () => {
     vi.stubGlobal("fetch", vi.fn(() => answer({items:[],page:1,limit:25,total:0,summary:{active_business_goals:0,active_subordinate_objectives:0,measurable:0,not_measurable:0,awaiting_approval:0,decomposition_blocked:0}})));
     render(<GoalsExplorer/>);

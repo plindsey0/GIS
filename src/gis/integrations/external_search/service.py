@@ -28,6 +28,7 @@ from gis.models import (
     IngestionStatus,
     Site,
 )
+from gis.provider_control.service import ProviderControlService
 
 
 class ExternalSearchProvider(Protocol):
@@ -77,6 +78,23 @@ class ExternalSearchCollector:
         policy = self.session.get(DataRightsPolicy, policy_id) if policy_id else None
         if not source or not policy:
             raise ValueError("external-search source and rights policy are required")
+        control = ProviderControlService(self.session)
+        preflight = control.preflight(
+            site.tenant_id,
+            site.id,
+            "dataforseo",
+            "DOMAIN_SEARCH_INTELLIGENCE",
+            [normalize_domain(request.target_domain)],
+            1,
+            Decimal("1"),
+            reserve=True,
+            estimated_cost_override=estimated_cost,
+        )
+        if not preflight.can_execute or preflight.reservation_id is None:
+            raise ValueError(
+                "provider collection blocked: " + ", ".join(preflight.blocking_reasons)
+            )
+        reservation_id = preflight.reservation_id
         now = datetime.now(timezone.utc)
         run = IngestionRun(
             tenant_id=site.tenant_id,
@@ -126,6 +144,13 @@ class ExternalSearchCollector:
                 run.records_inserted = 0
                 run.completed_at = datetime.now(timezone.utc)
                 run.source_metadata = {**run.source_metadata, "idempotent_replay": True}
+                control.reconcile(
+                    reservation_id,
+                    actual_cost=collection.cost,
+                    semantics="PROVIDER_REPORTED" if collection.cost is not None else "ESTIMATED",
+                    status="SUCCEEDED",
+                    ingestion_run_id=run.id,
+                )
                 savepoint.commit()
                 self.session.commit()
                 return run
@@ -173,6 +198,13 @@ class ExternalSearchCollector:
                 "provider_task_id": collection.task_id,
                 "provider_cost": str(collection.cost) if collection.cost is not None else None,
             }
+            control.reconcile(
+                reservation_id,
+                actual_cost=collection.cost,
+                semantics="PROVIDER_REPORTED" if collection.cost is not None else "ESTIMATED",
+                status="SUCCEEDED",
+                ingestion_run_id=run.id,
+            )
             savepoint.commit()
         except Exception as error:
             savepoint.rollback()
@@ -180,6 +212,13 @@ class ExternalSearchCollector:
             run.error_count = 1
             run.error_summary = f"{type(error).__name__}: {error}"[:1000]
             run.completed_at = datetime.now(timezone.utc)
+            control.reconcile(
+                reservation_id,
+                actual_cost=None,
+                semantics="UNKNOWN",
+                status="FAILED",
+                ingestion_run_id=run.id,
+            )
         self.session.commit()
         return run
 
