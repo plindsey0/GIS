@@ -21,6 +21,42 @@ alembic upgrade head
 gis-seed --hostname vahomemath.com
 ```
 
+For a new checkout, the dependency portion can instead be run with the idempotent bootstrap:
+
+```bash
+scripts/bootstrap-local.sh
+```
+
+The bootstrap creates `.venv` when missing, installs GIS in editable mode, and installs the exact
+Workbench dependencies from its lockfile.
+
+## Start the API and Workbench
+
+Use the checked-in launcher from the repository root:
+
+```bash
+set -a && source .env && set +a
+alembic upgrade head
+scripts/dev-workbench.sh
+```
+
+The launcher verifies that `gis` imports from this checkout's `src/gis`, exports the root
+environment, pins the API proxy to `http://127.0.0.1:8001`, starts the API on loopback port 8001,
+and starts the Workbench on loopback port 3001. It stops the API when the Workbench exits. Port
+8000 is intentionally not used because it can belong to another local project.
+
+Next development and production builds use separate `.next-dev` and `.next-build` directories.
+This makes `npm run build` safe while the development server is running because neither process
+can rewrite the other's chunk manifest. If a prior checkout left legacy artifacts, clear only
+generated frontend caches with:
+
+```bash
+cd apps/workbench
+npm run clean:cache
+```
+
+Cache clearing is a recovery/clean-validation step, not a requirement for every startup.
+
 ## GA4 collector
 
 After seeding, configure a GA4 connection with a secret reference, validate access, and sync:
@@ -42,7 +78,7 @@ recovery behavior. No GA4 credential is required for the automated test suite.
 export TELEMETRY_WRITE_CREDENTIAL='{"write_key":"local-development-only"}'
 gis-telemetry configure --tenant vahomemath --site vahomemath \
   --credential-reference env:TELEMETRY_WRITE_CREDENTIAL
-uvicorn gis.api.app:app --host 127.0.0.1 --port 8000
+uvicorn gis.api.app:create_app --factory --host 127.0.0.1 --port 8001
 gis-telemetry send --write-key local-development-only \
   --event page_view --page-path /va-loan-calculator/
 ```
@@ -86,8 +122,9 @@ hostname flag is explicit so a confirmed production hostname can replace the def
 schema change. No provider credentials are seeded. All sources receive a conservative shared
 `UNKNOWN` rights policy until their licenses are reviewed.
 
-This repository currently has no web application process to start; it is a database foundation.
-Future application packages should consume `gis.db.session_factory` and add their own run command.
+The GIS API and Workbench are started together with `scripts/dev-workbench.sh`. Domain services
+continue to consume `gis.db.session_factory`; the web layer does not introduce a parallel database
+configuration.
 
 ## Google Search Console
 

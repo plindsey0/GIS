@@ -10,6 +10,8 @@ htmlcov/
 dist/
 node_modules/
 .next/
+.next-dev/
+.next-build/
 *.tsbuildinfo
 .aws-sam/
 *.egg-info/

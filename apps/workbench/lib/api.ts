@@ -16,6 +16,10 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set("Content-Type", "application/json");
   const response = await fetch(`${baseUrl}${path}`, {...init, headers, cache: "no-store"});
-  if (!response.ok) throw new WorkbenchApiError(response.status, await response.json() as ApiError);
-  return response.json() as Promise<T>;
+  const text = await response.text();
+  let payload: unknown;
+  try { payload = JSON.parse(text); }
+  catch { throw new WorkbenchApiError(response.status, {error:{code:"INVALID_API_RESPONSE",message:"The GIS API proxy returned an unreadable response.",request_id:"workbench-proxy",details:null,retryable:true}}); }
+  if (!response.ok) throw new WorkbenchApiError(response.status, payload as ApiError);
+  return payload as T;
 }

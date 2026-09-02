@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Dev and production builds must never rewrite one another's chunk manifests.
+  distDir: process.env.NEXT_DIST_DIR ?? ".next-build",
   output: "standalone",
   poweredByHeader: false,
   async headers() {

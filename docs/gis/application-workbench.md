@@ -115,10 +115,13 @@ gis-api
 Run the Workbench:
 
 ```bash
-cd apps/workbench
-npm ci
-npm run dev
+scripts/bootstrap-local.sh
+scripts/dev-workbench.sh
 ```
+
+The launcher exports the root `.env`, verifies the editable GIS import, and uses API port 8001 and
+Workbench port 3001. Next.js development and production builds use separate cache directories so
+a validation build cannot corrupt a running development server's chunk manifest.
 
 Validation:
 

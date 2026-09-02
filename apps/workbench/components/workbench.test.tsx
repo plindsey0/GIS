@@ -6,7 +6,7 @@ import {OverviewPage} from "./overview";
 import {SystemPage} from "./system";
 
 function answer(body: unknown, ok = true, status = 200) {
-  return Promise.resolve({ok, status, json: () => Promise.resolve(body)} as Response);
+  return Promise.resolve({ok, status, text: () => Promise.resolve(JSON.stringify(body))} as Response);
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
