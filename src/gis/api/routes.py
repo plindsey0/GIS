@@ -5,7 +5,7 @@ import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from gis.api.auth import Role, require_role
@@ -13,12 +13,17 @@ from gis.api.errors import ApiError
 from gis.api.schemas import (
     DecisionInput,
     GenerationInput,
+    GoalCreateInput,
+    GoalRelationshipInput,
+    GoalTargetInput,
+    GoalUpdateInput,
     Health,
     OpportunitySummary,
     Page,
     RecommendationReviewInput,
     ResourceDetail,
     SiteContext,
+    TargetOverrideInput,
 )
 from gis.api.semantics import (
     collection_detail as semantic_collection_detail,
@@ -38,8 +43,10 @@ from gis.api.semantics import (
 from gis.api.system import SystemQueries
 from gis.api.workbench import WorkbenchQueries, row_data
 from gis.db import session_factory
+from gis.goals.service import GoalService
 from gis.interventions.service import InterventionService
 from gis.models import (
+    DecompositionPlan,
     EvidencePackage,
     Experiment,
     Intervention,
@@ -49,6 +56,15 @@ from gis.models import (
     InterventionStatus,
     MarketDefinition,
     MeasurementContract,
+    MetricDefinition,
+    ObjectiveAuditEvent,
+    ObjectiveDerivation,
+    ObjectiveLifecycle,
+    ObjectiveMeasurement,
+    ObjectiveRelationship,
+    ObjectiveRelationshipType,
+    ObjectiveTarget,
+    ObjectiveType,
     Opportunity,
     OpportunityEvaluation,
     OpportunityEvidence,
@@ -58,6 +74,9 @@ from gis.models import (
     RecommendationReview,
     RecommendationReviewDecision,
     Site,
+    StrategicObjective,
+    TargetDirection,
+    TargetFamily,
 )
 from gis.opportunities.service import OpportunityService
 from gis.recommendations.provider import FixtureRecommendationProvider
@@ -142,6 +161,557 @@ def overview(
     tenant_id: uuid.UUID, site_id: uuid.UUID, session: Session = Depends(database)
 ) -> dict[str, Any]:
     return WorkbenchQueries(session).overview(tenant_id, site_id)
+
+
+@router.get("/goals", dependencies=[Depends(require_role(Role.READ))])
+def goals(
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=100),
+    lifecycle: Optional[str] = None,
+    level: Optional[str] = None,
+    measurement: Optional[str] = None,
+    search: Optional[str] = Query(default=None, max_length=200),
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    statement = select(StrategicObjective).where(
+        StrategicObjective.tenant_id == tenant_id, StrategicObjective.site_id == site_id
+    )
+    if lifecycle:
+        statement = statement.where(StrategicObjective.lifecycle == lifecycle)
+    if level:
+        statement = statement.where(StrategicObjective.level == level)
+    if measurement:
+        statement = statement.where(StrategicObjective.measurement_health == measurement)
+    if search:
+        statement = statement.where(StrategicObjective.name.ilike(f"%{search}%"))
+    rows = list(session.scalars(statement.order_by(StrategicObjective.created_at.desc())))
+    items = [
+        {
+            **row_data(row),
+            "label": row.name,
+            "type": row.objective_type.value,
+            "status": row.lifecycle.value,
+            "measurement": row.measurement_health.value,
+            "decomposition": row.decomposition_state.value,
+            "href": f"/goals/{row.id}",
+        }
+        for row in rows[(page - 1) * limit : page * limit]
+    ]
+    all_rows = list(
+        session.scalars(
+            select(StrategicObjective).where(
+                StrategicObjective.tenant_id == tenant_id,
+                StrategicObjective.site_id == site_id,
+            )
+        )
+    )
+    return {
+        "items": items,
+        "page": page,
+        "limit": limit,
+        "total": len(rows),
+        "summary": {
+            "active_business_goals": sum(
+                row.level.value == "BUSINESS" and row.lifecycle.value == "ACTIVE"
+                for row in all_rows
+            ),
+            "active_subordinate_objectives": sum(
+                row.level.value != "BUSINESS" and row.lifecycle.value == "ACTIVE"
+                for row in all_rows
+            ),
+            "measurable": sum(row.measurement_health.value == "MEASURABLE" for row in all_rows),
+            "not_measurable": sum(row.measurement_health.value != "MEASURABLE" for row in all_rows),
+            "awaiting_approval": sum(row.approval_state.value == "PENDING" for row in all_rows),
+            "decomposition_blocked": sum(
+                row.decomposition_state.value.startswith("BLOCKED") for row in all_rows
+            ),
+        },
+    }
+
+
+@router.post("/goals", dependencies=[Depends(require_role(Role.REVIEW))], status_code=201)
+def create_goal(
+    payload: GoalCreateInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        objective_type = ObjectiveType(payload.objective_type)
+    except ValueError as exc:
+        raise ApiError(422, "INVALID_GOAL_TYPE", "Unsupported business goal type.") from exc
+    service = GoalService(session)
+    row = service.create_goal(
+        tenant_id=tenant_id,
+        site_id=site_id,
+        name=payload.name,
+        description=payload.description,
+        objective_type=objective_type,
+        rationale=payload.rationale,
+        priority=payload.priority,
+        deadline=payload.deadline,
+        actor=payload.actor,
+        activate=payload.activate,
+    )
+    session.commit()
+    return row_data(row)
+
+
+@router.get("/goals/map", dependencies=[Depends(require_role(Role.READ))])
+def goals_map(
+    tenant_id: uuid.UUID, site_id: uuid.UUID, session: Session = Depends(database)
+) -> dict[str, Any]:
+    nodes = list(
+        session.scalars(
+            select(StrategicObjective).where(
+                StrategicObjective.tenant_id == tenant_id, StrategicObjective.site_id == site_id
+            )
+        )
+    )
+    node_ids = [row.id for row in nodes]
+    edges = (
+        list(
+            session.scalars(
+                select(ObjectiveRelationship).where(
+                    ObjectiveRelationship.tenant_id == tenant_id,
+                    ObjectiveRelationship.source_objective_id.in_(node_ids),
+                )
+            )
+        )
+        if node_ids
+        else []
+    )
+    return {
+        "nodes": [
+            {
+                "id": str(row.id),
+                "label": row.name,
+                "level": row.level.value,
+                "origin": row.origin.value,
+                "lifecycle": row.lifecycle.value,
+                "approval": row.approval_state.value,
+                "decomposition": row.decomposition_state.value,
+                "href": f"/goals/{row.id}",
+            }
+            for row in nodes
+        ],
+        "edges": [
+            {
+                "id": str(edge.id),
+                "source": str(edge.source_objective_id),
+                "target": str(edge.target_objective_id),
+                "type": edge.relationship_type.value,
+            }
+            for edge in edges
+        ],
+    }
+
+
+@router.get("/goals/metrics", dependencies=[Depends(require_role(Role.READ))])
+def goal_metrics(session: Session = Depends(database)) -> dict[str, Any]:
+    rows = list(
+        session.scalars(
+            select(MetricDefinition)
+            .where(MetricDefinition.enabled.is_(True))
+            .order_by(MetricDefinition.domain, MetricDefinition.name)
+        )
+    )
+    return {
+        "items": [
+            {
+                "id": str(row.id),
+                "key": row.key,
+                "name": row.name,
+                "description": row.description,
+                "domain": row.domain,
+                "unit": row.unit,
+                "directionality": row.directionality,
+                "aggregation": row.aggregation,
+                "supported_scopes": row.supported_scopes_json,
+                "authoritative_source": row.source_system,
+                "currently_measurable": row.currently_measurable,
+                "derived": row.derived,
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.get("/goals/{resource_id}", dependencies=[Depends(require_role(Role.READ))])
+def goal_detail(
+    resource_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    service = GoalService(session)
+    try:
+        row = service._objective(resource_id, tenant_id, site_id)
+    except ValueError as exc:
+        raise ApiError(404, "GOAL_NOT_FOUND", "Goal not found in site scope.") from exc
+    targets = list(
+        session.scalars(select(ObjectiveTarget).where(ObjectiveTarget.objective_id == row.id))
+    )
+    derivations = list(
+        session.scalars(
+            select(ObjectiveDerivation)
+            .where(ObjectiveDerivation.source_objective_id == row.id)
+            .order_by(ObjectiveDerivation.executed_at.desc())
+        )
+    )
+    history = list(
+        session.scalars(
+            select(ObjectiveAuditEvent)
+            .where(ObjectiveAuditEvent.objective_id == row.id)
+            .order_by(ObjectiveAuditEvent.occurred_at.desc())
+        )
+    )
+    edges = list(
+        session.scalars(
+            select(ObjectiveRelationship).where(
+                or_(
+                    ObjectiveRelationship.source_objective_id == row.id,
+                    ObjectiveRelationship.target_objective_id == row.id,
+                )
+            )
+        )
+    )
+    return {
+        "id": str(row.id),
+        "resource_type": "goal",
+        "data": {
+            **row_data(row),
+            "targets": [
+                {**row_data(target), "progress": GoalService.progress(target)} for target in targets
+            ],
+            "derivations": [row_data(item) for item in derivations],
+            "history": [row_data(item) for item in history],
+            "relationships": [row_data(item) for item in edges],
+        },
+    }
+
+
+@router.get("/goals/{resource_id}/progress", dependencies=[Depends(require_role(Role.READ))])
+def goal_progress(
+    resource_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        row = GoalService(session)._objective(resource_id, tenant_id, site_id)
+    except ValueError as exc:
+        raise ApiError(404, "GOAL_NOT_FOUND", str(exc)) from exc
+    targets = list(
+        session.scalars(select(ObjectiveTarget).where(ObjectiveTarget.objective_id == row.id))
+    )
+    return {
+        "goal_id": str(row.id),
+        "lifecycle": row.lifecycle.value,
+        "progress_state": row.progress_state.value,
+        "measurement_health": row.measurement_health.value,
+        "feasibility_state": row.feasibility_state.value,
+        "feasibility_reason": row.feasibility_reason,
+        "targets": [GoalService.progress(target) for target in targets],
+    }
+
+
+@router.get("/goals/{resource_id}/decomposition", dependencies=[Depends(require_role(Role.READ))])
+def goal_decomposition(
+    resource_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        row = GoalService(session)._objective(resource_id, tenant_id, site_id)
+    except ValueError as exc:
+        raise ApiError(404, "GOAL_NOT_FOUND", str(exc)) from exc
+    plans = list(
+        session.scalars(select(DecompositionPlan).where(DecompositionPlan.objective_id == row.id))
+    )
+    derivations = list(
+        session.scalars(
+            select(ObjectiveDerivation)
+            .where(ObjectiveDerivation.source_objective_id == row.id)
+            .order_by(ObjectiveDerivation.executed_at.desc())
+        )
+    )
+    return {
+        "goal_id": str(row.id),
+        "state": row.decomposition_state.value,
+        "plans": [row_data(plan) for plan in plans],
+        "derivations": [row_data(derivation) for derivation in derivations],
+    }
+
+
+@router.patch("/goals/{resource_id}", dependencies=[Depends(require_role(Role.REVIEW))])
+def update_goal(
+    resource_id: uuid.UUID,
+    payload: GoalUpdateInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    service = GoalService(session)
+    try:
+        row = service.update_goal(
+            resource_id,
+            tenant_id,
+            site_id,
+            payload.actor,
+            payload.model_dump(exclude={"actor", "reason"}, exclude_unset=True),
+            payload.reason,
+        )
+    except ValueError as exc:
+        raise ApiError(404, "GOAL_NOT_FOUND", str(exc)) from exc
+    session.commit()
+    return row_data(row)
+
+
+def _goal_transition(
+    resource_id: uuid.UUID,
+    payload: DecisionInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    lifecycle: ObjectiveLifecycle,
+    session: Session,
+) -> dict[str, Any]:
+    try:
+        row = GoalService(session).transition(
+            resource_id, tenant_id, site_id, lifecycle, payload.actor, payload.reason
+        )
+    except ValueError as exc:
+        raise ApiError(409, "INVALID_GOAL_TRANSITION", str(exc)) from exc
+    session.commit()
+    return row_data(row)
+
+
+@router.post("/goals/{resource_id}/activate", dependencies=[Depends(require_role(Role.APPROVE))])
+def activate_goal(
+    resource_id: uuid.UUID,
+    payload: DecisionInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    return _goal_transition(
+        resource_id, payload, tenant_id, site_id, ObjectiveLifecycle.ACTIVE, session
+    )
+
+
+@router.post("/goals/{resource_id}/pause", dependencies=[Depends(require_role(Role.APPROVE))])
+def pause_goal(
+    resource_id: uuid.UUID,
+    payload: DecisionInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    return _goal_transition(
+        resource_id, payload, tenant_id, site_id, ObjectiveLifecycle.PAUSED, session
+    )
+
+
+@router.post("/goals/{resource_id}/archive", dependencies=[Depends(require_role(Role.APPROVE))])
+def archive_goal(
+    resource_id: uuid.UUID,
+    payload: DecisionInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    return _goal_transition(
+        resource_id, payload, tenant_id, site_id, ObjectiveLifecycle.ARCHIVED, session
+    )
+
+
+@router.post("/goals/{resource_id}/approve", dependencies=[Depends(require_role(Role.APPROVE))])
+def approve_goal(
+    resource_id: uuid.UUID,
+    payload: DecisionInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        row = GoalService(session).approve(
+            resource_id, tenant_id, site_id, payload.actor, True, payload.reason
+        )
+    except ValueError as exc:
+        raise ApiError(404, "GOAL_NOT_FOUND", str(exc)) from exc
+    session.commit()
+    return row_data(row)
+
+
+@router.post("/goals/{resource_id}/reject", dependencies=[Depends(require_role(Role.APPROVE))])
+def reject_goal(
+    resource_id: uuid.UUID,
+    payload: DecisionInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        row = GoalService(session).approve(
+            resource_id, tenant_id, site_id, payload.actor, False, payload.reason
+        )
+    except ValueError as exc:
+        raise ApiError(404, "GOAL_NOT_FOUND", str(exc)) from exc
+    session.commit()
+    return row_data(row)
+
+
+@router.post(
+    "/goals/{resource_id}/relationships",
+    dependencies=[Depends(require_role(Role.REVIEW))],
+    status_code=201,
+)
+def add_goal_relationship(
+    resource_id: uuid.UUID,
+    payload: GoalRelationshipInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        edge = GoalService(session).add_relationship(
+            tenant_id=tenant_id,
+            site_id=site_id,
+            source_id=resource_id,
+            target_id=payload.target_objective_id,
+            actor=payload.actor,
+            relationship_type=ObjectiveRelationshipType(payload.relationship_type),
+        )
+    except ValueError as exc:
+        raise ApiError(409, "INVALID_OBJECTIVE_RELATIONSHIP", str(exc)) from exc
+    session.commit()
+    return row_data(edge)
+
+
+@router.post(
+    "/goals/{resource_id}/targets",
+    dependencies=[Depends(require_role(Role.REVIEW))],
+    status_code=201,
+)
+def add_goal_target(
+    resource_id: uuid.UUID,
+    payload: GoalTargetInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    service = GoalService(session)
+    try:
+        objective = service._objective(resource_id, tenant_id, site_id)
+        metric = session.scalar(
+            select(MetricDefinition).where(
+                MetricDefinition.key == payload.metric_key, MetricDefinition.enabled.is_(True)
+            )
+        )
+        if metric is None:
+            raise ValueError("metric is not registered")
+        target = service.create_target(
+            objective=objective,
+            metric=metric,
+            family=TargetFamily(payload.family),
+            direction=TargetDirection(payload.direction),
+            target_value=payload.target_value,
+            actor=payload.actor,
+            unit=payload.unit,
+            condition=payload.condition,
+        )
+        target.target_upper_value = payload.target_upper_value
+    except ValueError as exc:
+        raise ApiError(422, "INVALID_TARGET", str(exc)) from exc
+    session.commit()
+    return row_data(target)
+
+
+@router.post("/goals/{resource_id}/decompose", dependencies=[Depends(require_role(Role.REVIEW))])
+def decompose_goal(
+    resource_id: uuid.UUID,
+    payload: DecisionInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        derivation = GoalService(session).decompose(resource_id, tenant_id, site_id, payload.actor)
+    except ValueError as exc:
+        session.commit()
+        raise ApiError(422, "DECOMPOSITION_UNAVAILABLE", str(exc)) from exc
+    session.commit()
+    return row_data(derivation)
+
+
+@router.post("/goals/{resource_id}/recalculate", dependencies=[Depends(require_role(Role.REVIEW))])
+def recalculate_goal(
+    resource_id: uuid.UUID,
+    payload: DecisionInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    return decompose_goal(resource_id, payload, tenant_id, site_id, session)
+
+
+@router.get("/targets/{resource_id}", dependencies=[Depends(require_role(Role.READ))])
+def target_detail(
+    resource_id: uuid.UUID, tenant_id: uuid.UUID, session: Session = Depends(database)
+) -> dict[str, Any]:
+    row = session.scalar(
+        select(ObjectiveTarget).where(
+            ObjectiveTarget.id == resource_id, ObjectiveTarget.tenant_id == tenant_id
+        )
+    )
+    if row is None:
+        raise ApiError(404, "TARGET_NOT_FOUND", "Target not found in tenant scope.")
+    return {
+        "id": str(row.id),
+        "resource_type": "target",
+        "data": {**row_data(row), "progress": GoalService.progress(row)},
+    }
+
+
+@router.get("/targets/{resource_id}/measurements", dependencies=[Depends(require_role(Role.READ))])
+def target_measurements(
+    resource_id: uuid.UUID, tenant_id: uuid.UUID, session: Session = Depends(database)
+) -> dict[str, Any]:
+    target = session.scalar(
+        select(ObjectiveTarget).where(
+            ObjectiveTarget.id == resource_id, ObjectiveTarget.tenant_id == tenant_id
+        )
+    )
+    if target is None:
+        raise ApiError(404, "TARGET_NOT_FOUND", "Target not found in tenant scope.")
+    rows = list(
+        session.scalars(
+            select(ObjectiveMeasurement)
+            .where(ObjectiveMeasurement.target_id == resource_id)
+            .order_by(ObjectiveMeasurement.measured_at.desc())
+        )
+    )
+    return {"items": [row_data(row) for row in rows]}
+
+
+@router.patch("/targets/{resource_id}", dependencies=[Depends(require_role(Role.APPROVE))])
+def override_target(
+    resource_id: uuid.UUID,
+    payload: TargetOverrideInput,
+    tenant_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        row = GoalService(session).override_target(
+            resource_id, tenant_id, payload.value, payload.actor, payload.rationale
+        )
+    except ValueError as exc:
+        raise ApiError(404, "TARGET_NOT_FOUND", str(exc)) from exc
+    session.commit()
+    return row_data(row)
 
 
 @router.get(

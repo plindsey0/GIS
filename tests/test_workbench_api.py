@@ -81,6 +81,46 @@ def test_site_and_tenant_isolation(client: TestClient, session: Session) -> None
     assert response.status_code == 404
 
 
+def test_goal_empty_create_detail_map_and_role_boundary(
+    client: TestClient, session: Session
+) -> None:
+    seed(session, hostname="vahomemath.test")
+    tenant = session.scalar(select(Tenant).where(Tenant.slug == "vahomemath"))
+    site = session.scalar(select(Site).where(Site.slug == "vahomemath"))
+    assert tenant and site
+    query = params(tenant.id, site.id)
+    empty = client.get("/api/v1/goals", params=query, headers=headers()).json()
+    assert empty["items"] == [] and empty["summary"]["active_business_goals"] == 0
+    denied = client.post(
+        "/api/v1/goals",
+        params=query,
+        headers=headers("READ"),
+        json={"name": "Operator goal", "objective_type": "GROWTH", "actor": "operator"},
+    )
+    assert denied.status_code == 403
+    created = client.post(
+        "/api/v1/goals",
+        params=query,
+        headers=headers("REVIEW"),
+        json={"name": "Operator goal", "objective_type": "GROWTH", "actor": "operator"},
+    )
+    assert created.status_code == 201
+    goal_id = created.json()["id"]
+    assert created.json()["lifecycle"] == "DRAFT"
+    detail = client.get(f"/api/v1/goals/{goal_id}", params=query, headers=headers()).json()
+    assert detail["data"]["measurement_health"] == "NOT_YET_MEASURABLE"
+    assert (
+        client.get("/api/v1/goals/map", params=query, headers=headers()).json()["nodes"][0]["id"]
+        == goal_id
+    )
+    isolated = client.get(
+        f"/api/v1/goals/{goal_id}",
+        params={"tenant_id": uuid.uuid4(), "site_id": site.id},
+        headers=headers(),
+    )
+    assert isolated.status_code == 404
+
+
 def test_opportunity_inbox_filters_pagination_and_detail(
     client: TestClient, session: Session
 ) -> None:

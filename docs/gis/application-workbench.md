@@ -206,6 +206,7 @@ The flow remains human governed: recommendation acceptance creates a draft inter
 ## Page purpose model
 
 - Overview: what should the operator know now?
+- Goals: what does the operator want the business to achieve, can GIS measure it, and where can deterministic decomposition proceed or must it stop?
 - Opportunities: where might VAHomeMath improve, and why did evidence qualify or fail?
 - Recommendations: what should a reviewer consider?
 - Interventions: what has a human decided to do?

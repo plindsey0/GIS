@@ -11,7 +11,7 @@ describe("GIS product documentation catalog", () => {
 
   it("covers the required operator journeys and trust concepts", () => {
     const text = JSON.stringify(docs).toLowerCase();
-    for (const concept of ["market", "collection target", "observation", "signal", "evidence package", "evidence gap", "opportunity", "recommendation", "intervention", "experiment", "outcome", "provenance", "rights", "getting started", "current limitations"]) expect(text).toContain(concept);
+    for (const concept of ["market", "collection target", "observation", "signal", "evidence package", "evidence gap", "opportunity", "recommendation", "intervention", "experiment", "outcome", "provenance", "rights", "getting started", "current limitations", "business goal", "deterministic decomposition", "objective dag", "guardrail", "measurement health"]) expect(text).toContain(concept);
     expect(text).toContain("illustrative only");
     expect(text).toContain("human approval");
   });

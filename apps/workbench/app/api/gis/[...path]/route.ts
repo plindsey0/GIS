@@ -31,4 +31,5 @@ async function forward(request: NextRequest, context: {params: Promise<{path: st
 }
 export const GET = forward;
 export const POST = forward;
+export const PATCH = forward;
 export const dynamic = "force-dynamic";

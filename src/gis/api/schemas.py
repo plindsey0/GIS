@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Generic, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -81,3 +82,47 @@ class GenerationInput(BaseModel):
 
 class StatusInput(DecisionInput):
     pass
+
+
+class GoalCreateInput(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    objective_type: str
+    rationale: Optional[str] = Field(default=None, max_length=5000)
+    priority: str = Field(default="MEDIUM", pattern="^(LOW|MEDIUM|HIGH|CRITICAL)$")
+    deadline: Optional[date] = None
+    actor: str = Field(min_length=1, max_length=255)
+    activate: bool = False
+
+
+class GoalUpdateInput(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    rationale: Optional[str] = Field(default=None, max_length=5000)
+    priority: Optional[str] = Field(default=None, pattern="^(LOW|MEDIUM|HIGH|CRITICAL)$")
+    deadline: Optional[date] = None
+    actor: str = Field(min_length=1, max_length=255)
+    reason: Optional[str] = Field(default=None, max_length=2000)
+
+
+class GoalTargetInput(BaseModel):
+    metric_key: str = Field(min_length=1, max_length=100)
+    family: str
+    direction: str
+    target_value: Optional[Decimal] = None
+    target_upper_value: Optional[Decimal] = None
+    condition: dict[str, Any] = Field(default_factory=dict)
+    unit: Optional[str] = Field(default=None, max_length=100)
+    actor: str = Field(min_length=1, max_length=255)
+
+
+class GoalRelationshipInput(BaseModel):
+    target_objective_id: uuid.UUID
+    relationship_type: str = "SUPPORTS"
+    actor: str = Field(min_length=1, max_length=255)
+
+
+class TargetOverrideInput(BaseModel):
+    value: Decimal
+    actor: str = Field(min_length=1, max_length=255)
+    rationale: str = Field(min_length=1, max_length=2000)

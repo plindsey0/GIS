@@ -822,6 +822,140 @@ class RecommendationRunStatus(str, enum.Enum):
     FAILED = "FAILED"
 
 
+class ObjectiveLevel(str, enum.Enum):
+    BUSINESS = "BUSINESS"
+    STRATEGIC_GROWTH = "STRATEGIC_GROWTH"
+    CHANNEL_MARKET = "CHANNEL_MARKET"
+    TACTICAL = "TACTICAL"
+
+
+class ObjectiveType(str, enum.Enum):
+    REVENUE = "REVENUE"
+    PROFITABILITY = "PROFITABILITY"
+    CUSTOMER_ACQUISITION = "CUSTOMER_ACQUISITION"
+    LEAD_GENERATION = "LEAD_GENERATION"
+    USAGE = "USAGE"
+    GROWTH = "GROWTH"
+    MARKET_POSITION = "MARKET_POSITION"
+    RETENTION = "RETENTION"
+    EFFICIENCY = "EFFICIENCY"
+    CUSTOM = "CUSTOM"
+
+
+class ObjectiveOrigin(str, enum.Enum):
+    USER_DEFINED = "USER_DEFINED"
+    DETERMINISTIC = "DETERMINISTIC"
+    STATISTICAL = "STATISTICAL"
+    AI_PROPOSED = "AI_PROPOSED"
+    IMPORTED = "IMPORTED"
+    USER_OVERRIDE = "USER_OVERRIDE"
+
+
+class ObjectiveLifecycle(str, enum.Enum):
+    DRAFT = "DRAFT"
+    PROPOSED = "PROPOSED"
+    ACTIVE = "ACTIVE"
+    PAUSED = "PAUSED"
+    ACHIEVED = "ACHIEVED"
+    MISSED = "MISSED"
+    CANCELLED = "CANCELLED"
+    ARCHIVED = "ARCHIVED"
+
+
+class ObjectiveProgress(str, enum.Enum):
+    NOT_STARTED = "NOT_STARTED"
+    AHEAD = "AHEAD"
+    ON_TRACK = "ON_TRACK"
+    BEHIND = "BEHIND"
+    AT_RISK = "AT_RISK"
+    ACHIEVED = "ACHIEVED"
+    MISSED = "MISSED"
+    UNKNOWN = "UNKNOWN"
+
+
+class ObjectiveMeasurementHealth(str, enum.Enum):
+    MEASURABLE = "MEASURABLE"
+    NOT_YET_MEASURABLE = "NOT_YET_MEASURABLE"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+    STALE_DATA = "STALE_DATA"
+    BLOCKED_SOURCE = "BLOCKED_SOURCE"
+    BLOCKED_RIGHTS = "BLOCKED_RIGHTS"
+    UNSUPPORTED_METRIC = "UNSUPPORTED_METRIC"
+
+
+class ObjectiveFeasibility(str, enum.Enum):
+    NOT_ASSESSED = "NOT_ASSESSED"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+    PLAUSIBLE = "PLAUSIBLE"
+    AGGRESSIVE = "AGGRESSIVE"
+    EXTREMELY_AGGRESSIVE = "EXTREMELY_AGGRESSIVE"
+    CURRENT_TRAJECTORY_INSUFFICIENT = "CURRENT_TRAJECTORY_INSUFFICIENT"
+    UNSUPPORTED_BY_CURRENT_EVIDENCE = "UNSUPPORTED_BY_CURRENT_EVIDENCE"
+
+
+class DecompositionState(str, enum.Enum):
+    NOT_STARTED = "NOT_STARTED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    BLOCKED_MISSING_DATA = "BLOCKED_MISSING_DATA"
+    BLOCKED_UNSUPPORTED_METRIC = "BLOCKED_UNSUPPORTED_METRIC"
+    BLOCKED_RIGHTS = "BLOCKED_RIGHTS"
+    BLOCKED_STALE_DATA = "BLOCKED_STALE_DATA"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
+
+
+class ObjectiveApproval(str, enum.Enum):
+    NOT_REQUIRED = "NOT_REQUIRED"
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class ObjectiveRelationshipType(str, enum.Enum):
+    SUPPORTS = "SUPPORTS"
+    DEPENDS_ON = "DEPENDS_ON"
+    CONSTRAINS = "CONSTRAINS"
+    CONFLICTS_WITH = "CONFLICTS_WITH"
+
+
+class TargetFamily(str, enum.Enum):
+    ABSOLUTE_METRIC = "ABSOLUTE_METRIC"
+    RELATIVE_CHANGE = "RELATIVE_CHANGE"
+    RANK = "RANK"
+    COMPETITIVE = "COMPETITIVE"
+    MARKET = "MARKET"
+    FUNNEL = "FUNNEL"
+    FINANCIAL = "FINANCIAL"
+    GUARDRAIL = "GUARDRAIL"
+
+
+class TargetDirection(str, enum.Enum):
+    AT_LEAST = "AT_LEAST"
+    AT_MOST = "AT_MOST"
+    BETWEEN = "BETWEEN"
+    INCREASE_BY = "INCREASE_BY"
+    DECREASE_BY = "DECREASE_BY"
+    RANK_AT_OR_ABOVE = "RANK_AT_OR_ABOVE"
+    OUTRANK_ENTITY = "OUTRANK_ENTITY"
+
+
+class DecompositionPlanStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    CANDIDATE = "CANDIDATE"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class DerivationResultStatus(str, enum.Enum):
+    CURRENT = "CURRENT"
+    BLOCKED = "BLOCKED"
+    SUPERSEDED = "SUPERSEDED"
+    REJECTED = "REJECTED"
+
+
 class CandidateValidationState(str, enum.Enum):
     VALID = "VALID"
     INVALID = "INVALID"
@@ -4141,6 +4275,17 @@ class MetricDefinition(Base, TimestampMixin):
     source_system: Mapped[str] = mapped_column(String(100), nullable=False)
     unit: Mapped[str] = mapped_column(String(100), nullable=False)
     grain: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    domain: Mapped[Optional[str]] = mapped_column(String(100))
+    directionality: Mapped[Optional[str]] = mapped_column(String(50))
+    aggregation: Mapped[Optional[str]] = mapped_column(String(50))
+    supported_scopes_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    authoritative_asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_asset.id")
+    )
+    currently_measurable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    derived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    freshness_expectation_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
@@ -4381,6 +4526,338 @@ class InterventionOutcome(Base):
     identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     method_version: Mapped[str] = mapped_column(String(50), nullable=False)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StrategicObjective(Base, TimestampMixin):
+    __tablename__ = "strategic_objective"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        Index("ix_strategic_objective_scope", "tenant_id", "site_id", "lifecycle"),
+        Index("ix_strategic_objective_attention", "measurement_health", "decomposition_state"),
+        CheckConstraint(
+            "origin NOT IN ('STATISTICAL', 'AI_PROPOSED') OR lifecycle IN ('DRAFT', 'PROPOSED')",
+            name="ck_objective_non_authoritative_origin",
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    level: Mapped[ObjectiveLevel] = mapped_column(
+        enum_type(ObjectiveLevel, "objective_level"), nullable=False
+    )
+    objective_type: Mapped[ObjectiveType] = mapped_column(
+        enum_type(ObjectiveType, "objective_type"), nullable=False
+    )
+    lifecycle: Mapped[ObjectiveLifecycle] = mapped_column(
+        enum_type(ObjectiveLifecycle, "objective_lifecycle"), nullable=False
+    )
+    origin: Mapped[ObjectiveOrigin] = mapped_column(
+        enum_type(ObjectiveOrigin, "objective_origin"), nullable=False
+    )
+    approval_state: Mapped[ObjectiveApproval] = mapped_column(
+        enum_type(ObjectiveApproval, "objective_approval"), nullable=False
+    )
+    progress_state: Mapped[ObjectiveProgress] = mapped_column(
+        enum_type(ObjectiveProgress, "objective_progress"), nullable=False
+    )
+    measurement_health: Mapped[ObjectiveMeasurementHealth] = mapped_column(
+        enum_type(ObjectiveMeasurementHealth, "objective_measurement_health"), nullable=False
+    )
+    decomposition_state: Mapped[DecompositionState] = mapped_column(
+        enum_type(DecompositionState, "decomposition_state"), nullable=False
+    )
+    feasibility_state: Mapped[ObjectiveFeasibility] = mapped_column(
+        enum_type(ObjectiveFeasibility, "objective_feasibility"), nullable=False
+    )
+    feasibility_reason: Mapped[Optional[str]] = mapped_column(Text)
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="MEDIUM")
+    rationale: Mapped[Optional[str]] = mapped_column(Text)
+    start_date: Mapped[Optional[date]] = mapped_column(Date)
+    deadline: Mapped[Optional[date]] = mapped_column(Date)
+    scope_type: Mapped[str] = mapped_column(String(50), nullable=False, default="SITE")
+    scope_key: Mapped[Optional[str]] = mapped_column(Text)
+    scope_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(255))
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    supersedes_objective_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.strategic_objective.id")
+    )
+
+
+class ObjectiveRelationship(Base):
+    __tablename__ = "objective_relationship"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_objective_id",
+            "target_objective_id",
+            "relationship_type",
+            name="uq_objective_relationship",
+        ),
+        CheckConstraint(
+            "source_objective_id <> target_objective_id", name="ck_objective_no_self_edge"
+        ),
+        Index("ix_objective_relationship_source", "source_objective_id"),
+        Index("ix_objective_relationship_target", "target_objective_id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    source_objective_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.strategic_objective.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_objective_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.strategic_objective.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    relationship_type: Mapped[ObjectiveRelationshipType] = mapped_column(
+        enum_type(ObjectiveRelationshipType, "objective_relationship_type"), nullable=False
+    )
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ObjectiveTarget(Base, TimestampMixin):
+    __tablename__ = "objective_target"
+    __table_args__ = (
+        Index("ix_objective_target_objective", "objective_id", "measurement_health"),
+        CheckConstraint(
+            "target_value IS NOT NULL OR condition_json <> '{}'::jsonb", name="ck_target_condition"
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    objective_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.strategic_objective.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    metric_definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.intervention_metric_definition.id"),
+        nullable=False,
+    )
+    family: Mapped[TargetFamily] = mapped_column(
+        enum_type(TargetFamily, "target_family"), nullable=False
+    )
+    direction: Mapped[TargetDirection] = mapped_column(
+        enum_type(TargetDirection, "target_direction"), nullable=False
+    )
+    unit: Mapped[str] = mapped_column(String(100), nullable=False)
+    target_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 8))
+    target_upper_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 8))
+    condition_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    baseline_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 8))
+    baseline_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    baseline_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    current_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 8))
+    current_period_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    current_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    measurement_window: Mapped[Optional[str]] = mapped_column(String(100))
+    aggregation: Mapped[Optional[str]] = mapped_column(String(50))
+    deadline: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    entity_scope_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    measurement_binding_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    measurement_health: Mapped[ObjectiveMeasurementHealth] = mapped_column(
+        enum_type(ObjectiveMeasurementHealth, "objective_measurement_health"), nullable=False
+    )
+    approval_state: Mapped[ObjectiveApproval] = mapped_column(
+        enum_type(ObjectiveApproval, "objective_approval"), nullable=False
+    )
+    origin: Mapped[ObjectiveOrigin] = mapped_column(
+        enum_type(ObjectiveOrigin, "objective_origin"), nullable=False
+    )
+    suggested_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 8))
+    override_rationale: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class ObjectiveMeasurement(Base):
+    __tablename__ = "objective_measurement"
+    __table_args__ = (
+        UniqueConstraint("identity_hash", name="uq_objective_measurement_identity"),
+        Index("ix_objective_measurement_target", "target_id", "measured_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    target_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.objective_target.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    value: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 8))
+    unit: Mapped[str] = mapped_column(String(100), nullable=False)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    data_asset_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_asset.id")
+    )
+    source_reference: Mapped[Optional[str]] = mapped_column(Text)
+    rights_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_rights_policy.id")
+    )
+    freshness_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    readiness_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    method_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    effective_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class DecompositionPlan(Base, TimestampMixin):
+    __tablename__ = "decomposition_plan"
+    __table_args__ = (
+        Index("ix_decomposition_plan_objective", "objective_id", "status"),
+        Index(
+            "uq_decomposition_plan_selected",
+            "objective_id",
+            unique=True,
+            postgresql_where=text("selected"),
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    objective_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.strategic_objective.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[DecompositionPlanStatus] = mapped_column(
+        enum_type(DecompositionPlanStatus, "decomposition_plan_status"), nullable=False
+    )
+    origin: Mapped[ObjectiveOrigin] = mapped_column(
+        enum_type(ObjectiveOrigin, "objective_origin"), nullable=False
+    )
+    selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provenance_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class DecompositionRule(Base, TimestampMixin):
+    __tablename__ = "decomposition_rule"
+    __table_args__ = (
+        UniqueConstraint("key", "version", name="uq_decomposition_rule_version"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_level: Mapped[ObjectiveLevel] = mapped_column(
+        enum_type(ObjectiveLevel, "objective_level"), nullable=False
+    )
+    parent_type: Mapped[ObjectiveType] = mapped_column(
+        enum_type(ObjectiveType, "objective_type"), nullable=False
+    )
+    output_level: Mapped[ObjectiveLevel] = mapped_column(
+        enum_type(ObjectiveLevel, "objective_level"), nullable=False
+    )
+    output_type: Mapped[ObjectiveType] = mapped_column(
+        enum_type(ObjectiveType, "objective_type"), nullable=False
+    )
+    formula: Mapped[str] = mapped_column(Text, nullable=False)
+    required_metrics_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    supported_units_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    output_metric_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    assumptions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    readiness_policy_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    rights_requirements_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    approval_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class ObjectiveDerivation(Base):
+    __tablename__ = "objective_derivation"
+    __table_args__ = (
+        UniqueConstraint("identity_hash", name="uq_objective_derivation_identity"),
+        Index("ix_objective_derivation_parent", "source_objective_id", "executed_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    decomposition_plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.decomposition_plan.id"), nullable=False
+    )
+    source_objective_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.strategic_objective.id"), nullable=False
+    )
+    generated_objective_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.strategic_objective.id")
+    )
+    generated_target_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.objective_target.id")
+    )
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.decomposition_rule.id"), nullable=False
+    )
+    rule_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    formula: Mapped[str] = mapped_column(Text, nullable=False)
+    required_inputs_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    input_values_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    output_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 8))
+    source_references_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    assumptions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    rights_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    readiness_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    result_status: Mapped[DerivationResultStatus] = mapped_column(
+        enum_type(DerivationResultStatus, "derivation_result_status"), nullable=False
+    )
+    blocked_reason: Mapped[Optional[str]] = mapped_column(Text)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    supersedes_derivation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.objective_derivation.id")
+    )
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ObjectiveAuditEvent(Base):
+    __tablename__ = "objective_audit_event"
+    __table_args__ = (
+        Index("ix_objective_audit_history", "objective_id", "occurred_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    objective_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.strategic_objective.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+    before_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    after_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class RecommendationPolicy(Base, TimestampMixin):
