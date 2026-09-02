@@ -23,6 +23,7 @@ from gis.models import (
     Tenant,
 )
 from gis.opportunities.service import OpportunityService
+from gis.orchestration.seed import seed_vahomemath_cadence
 from gis.recommendations.provider import FixtureRecommendationProvider
 from gis.recommendations.service import RecommendationService
 from gis.seed import seed
@@ -284,6 +285,33 @@ def test_read_surfaces_empty_unknown_and_no_activation(
         ]
         is False
     )
+
+
+def test_capabilities_separate_source_and_automation_health(
+    client: TestClient, session: Session
+) -> None:
+    seed(session, hostname="vahomemath.test")
+    schedules = seed_vahomemath_cadence(session)
+    tenant = session.scalar(select(Tenant).where(Tenant.slug == "vahomemath"))
+    site = session.scalar(select(Site).where(Site.slug == "vahomemath"))
+    assert tenant and site and schedules
+    payload = client.get(
+        "/api/v1/capabilities", params=params(tenant.id, site.id), headers=headers()
+    ).json()
+    assert payload["executor_liveness"] == {"SCHEDULER": False, "WORKER": False}
+    item = payload["items"][0]
+    assert set(item["source_health"]) >= {
+        "state",
+        "latest_ingestion_success",
+        "latest_provider_reporting_date",
+        "freshness_sla_seconds",
+    }
+    assert set(item["automation_health"]) >= {
+        "state",
+        "orchestration_run_count",
+        "pending_obligations",
+        "timeliness",
+    }
 
 
 def test_semantic_evidence_inventory_detail_and_diagnostics(

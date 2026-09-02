@@ -94,6 +94,10 @@ sources:
       - name: scheduled_target
       - name: orchestration_run
         config: {loaded_at_field: created_at}
+      - name: orchestration_obligation
+        config: {loaded_at_field: created_at}
+      - name: executor_heartbeat
+        config: {loaded_at_field: last_heartbeat_at}
       - name: execution_attempt
         config: {loaded_at_field: created_at}
       - name: freshness_state

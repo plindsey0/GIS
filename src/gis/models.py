@@ -225,6 +225,8 @@ class TriggerType(str, enum.Enum):
     RETRY = "RETRY"
     BACKFILL = "BACKFILL"
     DEPENDENCY = "DEPENDENCY"
+    CATCH_UP = "CATCH_UP"
+    RECONCILIATION = "RECONCILIATION"
 
 
 class OrchestrationStatus(str, enum.Enum):
@@ -236,6 +238,59 @@ class OrchestrationStatus(str, enum.Enum):
     FAILED = "FAILED"
     BLOCKED = "BLOCKED"
     CANCELLED = "CANCELLED"
+
+
+class ObligationStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    RETRY_WAIT = "RETRY_WAIT"
+    PROVIDER_DATA_PENDING = "PROVIDER_DATA_PENDING"
+    SATISFIED = "SATISFIED"
+    EXPIRED = "EXPIRED"
+    BLOCKED = "BLOCKED"
+    FAILED = "FAILED"
+
+
+class CompletionOutcome(str, enum.Enum):
+    SUCCEEDED_COMPLETE = "SUCCEEDED_COMPLETE"
+    SUCCEEDED_NO_DATA_EXPECTED = "SUCCEEDED_NO_DATA_EXPECTED"
+    PROVIDER_DATA_PENDING = "PROVIDER_DATA_PENDING"
+    PARTIAL = "PARTIAL"
+    FAILED_RETRYABLE = "FAILED_RETRYABLE"
+    FAILED_TERMINAL = "FAILED_TERMINAL"
+    BLOCKED_RIGHTS = "BLOCKED_RIGHTS"
+    BLOCKED_BUDGET = "BLOCKED_BUDGET"
+    BLOCKED_CONFIGURATION = "BLOCKED_CONFIGURATION"
+    ABANDONED = "ABANDONED"
+
+
+class FailureCategory(str, enum.Enum):
+    TRANSIENT_NETWORK = "TRANSIENT_NETWORK"
+    PROVIDER_429 = "PROVIDER_429"
+    PROVIDER_5XX = "PROVIDER_5XX"
+    PROVIDER_DATA_PENDING = "PROVIDER_DATA_PENDING"
+    AUTHENTICATION_FAILED = "AUTHENTICATION_FAILED"
+    AUTHORIZATION_FAILED = "AUTHORIZATION_FAILED"
+    CONFIGURATION_ERROR = "CONFIGURATION_ERROR"
+    RIGHTS_BLOCKED = "RIGHTS_BLOCKED"
+    BUDGET_BLOCKED = "BUDGET_BLOCKED"
+    INVALID_REQUEST = "INVALID_REQUEST"
+    INTERNAL_PROCESSING_ERROR = "INTERNAL_PROCESSING_ERROR"
+    ABANDONED_EXECUTION = "ABANDONED_EXECUTION"
+    UNKNOWN_RETRYABLE = "UNKNOWN_RETRYABLE"
+    UNKNOWN_TERMINAL = "UNKNOWN_TERMINAL"
+
+
+class ExecutorRole(str, enum.Enum):
+    SCHEDULER = "SCHEDULER"
+    WORKER = "WORKER"
+
+
+class ReadinessState(str, enum.Enum):
+    READY = "READY"
+    READY_WITH_STALE_INPUT = "READY_WITH_STALE_INPUT"
+    DEGRADED = "DEGRADED"
+    BLOCKED = "BLOCKED"
 
 
 class DependencyPolicy(str, enum.Enum):
@@ -3909,12 +3964,19 @@ class EvidenceGap(Base, TimestampMixin):
 
 class OpportunityDetectorPolicy(Base, TimestampMixin):
     __tablename__ = "opportunity_detector_policy"
-    __table_args__ = (UniqueConstraint("detector_key", "detector_version", name="uq_opportunity_detector_version"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint(
+            "detector_key", "detector_version", name="uq_opportunity_detector_version"
+        ),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     detector_key: Mapped[str] = mapped_column(String(100), nullable=False)
     detector_version: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    family: Mapped[OpportunityFamily] = mapped_column(enum_type(OpportunityFamily, "opportunity_family"), nullable=False)
+    family: Mapped[OpportunityFamily] = mapped_column(
+        enum_type(OpportunityFamily, "opportunity_family"), nullable=False
+    )
     opportunity_type: Mapped[str] = mapped_column(String(100), nullable=False)
     evidence_contract_key: Mapped[str] = mapped_column(String(100), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -3924,20 +3986,43 @@ class OpportunityDetectorPolicy(Base, TimestampMixin):
 
 class Opportunity(Base, TimestampMixin):
     __tablename__ = "opportunity"
-    __table_args__ = (UniqueConstraint("identity_hash", name="uq_opportunity_identity"), ForeignKeyConstraint(["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]), Index("ix_opportunity_scope", "tenant_id", "site_id", "status", "priority"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint("identity_hash", name="uq_opportunity_identity"),
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        Index("ix_opportunity_scope", "tenant_id", "site_id", "status", "priority"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
-    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"))
+    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False
+    )
+    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id")
+    )
     market_definition_version: Mapped[Optional[int]] = mapped_column(Integer)
-    detector_policy_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity_detector_policy.id"), nullable=False)
-    family: Mapped[OpportunityFamily] = mapped_column(enum_type(OpportunityFamily, "opportunity_family"), nullable=False)
+    detector_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity_detector_policy.id"), nullable=False
+    )
+    family: Mapped[OpportunityFamily] = mapped_column(
+        enum_type(OpportunityFamily, "opportunity_family"), nullable=False
+    )
     opportunity_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    status: Mapped[OpportunityStatus] = mapped_column(enum_type(OpportunityStatus, "opportunity_status"), nullable=False)
-    computed_status: Mapped[OpportunityStatus] = mapped_column(enum_type(OpportunityStatus, "opportunity_status"), nullable=False)
-    priority: Mapped[OpportunityPriority] = mapped_column(enum_type(OpportunityPriority, "opportunity_priority"), nullable=False)
-    evidence_sufficiency: Mapped[DemandEvidenceStrength] = mapped_column(enum_type(DemandEvidenceStrength, "demand_evidence_strength"), nullable=False)
+    status: Mapped[OpportunityStatus] = mapped_column(
+        enum_type(OpportunityStatus, "opportunity_status"), nullable=False
+    )
+    computed_status: Mapped[OpportunityStatus] = mapped_column(
+        enum_type(OpportunityStatus, "opportunity_status"), nullable=False
+    )
+    priority: Mapped[OpportunityPriority] = mapped_column(
+        enum_type(OpportunityPriority, "opportunity_priority"), nullable=False
+    )
+    evidence_sufficiency: Mapped[DemandEvidenceStrength] = mapped_column(
+        enum_type(DemandEvidenceStrength, "demand_evidence_strength"), nullable=False
+    )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     condition_description: Mapped[str] = mapped_column(Text, nullable=False)
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -3952,34 +4037,66 @@ class Opportunity(Base, TimestampMixin):
 
 class OpportunityEvaluation(Base):
     __tablename__ = "opportunity_evaluation"
-    __table_args__ = (UniqueConstraint("evaluation_hash", name="uq_opportunity_evaluation"), Index("ix_opportunity_evaluation_history", "opportunity_id", "evaluated_at"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint("evaluation_hash", name="uq_opportunity_evaluation"),
+        Index("ix_opportunity_evaluation_history", "opportunity_id", "evaluated_at"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id", ondelete="CASCADE"), nullable=False)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.opportunity.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    computed_status: Mapped[OpportunityStatus] = mapped_column(enum_type(OpportunityStatus, "opportunity_status"), nullable=False)
+    computed_status: Mapped[OpportunityStatus] = mapped_column(
+        enum_type(OpportunityStatus, "opportunity_status"), nullable=False
+    )
     qualifies: Mapped[bool] = mapped_column(Boolean, nullable=False)
     evaluation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     reasons_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     blockers_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     metrics_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class OpportunityEvidence(Base):
     __tablename__ = "opportunity_evidence"
-    __table_args__ = (UniqueConstraint("opportunity_evaluation_id", "evidence_package_id", name="uq_opportunity_evidence"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint(
+            "opportunity_evaluation_id", "evidence_package_id", name="uq_opportunity_evidence"
+        ),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    opportunity_evaluation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity_evaluation.id", ondelete="CASCADE"), nullable=False)
-    evidence_package_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id"), nullable=False)
+    opportunity_evaluation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.opportunity_evaluation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evidence_package_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id"), nullable=False
+    )
     evidence_role: Mapped[str] = mapped_column(String(100), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class OpportunityOverride(Base):
     __tablename__ = "opportunity_override"
-    __table_args__ = (Index("ix_opportunity_override_current", "opportunity_id", "restored_at"), {"schema": SCHEMA})
+    __table_args__ = (
+        Index("ix_opportunity_override_current", "opportunity_id", "restored_at"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id", ondelete="CASCADE"), nullable=False)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.opportunity.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     dismissed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     dismissed_by: Mapped[Optional[str]] = mapped_column(String(255))
     reason: Mapped[str] = mapped_column(Text, nullable=False)
@@ -3990,15 +4107,22 @@ class OpportunityOverride(Base):
 
 class InterventionTypeDefinition(Base, TimestampMixin):
     __tablename__ = "intervention_type_definition"
-    __table_args__ = (UniqueConstraint("key", "version", name="uq_intervention_type_version"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint("key", "version", name="uq_intervention_type_version"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     key: Mapped[str] = mapped_column(String(100), nullable=False)
     version: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    family: Mapped[InterventionFamily] = mapped_column(enum_type(InterventionFamily, "intervention_family"), nullable=False)
+    family: Mapped[InterventionFamily] = mapped_column(
+        enum_type(InterventionFamily, "intervention_family"), nullable=False
+    )
     execution_mode: Mapped[str] = mapped_column(String(50), nullable=False)
-    autonomy_level: Mapped[str] = mapped_column(String(50), nullable=False, default="HUMAN_APPROVAL_REQUIRED")
+    autonomy_level: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="HUMAN_APPROVAL_REQUIRED"
+    )
     reversible: Mapped[Optional[bool]] = mapped_column(Boolean)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     schema_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
@@ -4006,7 +4130,10 @@ class InterventionTypeDefinition(Base, TimestampMixin):
 
 class MetricDefinition(Base, TimestampMixin):
     __tablename__ = "intervention_metric_definition"
-    __table_args__ = (UniqueConstraint("key", "version", name="uq_intervention_metric_version"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint("key", "version", name="uq_intervention_metric_version"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     key: Mapped[str] = mapped_column(String(100), nullable=False)
     version: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -4019,18 +4146,39 @@ class MetricDefinition(Base, TimestampMixin):
 
 class Intervention(Base, TimestampMixin):
     __tablename__ = "intervention"
-    __table_args__ = (ForeignKeyConstraint(["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]), UniqueConstraint("identity_hash", name="uq_intervention_identity"), Index("ix_intervention_scope", "tenant_id", "site_id", "status"), {"schema": SCHEMA})
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("identity_hash", name="uq_intervention_identity"),
+        Index("ix_intervention_scope", "tenant_id", "site_id", "status"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    primary_opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id"), nullable=False)
-    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
-    intervention_type_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention_type_definition.id"), nullable=False)
-    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"))
+    primary_opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id"), nullable=False
+    )
+    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False
+    )
+    intervention_type_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention_type_definition.id"), nullable=False
+    )
+    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id")
+    )
     market_definition_version: Mapped[Optional[int]] = mapped_column(Integer)
-    status: Mapped[InterventionStatus] = mapped_column(enum_type(InterventionStatus, "intervention_status"), nullable=False)
-    feasibility: Mapped[FeasibilityState] = mapped_column(enum_type(FeasibilityState, "feasibility_state"), nullable=False)
-    measurement_readiness: Mapped[MeasurementReadiness] = mapped_column(enum_type(MeasurementReadiness, "measurement_readiness"), nullable=False)
+    status: Mapped[InterventionStatus] = mapped_column(
+        enum_type(InterventionStatus, "intervention_status"), nullable=False
+    )
+    feasibility: Mapped[FeasibilityState] = mapped_column(
+        enum_type(FeasibilityState, "feasibility_state"), nullable=False
+    )
+    measurement_readiness: Mapped[MeasurementReadiness] = mapped_column(
+        enum_type(MeasurementReadiness, "measurement_readiness"), nullable=False
+    )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     parameters_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     constraints_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
@@ -4044,22 +4192,42 @@ class Intervention(Base, TimestampMixin):
 
 class InterventionHypothesis(Base):
     __tablename__ = "intervention_hypothesis"
-    __table_args__ = (UniqueConstraint("intervention_id", name="uq_intervention_hypothesis"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint("intervention_id", name="uq_intervention_hypothesis"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"), nullable=False)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     target_metric_key: Mapped[str] = mapped_column(String(100), nullable=False)
-    expected_direction: Mapped[ExpectedDirection] = mapped_column(enum_type(ExpectedDirection, "expected_direction"), nullable=False)
-    target_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
+    expected_direction: Mapped[ExpectedDirection] = mapped_column(
+        enum_type(ExpectedDirection, "expected_direction"), nullable=False
+    )
+    target_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False
+    )
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
     expected_magnitude: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class MeasurementContract(Base, TimestampMixin):
     __tablename__ = "measurement_contract"
-    __table_args__ = (UniqueConstraint("intervention_id", "version", name="uq_measurement_contract_version"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint("intervention_id", "version", name="uq_measurement_contract_version"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"), nullable=False)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     version: Mapped[str] = mapped_column(String(50), nullable=False)
     baseline_strategy: Mapped[str] = mapped_column(String(50), nullable=False)
     baseline_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -4068,7 +4236,9 @@ class MeasurementContract(Base, TimestampMixin):
     measurement_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     washout_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     comparison_method: Mapped[str] = mapped_column(String(50), nullable=False)
-    minimum_evidence: Mapped[DemandEvidenceStrength] = mapped_column(enum_type(DemandEvidenceStrength, "demand_evidence_strength"), nullable=False)
+    minimum_evidence: Mapped[DemandEvidenceStrength] = mapped_column(
+        enum_type(DemandEvidenceStrength, "demand_evidence_strength"), nullable=False
+    )
     freshness_days: Mapped[int] = mapped_column(Integer, nullable=False)
     exclusions_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     method_version: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -4076,21 +4246,50 @@ class MeasurementContract(Base, TimestampMixin):
 
 class MeasurementMetric(Base):
     __tablename__ = "measurement_metric"
-    __table_args__ = (UniqueConstraint("measurement_contract_id", "metric_definition_id", "role", name="uq_measurement_metric_role"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint(
+            "measurement_contract_id",
+            "metric_definition_id",
+            "role",
+            name="uq_measurement_metric_role",
+        ),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    measurement_contract_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.measurement_contract.id", ondelete="CASCADE"), nullable=False)
-    metric_definition_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention_metric_definition.id"), nullable=False)
+    measurement_contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.measurement_contract.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    metric_definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.intervention_metric_definition.id"),
+        nullable=False,
+    )
     role: Mapped[MetricRole] = mapped_column(enum_type(MetricRole, "metric_role"), nullable=False)
-    expected_direction: Mapped[ExpectedDirection] = mapped_column(enum_type(ExpectedDirection, "expected_direction"), nullable=False)
+    expected_direction: Mapped[ExpectedDirection] = mapped_column(
+        enum_type(ExpectedDirection, "expected_direction"), nullable=False
+    )
 
 
 class InterventionLifecycleEvent(Base):
     __tablename__ = "intervention_lifecycle_event"
-    __table_args__ = (Index("ix_intervention_lifecycle_history", "intervention_id", "occurred_at"), {"schema": SCHEMA})
+    __table_args__ = (
+        Index("ix_intervention_lifecycle_history", "intervention_id", "occurred_at"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"), nullable=False)
-    from_status: Mapped[Optional[InterventionStatus]] = mapped_column(enum_type(InterventionStatus, "intervention_status"))
-    to_status: Mapped[InterventionStatus] = mapped_column(enum_type(InterventionStatus, "intervention_status"), nullable=False)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    from_status: Mapped[Optional[InterventionStatus]] = mapped_column(
+        enum_type(InterventionStatus, "intervention_status")
+    )
+    to_status: Mapped[InterventionStatus] = mapped_column(
+        enum_type(InterventionStatus, "intervention_status"), nullable=False
+    )
     actor: Mapped[Optional[str]] = mapped_column(String(255))
     reason: Mapped[Optional[str]] = mapped_column(Text)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -4098,9 +4297,16 @@ class InterventionLifecycleEvent(Base):
 
 class InterventionExecution(Base):
     __tablename__ = "intervention_execution"
-    __table_args__ = (Index("ix_intervention_execution_history", "intervention_id", "actual_started_at"), {"schema": SCHEMA})
+    __table_args__ = (
+        Index("ix_intervention_execution_history", "intervention_id", "actual_started_at"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"), nullable=False)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     planned_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     actual_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     actual_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -4113,14 +4319,28 @@ class InterventionExecution(Base):
 
 class Experiment(Base, TimestampMixin):
     __tablename__ = "experiment"
-    __table_args__ = (ForeignKeyConstraint(["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]), Index("ix_experiment_scope", "tenant_id", "site_id", "status"), {"schema": SCHEMA})
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        Index("ix_experiment_scope", "tenant_id", "site_id", "status"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id"), nullable=False)
-    measurement_contract_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.measurement_contract.id"), nullable=False)
-    experiment_type: Mapped[ExperimentType] = mapped_column(enum_type(ExperimentType, "experiment_type"), nullable=False)
-    status: Mapped[ExperimentStatus] = mapped_column(enum_type(ExperimentStatus, "experiment_status"), nullable=False)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id"), nullable=False
+    )
+    measurement_contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.measurement_contract.id"), nullable=False
+    )
+    experiment_type: Mapped[ExperimentType] = mapped_column(
+        enum_type(ExperimentType, "experiment_type"), nullable=False
+    )
+    status: Mapped[ExperimentStatus] = mapped_column(
+        enum_type(ExperimentStatus, "experiment_status"), nullable=False
+    )
     method_version: Mapped[str] = mapped_column(String(50), nullable=False)
     invalidation_reason: Mapped[Optional[str]] = mapped_column(String(100))
     planned_sample_size: Mapped[Optional[int]] = mapped_column(Integer)
@@ -4130,17 +4350,31 @@ class Experiment(Base, TimestampMixin):
 
 class InterventionOutcome(Base):
     __tablename__ = "intervention_outcome"
-    __table_args__ = (UniqueConstraint("identity_hash", name="uq_intervention_outcome_identity"), Index("ix_intervention_outcome_history", "intervention_id", "evaluated_at"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint("identity_hash", name="uq_intervention_outcome_identity"),
+        Index("ix_intervention_outcome_history", "intervention_id", "evaluated_at"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    intervention_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"), nullable=False)
-    measurement_contract_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.measurement_contract.id"), nullable=False)
-    state: Mapped[OutcomeState] = mapped_column(enum_type(OutcomeState, "outcome_state"), nullable=False)
+    intervention_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.intervention.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    measurement_contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.measurement_contract.id"), nullable=False
+    )
+    state: Mapped[OutcomeState] = mapped_column(
+        enum_type(OutcomeState, "outcome_state"), nullable=False
+    )
     expectation_result: Mapped[str] = mapped_column(String(50), nullable=False)
     baseline_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
     post_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
     absolute_change: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
     relative_change: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
-    evidence_sufficiency: Mapped[DemandEvidenceStrength] = mapped_column(enum_type(DemandEvidenceStrength, "demand_evidence_strength"), nullable=False)
+    evidence_sufficiency: Mapped[DemandEvidenceStrength] = mapped_column(
+        enum_type(DemandEvidenceStrength, "demand_evidence_strength"), nullable=False
+    )
     completeness: Mapped[str] = mapped_column(String(50), nullable=False)
     causal_attribution: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
@@ -4151,7 +4385,10 @@ class InterventionOutcome(Base):
 
 class RecommendationPolicy(Base, TimestampMixin):
     __tablename__ = "recommendation_policy"
-    __table_args__ = (UniqueConstraint("key", "version", name="uq_recommendation_policy_version"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint("key", "version", name="uq_recommendation_policy_version"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     key: Mapped[str] = mapped_column(String(100), nullable=False)
     version: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -4164,13 +4401,26 @@ class RecommendationPolicy(Base, TimestampMixin):
 
 class RecommendationRun(Base):
     __tablename__ = "recommendation_run"
-    __table_args__ = (ForeignKeyConstraint(["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]), UniqueConstraint("context_hash", name="uq_recommendation_run_context"), Index("ix_recommendation_run_scope", "tenant_id", "site_id", "started_at"), {"schema": SCHEMA})
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("context_hash", name="uq_recommendation_run_context"),
+        Index("ix_recommendation_run_scope", "tenant_id", "site_id", "started_at"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id"), nullable=False)
-    recommendation_policy_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation_policy.id"), nullable=False)
-    status: Mapped[RecommendationRunStatus] = mapped_column(enum_type(RecommendationRunStatus, "recommendation_run_status"), nullable=False)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id"), nullable=False
+    )
+    recommendation_policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation_policy.id"), nullable=False
+    )
+    status: Mapped[RecommendationRunStatus] = mapped_column(
+        enum_type(RecommendationRunStatus, "recommendation_run_status"), nullable=False
+    )
     provider_key: Mapped[str] = mapped_column(String(100), nullable=False)
     model_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
     model_configuration_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
@@ -4184,21 +4434,39 @@ class RecommendationRun(Base):
     validation_errors_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     repair_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failure_reason: Mapped[Optional[str]] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class Recommendation(Base, TimestampMixin):
     __tablename__ = "recommendation"
-    __table_args__ = (UniqueConstraint("identity_hash", name="uq_recommendation_identity"), Index("ix_recommendation_scope", "tenant_id", "site_id", "status"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint("identity_hash", name="uq_recommendation_identity"),
+        Index("ix_recommendation_scope", "tenant_id", "site_id", "status"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation_run.id", ondelete="CASCADE"), nullable=False)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.recommendation_run.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id"), nullable=False)
-    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
-    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"))
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id"), nullable=False
+    )
+    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False
+    )
+    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id")
+    )
     market_definition_version: Mapped[Optional[int]] = mapped_column(Integer)
-    status: Mapped[RecommendationStatus] = mapped_column(enum_type(RecommendationStatus, "recommendation_status"), nullable=False)
+    status: Mapped[RecommendationStatus] = mapped_column(
+        enum_type(RecommendationStatus, "recommendation_status"), nullable=False
+    )
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     assumptions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
@@ -4207,41 +4475,82 @@ class Recommendation(Base, TimestampMixin):
 
 class RecommendationCandidate(Base, TimestampMixin):
     __tablename__ = "recommendation_candidate"
-    __table_args__ = (UniqueConstraint("recommendation_id", "rank", name="uq_recommendation_candidate_rank"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint("recommendation_id", "rank", name="uq_recommendation_candidate_rank"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    recommendation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation.id", ondelete="CASCADE"), nullable=False)
-    intervention_type_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention_type_definition.id"), nullable=False)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.recommendation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    intervention_type_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention_type_definition.id"), nullable=False
+    )
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     fit: Mapped[str] = mapped_column(String(50), nullable=False)
-    validation_state: Mapped[CandidateValidationState] = mapped_column(enum_type(CandidateValidationState, "candidate_validation_state"), nullable=False)
+    validation_state: Mapped[CandidateValidationState] = mapped_column(
+        enum_type(CandidateValidationState, "candidate_validation_state"), nullable=False
+    )
     parameters_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     target_metric_key: Mapped[str] = mapped_column(String(100), nullable=False)
-    expected_direction: Mapped[ExpectedDirection] = mapped_column(enum_type(ExpectedDirection, "expected_direction"), nullable=False)
+    expected_direction: Mapped[ExpectedDirection] = mapped_column(
+        enum_type(ExpectedDirection, "expected_direction"), nullable=False
+    )
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
     assumptions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
-    feasibility: Mapped[FeasibilityState] = mapped_column(enum_type(FeasibilityState, "feasibility_state"), nullable=False)
-    measurement_readiness: Mapped[MeasurementReadiness] = mapped_column(enum_type(MeasurementReadiness, "measurement_readiness"), nullable=False)
+    feasibility: Mapped[FeasibilityState] = mapped_column(
+        enum_type(FeasibilityState, "feasibility_state"), nullable=False
+    )
+    measurement_readiness: Mapped[MeasurementReadiness] = mapped_column(
+        enum_type(MeasurementReadiness, "measurement_readiness"), nullable=False
+    )
     validation_errors_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
-    accepted_intervention_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id"))
+    accepted_intervention_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.intervention.id")
+    )
 
 
 class RecommendationEvidence(Base):
     __tablename__ = "recommendation_evidence"
-    __table_args__ = (UniqueConstraint("recommendation_id", "evidence_package_id", name="uq_recommendation_evidence"), {"schema": SCHEMA})
+    __table_args__ = (
+        UniqueConstraint(
+            "recommendation_id", "evidence_package_id", name="uq_recommendation_evidence"
+        ),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    recommendation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation.id", ondelete="CASCADE"), nullable=False)
-    evidence_package_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id"), nullable=False)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.recommendation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evidence_package_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id"), nullable=False
+    )
     role: Mapped[str] = mapped_column(String(100), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class RecommendationReview(Base):
     __tablename__ = "recommendation_review"
-    __table_args__ = (Index("ix_recommendation_review_history", "recommendation_id", "reviewed_at"), {"schema": SCHEMA})
+    __table_args__ = (
+        Index("ix_recommendation_review_history", "recommendation_id", "reviewed_at"),
+        {"schema": SCHEMA},
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    recommendation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation.id", ondelete="CASCADE"), nullable=False)
-    decision: Mapped[RecommendationReviewDecision] = mapped_column(enum_type(RecommendationReviewDecision, "recommendation_review_decision"), nullable=False)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.recommendation.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    decision: Mapped[RecommendationReviewDecision] = mapped_column(
+        enum_type(RecommendationReviewDecision, "recommendation_review_decision"), nullable=False
+    )
     reviewer: Mapped[str] = mapped_column(String(255), nullable=False)
     reason_category: Mapped[Optional[str]] = mapped_column(String(100))
     comment: Mapped[Optional[str]] = mapped_column(Text)
@@ -4563,6 +4872,13 @@ class ScheduleDefinition(Base, TimestampMixin):
     retry_delay_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
     exponential_backoff: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     freshness_sla_seconds: Mapped[Optional[int]] = mapped_column(Integer)
+    automatic_catchup_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=172800)
+    terminal_horizon_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=604800)
+    retry_profile: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="LOCAL_DETERMINISTIC"
+    )
+    reconciliation_window_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    policy_version: Mapped[str] = mapped_column(String(50), nullable=False, default="1")
     configuration_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
@@ -4587,6 +4903,94 @@ class ScheduledTarget(Base, TimestampMixin):
     target_key: Mapped[str] = mapped_column(Text, nullable=False)
     configuration_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class OrchestrationObligation(Base):
+    __tablename__ = "orchestration_obligation"
+    __table_args__ = (
+        Index(
+            "uq_obligation_identity",
+            "schedule_id",
+            "target_id",
+            "window_start",
+            "window_end",
+            "policy_version",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+        Index("ix_obligation_queue", "status", "next_attempt_at", "due_at"),
+        Index("ix_obligation_scope", "tenant_id", "site_id", "pipeline_id", "due_at"),
+        CheckConstraint("window_end > window_start", name="ck_obligation_window"),
+        CheckConstraint("attempt_count >= 0", name="ck_obligation_attempt_count"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id"), nullable=False
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    pipeline_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.pipeline_definition.id"), nullable=False
+    )
+    schedule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.schedule_definition.id"), nullable=False
+    )
+    target_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.scheduled_target.id")
+    )
+    data_source_connection_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.data_source_connection.id")
+    )
+    policy_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[ObligationStatus] = mapped_column(
+        enum_type(ObligationStatus, "obligation_status"), nullable=False
+    )
+    completion_outcome: Mapped[Optional[CompletionOutcome]] = mapped_column(
+        enum_type(CompletionOutcome, "completion_outcome")
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    satisfied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    ingestion_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.ingestion_run.id")
+    )
+    failure_category: Mapped[Optional[FailureCategory]] = mapped_column(
+        enum_type(FailureCategory, "failure_category")
+    )
+    status_reason: Mapped[Optional[str]] = mapped_column(Text)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ExecutorHeartbeat(Base):
+    __tablename__ = "executor_heartbeat"
+    __table_args__ = (
+        UniqueConstraint("executor_id", "role", name="uq_executor_heartbeat_identity"),
+        Index("ix_executor_heartbeat_liveness", "role", "last_heartbeat_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    executor_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[ExecutorRole] = mapped_column(
+        enum_type(ExecutorRole, "executor_role"), nullable=False
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
 
 
 class OrchestrationRun(Base):
@@ -4619,6 +5023,7 @@ class OrchestrationRun(Base):
         ),
         Index("ix_orchestration_queue", "status", "available_at", "requested_at"),
         Index("ix_orchestration_history", "tenant_id", "site_id", "pipeline_id", "requested_at"),
+        Index("ix_orchestration_run_obligation", "obligation_id"),
         {"schema": SCHEMA},
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -4648,6 +5053,9 @@ class OrchestrationRun(Base):
     ingestion_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.ingestion_run.id")
     )
+    obligation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.orchestration_obligation.id")
+    )
     trigger_type: Mapped[TriggerType] = mapped_column(
         enum_type(TriggerType, "trigger_type"), nullable=False
     )
@@ -4672,6 +5080,15 @@ class OrchestrationRun(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     error_classification: Mapped[Optional[str]] = mapped_column(String(100))
     error_detail: Mapped[Optional[str]] = mapped_column(Text)
+    completion_outcome: Mapped[Optional[CompletionOutcome]] = mapped_column(
+        enum_type(CompletionOutcome, "completion_outcome")
+    )
+    readiness_state: Mapped[ReadinessState] = mapped_column(
+        enum_type(ReadinessState, "readiness_state"),
+        nullable=False,
+        default=ReadinessState.READY,
+    )
+    readiness_detail: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     configuration_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -4703,11 +5120,17 @@ class ExecutionAttempt(Base):
     worker_id: Mapped[str] = mapped_column(String(255), nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     ingestion_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.ingestion_run.id")
     )
     error_classification: Mapped[Optional[str]] = mapped_column(String(100))
     error_detail: Mapped[Optional[str]] = mapped_column(Text)
+    failure_category: Mapped[Optional[FailureCategory]] = mapped_column(
+        enum_type(FailureCategory, "failure_category")
+    )
+    retry_after_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     estimated_provider_cost: Mapped[Decimal] = mapped_column(
         Numeric(20, 8), nullable=False, default=Decimal("0")
     )

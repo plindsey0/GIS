@@ -17,19 +17,30 @@ from gis.models import (
     AlertStatus,
     CostBudget,
     CostLedgerEntry,
+    ExecutorHeartbeat,
+    ExecutorRole,
     FreshnessState,
+    ObligationStatus,
     OperationalAlert,
+    OrchestrationObligation,
     OrchestrationRun,
     PipelineDefinition,
     ScheduleDefinition,
     ScheduleStatus,
     Site,
     Tenant,
+    TriggerType,
 )
 from gis.orchestration.execution import default_handlers
 from gis.orchestration.schedule import next_occurrence, validate_cron
 from gis.orchestration.seed import seed_vahomemath_cadence
-from gis.orchestration.service import Orchestrator, Worker, mark_stale, resolve_alert
+from gis.orchestration.service import (
+    Orchestrator,
+    Worker,
+    mark_stale,
+    record_heartbeat,
+    resolve_alert,
+)
 
 
 def json_default(value: object) -> object:
@@ -78,6 +89,14 @@ def _parser() -> argparse.ArgumentParser:
     backfill.add_argument("--start-date", type=date.fromisoformat, required=True)
     backfill.add_argument("--end-date", type=date.fromisoformat, required=True)
     backfill.add_argument("--configuration-json", default="{}")
+    reconcile = commands.add_parser("reconcile")
+    reconcile.add_argument("--tenant", required=True)
+    reconcile.add_argument("--pipeline", required=True)
+    reconcile.add_argument("--site", type=uuid.UUID)
+    reconcile.add_argument("--connection", type=uuid.UUID)
+    reconcile.add_argument("--start-date", type=date.fromisoformat, required=True)
+    reconcile.add_argument("--end-date", type=date.fromisoformat, required=True)
+    reconcile.add_argument("--configuration-json", default="{}")
     for name in ("status", "history"):
         command = commands.add_parser(name)
         command.add_argument("--tenant", required=True)
@@ -101,6 +120,15 @@ def _parser() -> argparse.ArgumentParser:
     alerts.add_argument("--resolve", type=uuid.UUID)
     cadence = commands.add_parser("seed-vahomemath")
     cadence.add_argument("--confirm-disabled", action="store_true", required=True)
+    obligations = commands.add_parser("obligations")
+    obligations.add_argument("--tenant", required=True)
+    obligations.add_argument("--site", type=uuid.UUID)
+    obligations.add_argument("--overdue", action="store_true")
+    obligations.add_argument("--id", type=uuid.UUID)
+    obligations.add_argument("--limit", type=int, default=100)
+    catchup = commands.add_parser("catch-up")
+    catchup.add_argument("--tenant", required=True)
+    commands.add_parser("liveness")
     return root
 
 
@@ -154,6 +182,13 @@ def run(arguments: list[str] | None = None) -> int:
             if args.command == "worker":
                 worker = Worker(session, default_handlers(), args.worker_id)
                 while True:
+                    record_heartbeat(
+                        session,
+                        args.worker_id,
+                        ExecutorRole.SCHEDULER,
+                        datetime.now(timezone.utc),
+                        max(60, int(args.sleep_seconds * 4)),
+                    )
                     worker.recover_abandoned()
                     orchestrator.enqueue_due()
                     mark_stale(session)
@@ -163,11 +198,77 @@ def run(arguments: list[str] | None = None) -> int:
                         return 0
                     if not execution:
                         time.sleep(args.sleep_seconds)
+            if args.command == "liveness":
+                now = datetime.now(timezone.utc)
+                emit(
+                    [
+                        {
+                            "executor_id": item.executor_id,
+                            "role": item.role,
+                            "last_heartbeat_at": item.last_heartbeat_at,
+                            "lease_expires_at": item.lease_expires_at,
+                            "alive": item.lease_expires_at >= now,
+                        }
+                        for item in session.scalars(select(ExecutorHeartbeat)).all()
+                    ]
+                )
+                return 0
             if args.command == "seed-vahomemath":
                 schedules = seed_vahomemath_cadence(session)
                 emit({"schedule_ids": [item.id for item in schedules], "activated": False})
                 return 0
             tenant = _tenant(session, args.tenant)
+            if args.command == "catch-up":
+                created = orchestrator.enqueue_due()
+                emit({"created": len(created), "run_ids": [item.id for item in created]})
+                return 0
+            if args.command == "obligations":
+                obligation_statement = select(OrchestrationObligation).where(
+                    OrchestrationObligation.tenant_id == tenant.id
+                )
+                if args.site:
+                    obligation_statement = obligation_statement.where(
+                        OrchestrationObligation.site_id == args.site
+                    )
+                if args.id:
+                    obligation_statement = obligation_statement.where(
+                        OrchestrationObligation.id == args.id
+                    )
+                if args.overdue:
+                    obligation_statement = obligation_statement.where(
+                        OrchestrationObligation.due_at < datetime.now(timezone.utc),
+                        OrchestrationObligation.status.notin_(
+                            [
+                                ObligationStatus.SATISFIED,
+                                ObligationStatus.EXPIRED,
+                            ]
+                        ),
+                    )
+                rows = session.scalars(
+                    obligation_statement.order_by(OrchestrationObligation.due_at.desc()).limit(
+                        args.limit
+                    )
+                ).all()
+                emit(
+                    [
+                        {
+                            "id": item.id,
+                            "pipeline_id": item.pipeline_id,
+                            "schedule_id": item.schedule_id,
+                            "window_start": item.window_start,
+                            "window_end": item.window_end,
+                            "due_at": item.due_at,
+                            "status": item.status,
+                            "completion_outcome": item.completion_outcome,
+                            "attempt_count": item.attempt_count,
+                            "next_attempt_at": item.next_attempt_at,
+                            "failure_category": item.failure_category,
+                            "reason": item.status_reason,
+                        }
+                        for item in rows
+                    ]
+                )
+                return 0
             if args.command == "schedule":
                 pipeline = _pipeline(session, args.pipeline)
                 _assert_site_scope(session, tenant, args.site)
@@ -230,7 +331,7 @@ def run(arguments: list[str] | None = None) -> int:
                     )
                 session.commit()
                 emit({"schedule_id": existing_schedule.id, "status": existing_schedule.status})
-            elif args.command in {"run", "backfill"}:
+            elif args.command in {"run", "backfill", "reconcile"}:
                 pipeline = _pipeline(session, args.pipeline)
                 _assert_site_scope(session, tenant, args.site)
                 configuration = json.loads(args.configuration_json)
@@ -240,8 +341,15 @@ def run(arguments: list[str] | None = None) -> int:
                     site_id=args.site,
                     connection_id=args.connection,
                     configuration=configuration,
-                    backfill_start=args.start_date if args.command == "backfill" else None,
-                    backfill_end=args.end_date if args.command == "backfill" else None,
+                    backfill_start=args.start_date
+                    if args.command in {"backfill", "reconcile"}
+                    else None,
+                    backfill_end=args.end_date
+                    if args.command in {"backfill", "reconcile"}
+                    else None,
+                    trigger_type=(
+                        TriggerType.RECONCILIATION if args.command == "reconcile" else None
+                    ),
                 )
                 emit(_run_json(execution))
             elif args.command in {"status", "history"}:

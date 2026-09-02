@@ -11,7 +11,8 @@ See [local development](docs/gis/local-development.md) for setup commands and
 [the architecture](docs/gis/architecture.md) for design context.
 
 After database setup, `scripts/bootstrap-local.sh` installs editable GIS and Workbench dependencies;
-`scripts/dev-workbench.sh` starts the loopback-only API on port 8001 and Workbench on port 3001.
+`scripts/dev-workbench.sh` supervises the loopback-only API on port 8001, Workbench on port 3001,
+and the PostgreSQL-backed scheduler/worker with bounded missed-obligation catch-up.
 
 After database setup and seeding, configure the first GSC connection:
 

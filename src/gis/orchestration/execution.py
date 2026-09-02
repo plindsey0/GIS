@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from gis.models import DataSourceConnection, IngestionRun, OrchestrationRun, PipelineDefinition
+from gis.orchestration.reliability import collector_failure
 from gis.orchestration.service import PipelineHandler, PipelineResult
 
 EXECUTABLES = {
@@ -86,7 +87,7 @@ def dbt_handler(session: Session, run: OrchestrationRun) -> PipelineResult:
         env=os.environ.copy(),
     )
     if completed.returncode:
-        raise RuntimeError(completed.stderr[-2000:] or completed.stdout[-2000:])
+        raise collector_failure(completed.stderr[-2000:] or completed.stdout[-2000:])
     return PipelineResult(actual_cost=Decimal("0"))
 
 
@@ -131,10 +132,19 @@ def collector_cli_handler(session: Session, run: OrchestrationRun) -> PipelineRe
             .limit(1)
         )
     actual = Decimal(str(run.configuration_json.get("actual_cost", run.estimated_provider_cost)))
+    outcome = str(run.configuration_json.get("completion_outcome", "SUCCEEDED_COMPLETE"))
+    reason = run.configuration_json.get("completion_reason")
+    if pipeline.key == "experience" and ingestion_run:
+        # LAB-only PageSpeed collection is valid; missing CrUX field data is not failure.
+        availability = ingestion_run.source_metadata.get("crux_state")
+        if availability == "NO_FIELD_DATA_AVAILABLE":
+            outcome = "SUCCEEDED_COMPLETE"
+            reason = "LAB measurement complete; CrUX field data is unavailable for this origin."
     return PipelineResult(
         ingestion_run_id=ingestion_run.id if ingestion_run else None,
         actual_cost=actual,
         currency=run.currency,
+        metadata={"completion_outcome": outcome, "completion_reason": reason},
     )
 
 

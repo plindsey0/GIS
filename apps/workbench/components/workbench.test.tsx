@@ -35,10 +35,10 @@ describe("GIS Workbench", () => {
   });
 
   it("shows rights/provider status and unknown freshness without zero", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => answer({items: [{schedule: "ai_recommendations", status: "DISABLED", latest_success: null, stale_since: null}], experience: {lab_observations: 8, field_observations: 0, crux_state: "NO_FIELD_DATA_AVAILABLE", semantics: "Lighthouse LAB observations are never represented as CrUX FIELD data."}, fixture_ai_provider: true, production_ai_operational: false})));
+    vi.stubGlobal("fetch", vi.fn(() => answer({items: [{schedule: "ai_recommendations", status: "DISABLED", latest_success: null, stale_since: null, reason: "No qualifying opportunities", source_health: {state: "NO_SOURCE_HISTORY", latest_ingestion_success: null, latest_provider_reporting_date: null, provider_lag_days: null, freshness_sla_seconds: 86400, stale_since: null}, automation_health: {state: "DISABLED", next_due_at: null, last_obligation_status: null, last_obligation_due_at: null, last_completion_outcome: null, timeliness: "DISABLED", pending_obligations: 0, overdue_obligations: 0, orchestration_run_count: 0, scheduler_alive: false, worker_alive: false, retry_profile: "LOCAL_DETERMINISTIC"}}], executor_liveness: {SCHEDULER: false, WORKER: false}, experience: {lab_observations: 8, field_observations: 0, crux_state: "NO_FIELD_DATA_AVAILABLE", semantics: "Lighthouse LAB observations are never represented as CrUX FIELD data."}, fixture_ai_provider: true, production_ai_operational: false})));
     render(<SystemPage/>);
     expect(await screen.findByText(/Fixture \/ development recommendation provider/)).toBeInTheDocument();
-    expect(screen.getByText("Unknown")).toBeInTheDocument();
+    expect(screen.getByText("No source history")).toBeInTheDocument();
     expect(screen.getByText(/8 Lighthouse LAB observations/)).toBeInTheDocument();
   });
 

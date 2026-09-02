@@ -27,9 +27,12 @@ esac
 
 export GIS_API_BASE_URL=http://127.0.0.1:8001
 export PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+export PATH="$REPO_DIR/.venv/bin:$PATH"
 
 cleanup() {
-  if [ -n "${API_PID:-}" ]; then kill "$API_PID" 2>/dev/null || true; fi
+  for pid in ${WORKBENCH_PID:-} ${WORKER_PID:-} ${API_PID:-}; do
+    if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi
+  done
 }
 trap cleanup EXIT INT TERM
 
@@ -41,5 +44,21 @@ if ! kill -0 "$API_PID" 2>/dev/null; then
   exit 1
 fi
 
+"$REPO_DIR/.venv/bin/gis-orchestrator" worker --sleep-seconds 15 --worker-id "local-dev" &
+WORKER_PID=$!
+sleep 1
+if ! kill -0 "$WORKER_PID" 2>/dev/null; then
+  echo "GIS orchestration worker failed to start." >&2
+  exit 1
+fi
+
 cd apps/workbench
-npm run dev -- --hostname 127.0.0.1 --port 3001
+npm run dev -- --hostname 127.0.0.1 --port 3001 &
+WORKBENCH_PID=$!
+
+echo "GIS local runtime started: API :8001, Workbench :3001, scheduler/worker active."
+while kill -0 "$API_PID" 2>/dev/null && kill -0 "$WORKER_PID" 2>/dev/null && kill -0 "$WORKBENCH_PID" 2>/dev/null; do
+  sleep 1
+done
+echo "A GIS local runtime child exited; stopping sibling processes." >&2
+exit 1

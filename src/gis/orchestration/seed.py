@@ -190,6 +190,21 @@ def seed_vahomemath_cadence(session: Session) -> list[ScheduleDefinition]:
                 item.cron, site.timezone, datetime.now(timezone.utc)
             )
             session.add(schedule)
+        if item.paid:
+            schedule.retry_profile = "PAID_BOUNDED"
+            schedule.max_attempts = 2
+        elif item.key in {"gsc", "ga4"}:
+            schedule.retry_profile = "DAILY_FREE_API"
+            schedule.max_attempts = 13
+            schedule.reconciliation_window_days = 10 if item.key == "gsc" else 3
+            schedule.automatic_catchup_seconds = 172800
+        elif item.key == "experience":
+            schedule.retry_profile = "WEEKLY_FREE_API"
+            schedule.max_attempts = 7
+            schedule.automatic_catchup_seconds = 691200
+        else:
+            schedule.retry_profile = "LOCAL_DETERMINISTIC"
+            schedule.max_attempts = 6
         schedules.append(schedule)
     for upstream_key, downstream_key in (
         ("gsc", "dbt_core"),

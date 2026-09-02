@@ -147,6 +147,14 @@ models:
     columns:
       - name: orchestration_run_id
         tests: [not_null, unique]
+  - name: stg_orchestration_obligations
+    description: Durable reporting-window obligations and their completion outcomes.
+    columns:
+      - name: obligation_id
+        tests: [not_null, unique]
+      - name: status
+        tests:
+          - not_null
   - name: stg_execution_attempts
     description: Append-only worker attempt history, including retries and failures.
     columns:
@@ -168,6 +176,11 @@ models:
       - name: site_id
         tests: [not_null]
       - name: date
+        tests: [not_null]
+  - name: mart_pipeline_obligation_reliability
+    description: Expected, on-time, recovered-late, and unsatisfied obligations by pipeline and day.
+    columns:
+      - name: obligation_date
         tests: [not_null]
   - name: mart_page_daily
     description: Page/day search, behavior, calculator, and conversion performance.

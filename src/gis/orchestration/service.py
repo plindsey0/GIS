@@ -13,23 +13,36 @@ from sqlalchemy.orm import Session
 from gis.models import (
     AlertStatus,
     BudgetDecision,
+    CompletionOutcome,
     CostBudget,
     CostLedgerEntry,
     DataSourceConnection,
     DependencyPolicy,
     ExecutionAttempt,
+    ExecutorHeartbeat,
+    ExecutorRole,
+    FailureCategory,
     FreshnessState,
+    ObligationStatus,
     OperationalAlert,
+    OrchestrationObligation,
     OrchestrationRun,
     OrchestrationStatus,
     PermittedUse,
     PipelineDefinition,
     PipelineDependency,
+    ReadinessState,
     RightsStatus,
     ScheduleDefinition,
     ScheduledTarget,
     ScheduleStatus,
     TriggerType,
+)
+from gis.orchestration.reliability import (
+    classify_failure,
+    completion_outcome,
+    retry_at,
+    retry_profile,
 )
 from gis.orchestration.schedule import next_occurrence
 from gis.provenance.service import evaluate_connection_use
@@ -113,62 +126,117 @@ class Orchestrator:
         ).all()
         created: list[OrchestrationRun] = []
         for schedule in due:
+            assert schedule.next_scheduled_at is not None
+            lower_bound = current - timedelta(seconds=schedule.automatic_catchup_seconds)
             occurrence = schedule.next_scheduled_at
-            assert occurrence is not None
-            targets = self.session.scalars(
-                select(ScheduledTarget).where(
-                    ScheduledTarget.schedule_id == schedule.id, ScheduledTarget.active.is_(True)
+            if occurrence < lower_bound:
+                occurrence = next_occurrence(
+                    schedule.cron_expression,
+                    schedule.timezone,
+                    lower_bound - timedelta(minutes=1),
                 )
-            ).all()
-            selected_targets: list[ScheduledTarget | None] = list(targets) or [None]
-            for target in selected_targets:
-                existing = self.session.scalar(
-                    select(OrchestrationRun.id).where(
-                        OrchestrationRun.schedule_id == schedule.id,
-                        OrchestrationRun.scheduled_for == occurrence,
-                        OrchestrationRun.target_id.is_(None)
-                        if target is None
-                        else OrchestrationRun.target_id == target.id,
-                    )
+            while occurrence <= current:
+                created.extend(self._materialize_obligation(schedule, occurrence, current))
+                occurrence = next_occurrence(
+                    schedule.cron_expression, schedule.timezone, occurrence
                 )
-                if existing:
-                    continue
-                configured_estimate = schedule.configuration_json.get("estimated_provider_cost")
-                run = OrchestrationRun(
+            schedule.next_scheduled_at = occurrence
+        self.session.commit()
+        return created
+
+    def _materialize_obligation(
+        self, schedule: ScheduleDefinition, occurrence: datetime, current: datetime
+    ) -> list[OrchestrationRun]:
+        targets = self.session.scalars(
+            select(ScheduledTarget).where(
+                ScheduledTarget.schedule_id == schedule.id, ScheduledTarget.active.is_(True)
+            )
+        ).all()
+        selected_targets: list[ScheduledTarget | None] = list(targets) or [None]
+        created: list[OrchestrationRun] = []
+        window_seconds = int(
+            schedule.configuration_json.get(
+                "obligation_window_seconds",
+                604800 if "weekly" in schedule.name.lower() else 86400,
+            )
+        )
+        for target in selected_targets:
+            target_id = target.id if target else None
+            obligation = self.session.scalar(
+                select(OrchestrationObligation).where(
+                    OrchestrationObligation.schedule_id == schedule.id,
+                    OrchestrationObligation.target_id.is_(None)
+                    if target is None
+                    else OrchestrationObligation.target_id == target.id,
+                    OrchestrationObligation.window_start
+                    == occurrence - timedelta(seconds=window_seconds),
+                    OrchestrationObligation.window_end == occurrence,
+                    OrchestrationObligation.policy_version == schedule.policy_version,
+                )
+            )
+            if not obligation:
+                obligation = OrchestrationObligation(
                     tenant_id=schedule.tenant_id,
-                    organization_id=schedule.organization_id,
                     site_id=schedule.site_id,
                     pipeline_id=schedule.pipeline_id,
                     schedule_id=schedule.id,
-                    target_id=target.id if target else None,
+                    target_id=target_id,
                     data_source_connection_id=schedule.data_source_connection_id,
-                    rights_policy_id=schedule.rights_policy_id,
-                    trigger_type=TriggerType.SCHEDULED,
-                    status=OrchestrationStatus.PENDING,
-                    scheduled_for=occurrence,
-                    available_at=current,
-                    estimated_provider_cost=(
-                        Decimal(str(configured_estimate))
-                        if configured_estimate is not None
-                        else self._estimated_cost(schedule.pipeline_id)
-                    ),
-                    configuration_json={
-                        **schedule.configuration_json,
-                        **(target.configuration_json if target else {}),
-                        **(
-                            {"target_type": target.target_type, "target_key": target.target_key}
-                            if target
-                            else {}
-                        ),
-                    },
+                    policy_version=schedule.policy_version,
+                    window_start=occurrence - timedelta(seconds=window_seconds),
+                    window_end=occurrence,
+                    due_at=occurrence,
+                    expires_at=occurrence + timedelta(seconds=schedule.terminal_horizon_seconds),
+                    status=ObligationStatus.PENDING,
+                    next_attempt_at=current,
+                    metadata_json={"preferred_execution_at": occurrence.isoformat()},
                 )
-                self.session.add(run)
+                self.session.add(obligation)
                 self.session.flush()
-                created.append(run)
-            schedule.next_scheduled_at = next_occurrence(
-                schedule.cron_expression, schedule.timezone, current
+            existing = self.session.scalar(
+                select(OrchestrationRun).where(OrchestrationRun.obligation_id == obligation.id)
             )
-        self.session.commit()
+            if existing:
+                continue
+            configured_estimate = schedule.configuration_json.get("estimated_provider_cost")
+            run = OrchestrationRun(
+                tenant_id=schedule.tenant_id,
+                organization_id=schedule.organization_id,
+                site_id=schedule.site_id,
+                pipeline_id=schedule.pipeline_id,
+                schedule_id=schedule.id,
+                target_id=target_id,
+                obligation_id=obligation.id,
+                data_source_connection_id=schedule.data_source_connection_id,
+                rights_policy_id=schedule.rights_policy_id,
+                trigger_type=(
+                    TriggerType.CATCH_UP
+                    if current > occurrence + timedelta(minutes=1)
+                    else TriggerType.SCHEDULED
+                ),
+                status=OrchestrationStatus.PENDING,
+                scheduled_for=occurrence,
+                available_at=current,
+                estimated_provider_cost=(
+                    Decimal(str(configured_estimate))
+                    if configured_estimate is not None
+                    else self._estimated_cost(schedule.pipeline_id)
+                ),
+                configuration_json={
+                    **schedule.configuration_json,
+                    **(target.configuration_json if target else {}),
+                    **(
+                        {"target_type": target.target_type, "target_key": target.target_key}
+                        if target
+                        else {}
+                    ),
+                    "obligation_window_start": obligation.window_start.isoformat(),
+                    "obligation_window_end": obligation.window_end.isoformat(),
+                },
+            )
+            self.session.add(run)
+            self.session.flush()
+            created.append(run)
         return created
 
     def request_run(
@@ -181,6 +249,7 @@ class Orchestrator:
         configuration: dict[str, Any] | None = None,
         backfill_start: date | None = None,
         backfill_end: date | None = None,
+        trigger_type: TriggerType | None = None,
     ) -> OrchestrationRun:
         if (backfill_start is None) != (backfill_end is None):
             raise ValueError("backfill start and end must be supplied together")
@@ -201,7 +270,8 @@ class Orchestrator:
             site_id=site_id,
             pipeline_id=pipeline_id,
             data_source_connection_id=connection_id,
-            trigger_type=TriggerType.BACKFILL if backfill_start else TriggerType.MANUAL,
+            trigger_type=trigger_type
+            or (TriggerType.BACKFILL if backfill_start else TriggerType.MANUAL),
             status=OrchestrationStatus.PENDING,
             available_at=utcnow(),
             backfill_start=backfill_start,
@@ -228,8 +298,17 @@ class Orchestrator:
         run.status = OrchestrationStatus.PENDING
         run.trigger_type = TriggerType.RETRY
         run.available_at = utcnow()
+        run.completed_at = None
         run.error_classification = None
         run.error_detail = None
+        run.completion_outcome = None
+        if run.obligation_id:
+            obligation = self.session.get(OrchestrationObligation, run.obligation_id)
+            if obligation:
+                obligation.status = ObligationStatus.PENDING
+                obligation.next_attempt_at = run.available_at
+                obligation.failure_category = None
+                obligation.status_reason = "Operator requested a safe retry."
         self.session.commit()
         return run
 
@@ -250,6 +329,7 @@ class Worker:
 
     def run_once(self, now: datetime | None = None) -> OrchestrationRun | None:
         current = now or utcnow()
+        record_heartbeat(self.session, self.worker_id, ExecutorRole.WORKER, current)
         run = self.session.scalar(
             select(OrchestrationRun)
             .where(
@@ -281,9 +361,16 @@ class Worker:
             return run
 
         if dependency == "BLOCK":
+            run.readiness_state = ReadinessState.BLOCKED
+            run.readiness_detail = {"reason": "upstream dependency policy was not satisfied"}
             return self._block(
                 run, "DEPENDENCY_FAILURE", "upstream dependency policy was not satisfied", current
             )
+        stale_inputs = self._stale_inputs(run)
+        run.readiness_state = (
+            ReadinessState.READY_WITH_STALE_INPUT if stale_inputs else ReadinessState.READY
+        )
+        run.readiness_detail = {"stale_upstream_pipeline_ids": stale_inputs}
         if run.data_source_connection_id:
             connection = self.session.get(DataSourceConnection, run.data_source_connection_id)
             if not connection or connection.tenant_id != run.tenant_id:
@@ -315,10 +402,20 @@ class Worker:
             status=OrchestrationStatus.RUNNING,
             worker_id=self.worker_id,
             started_at=current,
+            heartbeat_at=current,
+            lease_expires_at=current + timedelta(minutes=5),
             estimated_provider_cost=run.estimated_provider_cost,
         )
         run.status = OrchestrationStatus.RUNNING
         run.started_at = run.started_at or current
+        obligation = (
+            self.session.get(OrchestrationObligation, run.obligation_id)
+            if run.obligation_id
+            else None
+        )
+        if obligation:
+            obligation.status = ObligationStatus.RUNNING
+            obligation.attempt_count = attempt_count + 1
         self.session.add(attempt)
         self.session.commit()
         try:
@@ -338,8 +435,42 @@ class Worker:
             run.currency = result.currency
             run.error_classification = None
             run.error_detail = None
+            outcome = completion_outcome(result.metadata)
+            run.completion_outcome = outcome
+            if obligation:
+                obligation.ingestion_run_id = result.ingestion_run_id
+                obligation.completion_outcome = outcome
+                if outcome in {
+                    CompletionOutcome.SUCCEEDED_COMPLETE,
+                    CompletionOutcome.SUCCEEDED_NO_DATA_EXPECTED,
+                }:
+                    obligation.status = ObligationStatus.SATISFIED
+                    obligation.satisfied_at = completed
+                    obligation.next_attempt_at = None
+                    obligation.status_reason = "Required data obligation satisfied."
+                else:
+                    profile = retry_profile(schedule_for(self.session, run), pipeline)
+                    obligation.status = ObligationStatus.PROVIDER_DATA_PENDING
+                    obligation.next_attempt_at = completed + timedelta(
+                        seconds=profile.reconciliation_delay_seconds or 21600
+                    )
+                    obligation.status_reason = str(
+                        (result.metadata or {}).get(
+                            "completion_reason", "Provider data remains pending reconciliation."
+                        )
+                    )
+                    run.status = OrchestrationStatus.RETRY_WAIT
+                    run.available_at = obligation.next_attempt_at
             self._record_cost(run, pipeline, completed)
-            self._update_freshness(run, True, completed)
+            self._update_freshness(
+                run,
+                outcome
+                in {
+                    CompletionOutcome.SUCCEEDED_COMPLETE,
+                    CompletionOutcome.SUCCEEDED_NO_DATA_EXPECTED,
+                },
+                completed,
+            )
             self.session.commit()
             return run
 
@@ -352,18 +483,59 @@ class Worker:
             completed = current
             attempt.status = OrchestrationStatus.FAILED
             attempt.completed_at = completed
+            category, provider_retry_after = classify_failure(error)
             attempt.error_classification = type(error).__name__
             attempt.error_detail = str(error)
+            attempt.failure_category = category
             run.error_classification = type(error).__name__
             run.error_detail = str(error)
-            max_attempts, delay, exponential = self._retry_policy(run)
-            if attempt.attempt_number < max_attempts:
+            run.completion_outcome = CompletionOutcome.FAILED_RETRYABLE
+            profile = retry_profile(schedule_for(self.session, run), pipeline)
+            next_attempt = retry_at(
+                profile, category, attempt.attempt_number, completed, provider_retry_after
+            )
+            schedule = schedule_for(self.session, run)
+            configured_max_attempts = (
+                schedule.max_attempts
+                if schedule
+                else int(run.configuration_json.get("max_attempts", len(profile.delays) + 1))
+            )
+            if attempt.attempt_number >= configured_max_attempts:
+                next_attempt = None
+            if schedule and completed >= (run.scheduled_for or completed) + timedelta(
+                seconds=schedule.terminal_horizon_seconds
+            ):
+                next_attempt = None
+            if next_attempt is not None:
                 run.status = OrchestrationStatus.RETRY_WAIT
-                multiplier = 2 ** (attempt.attempt_number - 1) if exponential else 1
-                run.available_at = completed + timedelta(seconds=delay * multiplier)
+                run.available_at = next_attempt
+                attempt.retry_after_at = next_attempt
+                if obligation:
+                    obligation.status = ObligationStatus.RETRY_WAIT
+                    obligation.next_attempt_at = next_attempt
+                    obligation.failure_category = category
+                    obligation.status_reason = str(error)
             else:
                 run.status = OrchestrationStatus.FAILED
                 run.completed_at = completed
+                run.completion_outcome = CompletionOutcome.FAILED_TERMINAL
+                if obligation:
+                    obligation.status = (
+                        ObligationStatus.BLOCKED
+                        if category
+                        in {
+                            FailureCategory.AUTHENTICATION_FAILED,
+                            FailureCategory.AUTHORIZATION_FAILED,
+                            FailureCategory.CONFIGURATION_ERROR,
+                            FailureCategory.RIGHTS_BLOCKED,
+                            FailureCategory.BUDGET_BLOCKED,
+                        }
+                        else ObligationStatus.FAILED
+                    )
+                    obligation.completion_outcome = CompletionOutcome.FAILED_TERMINAL
+                    obligation.failure_category = category
+                    obligation.next_attempt_at = None
+                    obligation.status_reason = str(error)
                 open_alert(self.session, run, "PIPELINE_FAILURE", "ERROR", str(error), completed)
             self._update_freshness(run, False, completed)
             self.session.commit()
@@ -377,6 +549,10 @@ class Worker:
         attempts = self.session.scalars(
             select(ExecutionAttempt).where(
                 ExecutionAttempt.status == OrchestrationStatus.RUNNING,
+                or_(
+                    ExecutionAttempt.lease_expires_at < current,
+                    ExecutionAttempt.lease_expires_at.is_(None),
+                ),
                 ExecutionAttempt.started_at < cutoff,
             )
         ).all()
@@ -389,12 +565,23 @@ class Worker:
             attempt.completed_at = current
             attempt.error_classification = "WORKER_LOST"
             attempt.error_detail = "worker attempt exceeded the recovery timeout"
+            attempt.failure_category = FailureCategory.ABANDONED_EXECUTION
+            run.completion_outcome = CompletionOutcome.ABANDONED
             max_attempts, delay, _ = self._retry_policy(run)
             run.error_classification = attempt.error_classification
             run.error_detail = attempt.error_detail
+            obligation = (
+                self.session.get(OrchestrationObligation, run.obligation_id)
+                if run.obligation_id
+                else None
+            )
             if attempt.attempt_number < max_attempts:
                 run.status = OrchestrationStatus.RETRY_WAIT
                 run.available_at = current + timedelta(seconds=delay)
+                if obligation:
+                    obligation.status = ObligationStatus.RETRY_WAIT
+                    obligation.next_attempt_at = run.available_at
+                    obligation.failure_category = FailureCategory.ABANDONED_EXECUTION
             else:
                 run.status = OrchestrationStatus.FAILED
                 run.completed_at = current
@@ -406,6 +593,10 @@ class Worker:
                     attempt.error_detail,
                     current,
                 )
+                if obligation:
+                    obligation.status = ObligationStatus.FAILED
+                    obligation.completion_outcome = CompletionOutcome.ABANDONED
+                    obligation.failure_category = FailureCategory.ABANDONED_EXECUTION
             self._update_freshness(run, False, current)
             recovered.append(run)
         self.session.commit()
@@ -468,6 +659,30 @@ class Worker:
             return "BLOCK"
         return "RUN"
 
+    def _stale_inputs(self, run: OrchestrationRun) -> list[str]:
+        upstream_ids = self.session.scalars(
+            select(PipelineDependency.upstream_pipeline_id).where(
+                PipelineDependency.tenant_id == run.tenant_id,
+                PipelineDependency.downstream_pipeline_id == run.pipeline_id,
+                or_(
+                    PipelineDependency.site_id.is_(None),
+                    PipelineDependency.site_id == run.site_id,
+                ),
+            )
+        ).all()
+        if not upstream_ids:
+            return []
+        return [
+            str(item.pipeline_id)
+            for item in self.session.scalars(
+                select(FreshnessState).where(
+                    FreshnessState.tenant_id == run.tenant_id,
+                    FreshnessState.pipeline_id.in_(upstream_ids),
+                    FreshnessState.stale_since.is_not(None),
+                )
+            ).all()
+        ]
+
     def _retry_policy(self, run: OrchestrationRun) -> tuple[int, int, bool]:
         schedule = (
             self.session.get(ScheduleDefinition, run.schedule_id) if run.schedule_id else None
@@ -491,6 +706,25 @@ class Worker:
         run.completed_at = now
         run.error_classification = classification
         run.error_detail = detail
+        category = {
+            "RIGHTS_BLOCK": FailureCategory.RIGHTS_BLOCKED,
+            "BUDGET_EXCEEDED": FailureCategory.BUDGET_BLOCKED,
+            "MALFORMED_CONFIGURATION": FailureCategory.CONFIGURATION_ERROR,
+            "TENANT_SCOPE": FailureCategory.CONFIGURATION_ERROR,
+        }.get(classification, FailureCategory.UNKNOWN_TERMINAL)
+        run.completion_outcome = {
+            FailureCategory.RIGHTS_BLOCKED: CompletionOutcome.BLOCKED_RIGHTS,
+            FailureCategory.BUDGET_BLOCKED: CompletionOutcome.BLOCKED_BUDGET,
+            FailureCategory.CONFIGURATION_ERROR: CompletionOutcome.BLOCKED_CONFIGURATION,
+        }.get(category, CompletionOutcome.FAILED_TERMINAL)
+        if run.obligation_id:
+            obligation = self.session.get(OrchestrationObligation, run.obligation_id)
+            if obligation:
+                obligation.status = ObligationStatus.BLOCKED
+                obligation.completion_outcome = run.completion_outcome
+                obligation.failure_category = category
+                obligation.status_reason = detail
+                obligation.next_attempt_at = None
         open_alert(self.session, run, classification, "ERROR", detail, now)
         self._update_freshness(run, False, now)
         self.session.commit()
@@ -553,6 +787,40 @@ class Worker:
                 occurred_at=now,
             )
         )
+
+
+def schedule_for(session: Session, run: OrchestrationRun) -> ScheduleDefinition | None:
+    return session.get(ScheduleDefinition, run.schedule_id) if run.schedule_id else None
+
+
+def record_heartbeat(
+    session: Session,
+    executor_id: str,
+    role: ExecutorRole,
+    now: datetime | None = None,
+    lease_seconds: int = 60,
+) -> ExecutorHeartbeat:
+    current = now or utcnow()
+    heartbeat = session.scalar(
+        select(ExecutorHeartbeat).where(
+            ExecutorHeartbeat.executor_id == executor_id,
+            ExecutorHeartbeat.role == role,
+        )
+    )
+    if not heartbeat:
+        heartbeat = ExecutorHeartbeat(
+            executor_id=executor_id,
+            role=role,
+            started_at=current,
+            last_heartbeat_at=current,
+            lease_expires_at=current + timedelta(seconds=lease_seconds),
+        )
+        session.add(heartbeat)
+    else:
+        heartbeat.last_heartbeat_at = current
+        heartbeat.lease_expires_at = current + timedelta(seconds=lease_seconds)
+    session.flush()
+    return heartbeat
 
 
 def evaluate_budget(

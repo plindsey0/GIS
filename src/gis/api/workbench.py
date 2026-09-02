@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import distinct, func, or_, select
@@ -25,6 +25,8 @@ from gis.models import (
     EvidencePackage,
     EvidencePackageItem,
     EvidenceQualityDimension,
+    ExecutorHeartbeat,
+    ExecutorRole,
     ExperienceMeasurementType,
     ExperienceObservation,
     Experiment,
@@ -40,7 +42,9 @@ from gis.models import (
     MarketDefinitionMember,
     MarketObservation,
     MarketParticipantObservation,
+    ObligationStatus,
     Opportunity,
+    OrchestrationObligation,
     OrchestrationRun,
     PermittedUse,
     PipelineDefinition,
@@ -628,6 +632,19 @@ class WorkbenchQueries:
                 )
             ).all()
         )
+        now = datetime.now(timezone.utc)
+        liveness = {
+            role.value: bool(
+                self.session.scalar(
+                    select(func.count())
+                    .select_from(ExecutorHeartbeat)
+                    .where(
+                        ExecutorHeartbeat.role == role, ExecutorHeartbeat.lease_expires_at >= now
+                    )
+                )
+            )
+            for role in ExecutorRole
+        }
 
         def latest_success(
             schedule: ScheduleDefinition,
@@ -654,32 +671,18 @@ class WorkbenchQueries:
 
         return {
             "items": [
-                {
-                    "schedule": row.name,
-                    "status": row.status.value,
-                    "latest_success": latest_success(row, fresh, pipeline),
-                    "stale_since": encoded(fresh.stale_since) if fresh else None,
-                    "reason": (
-                        "Intentionally disabled: this pipeline can consume paid provider credits."
-                        if row.status.value == "DISABLED" and pipeline.paid_provider
-                        else disabled_reasons.get(pipeline.key)
-                        if row.status.value == "DISABLED" and pipeline.key in disabled_reasons
-                        else "Disabled pending safe operator configuration."
-                        if row.status.value == "DISABLED"
-                        and row.configuration_json.get("requires_operator_configuration")
-                        else "Active zero-cost local processing schedule."
-                        if row.status.value == "ENABLED"
-                        and pipeline.handler_key
-                        in {"DBT", "LOCAL_PROCESSING", "COMPETITIVE_EVENTS"}
-                        else active_reasons.get(pipeline.key)
-                        if row.status.value == "ENABLED"
-                        else None
-                    ),
-                    "pipeline_key": pipeline.key,
-                    "paid_provider": pipeline.paid_provider,
-                }
+                self._pipeline_capability(
+                    row,
+                    fresh,
+                    pipeline,
+                    latest_success(row, fresh, pipeline),
+                    liveness,
+                    disabled_reasons,
+                    active_reasons,
+                )
                 for row, fresh, pipeline in schedules
             ],
+            "executor_liveness": liveness,
             "fixture_ai_provider": True,
             "production_ai_operational": False,
             "experience": {
@@ -687,6 +690,137 @@ class WorkbenchQueries:
                 "field_observations": field_count,
                 "crux_state": "DATA_AVAILABLE" if field_count else "NO_FIELD_DATA_AVAILABLE",
                 "semantics": "Lighthouse LAB observations are never represented as CrUX FIELD data.",
+            },
+        }
+
+    def _pipeline_capability(
+        self,
+        row: ScheduleDefinition,
+        fresh: FreshnessState | None,
+        pipeline: PipelineDefinition,
+        latest_success: Any,
+        liveness: dict[str, bool],
+        disabled_reasons: dict[str, str],
+        active_reasons: dict[str, str],
+    ) -> dict[str, Any]:
+        obligations = self.session.scalars(
+            select(OrchestrationObligation)
+            .where(OrchestrationObligation.schedule_id == row.id)
+            .order_by(OrchestrationObligation.due_at.desc())
+        ).all()
+        pending = [
+            item
+            for item in obligations
+            if item.status not in {ObligationStatus.SATISFIED, ObligationStatus.EXPIRED}
+        ]
+        overdue = [item for item in pending if item.due_at < datetime.now(timezone.utc)]
+        latest = obligations[0] if obligations else None
+        timeliness = (
+            "NOT_YET_DUE"
+            if not latest
+            and row.next_scheduled_at
+            and row.next_scheduled_at > datetime.now(timezone.utc)
+            else "ON_TIME"
+            if latest and latest.satisfied_at and latest.satisfied_at <= latest.due_at
+            else "RECOVERED_LATE"
+            if latest and latest.status is ObligationStatus.SATISFIED
+            else "MISSED_UNSATISFIED"
+            if latest and latest.due_at < datetime.now(timezone.utc)
+            else "DISABLED"
+            if row.status.value == "DISABLED"
+            else "NOT_YET_DUE"
+        )
+        run_count = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(OrchestrationRun)
+                .where(OrchestrationRun.schedule_id == row.id)
+            )
+            or 0
+        )
+        provider_reporting_date: Any = None
+        if pipeline.key == "gsc":
+            provider_reporting_date = self.session.scalar(
+                select(func.max(GSCSearchObservation.observed_date)).where(
+                    GSCSearchObservation.tenant_id == row.tenant_id,
+                    GSCSearchObservation.site_id == row.site_id,
+                    GSCSearchObservation.effective_end.is_(None),
+                )
+            )
+        elif pipeline.key == "ga4":
+            provider_reporting_date = self.session.scalar(
+                select(func.max(GA4EventObservation.observed_date)).where(
+                    GA4EventObservation.tenant_id == row.tenant_id,
+                    GA4EventObservation.site_id == row.site_id,
+                    GA4EventObservation.effective_end.is_(None),
+                )
+            )
+        automation_state = (
+            "DISABLED"
+            if row.status.value == "DISABLED"
+            else "EXECUTOR_OFFLINE"
+            if not liveness.get("SCHEDULER") or not liveness.get("WORKER")
+            else "RECOVERING"
+            if overdue
+            else "AWAITING_FIRST_SCHEDULED_RUN"
+            if not obligations
+            and row.next_scheduled_at
+            and row.next_scheduled_at > datetime.now(timezone.utc)
+            else "HEALTHY"
+        )
+        return {
+            "schedule": row.name,
+            "status": row.status.value,
+            "latest_success": latest_success,
+            "stale_since": encoded(fresh.stale_since) if fresh else None,
+            "reason": (
+                "Intentionally disabled: this pipeline can consume paid provider credits."
+                if row.status.value == "DISABLED" and pipeline.paid_provider
+                else disabled_reasons.get(pipeline.key)
+                if row.status.value == "DISABLED" and pipeline.key in disabled_reasons
+                else "Disabled pending safe operator configuration."
+                if row.status.value == "DISABLED"
+                and row.configuration_json.get("requires_operator_configuration")
+                else "Active zero-cost local processing schedule."
+                if row.status.value == "ENABLED"
+                and pipeline.handler_key in {"DBT", "LOCAL_PROCESSING", "COMPETITIVE_EVENTS"}
+                else active_reasons.get(pipeline.key)
+                if row.status.value == "ENABLED"
+                else None
+            ),
+            "pipeline_key": pipeline.key,
+            "paid_provider": pipeline.paid_provider,
+            "source_health": {
+                "state": (
+                    "STALE"
+                    if fresh and fresh.stale_since
+                    else "CURRENT"
+                    if latest_success
+                    else "NO_SOURCE_HISTORY"
+                ),
+                "latest_ingestion_success": latest_success,
+                "latest_provider_reporting_date": encoded(provider_reporting_date),
+                "provider_lag_days": (
+                    (datetime.now(timezone.utc).date() - provider_reporting_date).days
+                    if provider_reporting_date
+                    else None
+                ),
+                "freshness_sla_seconds": row.freshness_sla_seconds,
+                "stale_since": encoded(fresh.stale_since) if fresh else None,
+            },
+            "automation_health": {
+                "state": automation_state,
+                "next_due_at": encoded(row.next_scheduled_at),
+                "last_obligation_status": encoded(latest.status) if latest else None,
+                "last_obligation_due_at": encoded(latest.due_at) if latest else None,
+                "last_completion_outcome": encoded(latest.completion_outcome) if latest else None,
+                "timeliness": timeliness,
+                "pending_obligations": len(pending),
+                "overdue_obligations": len(overdue),
+                "orchestration_run_count": run_count,
+                "scheduler_alive": liveness.get("SCHEDULER", False),
+                "worker_alive": liveness.get("WORKER", False),
+                "retry_profile": row.retry_profile,
             },
         }
 

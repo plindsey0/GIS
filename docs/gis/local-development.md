@@ -42,8 +42,18 @@ scripts/dev-workbench.sh
 
 The launcher verifies that `gis` imports from this checkout's `src/gis`, exports the root
 environment, pins the API proxy to `http://127.0.0.1:8001`, starts the API on loopback port 8001,
-and starts the Workbench on loopback port 3001. It stops the API when the Workbench exits. Port
-8000 is intentionally not used because it can belong to another local project.
+starts the Workbench on loopback port 3001, and starts the combined scheduler/worker. All children
+are supervised: if one exits, the launcher stops its siblings. The executor writes leased scheduler
+and worker heartbeats and performs bounded, idempotent startup catch-up. Port 8000 is intentionally
+not used because it can belong to another local project.
+
+Inspect local automation without querying PostgreSQL:
+
+```bash
+gis-orchestrator liveness
+gis-orchestrator obligations --tenant vahomemath --overdue
+gis-orchestrator status --tenant vahomemath
+```
 
 Next development and production builds use separate `.next-dev` and `.next-build` directories.
 This makes `npm run build` safe while the development server is running because neither process
