@@ -152,6 +152,38 @@ def test_user_authority_and_unmeasurable_goal(session: Session) -> None:
     assert row.lifecycle is ObjectiveLifecycle.ACTIVE
 
 
+def test_metric_recommendations_are_deterministic_and_availability_aware(
+    session: Session,
+) -> None:
+    service, _, _ = context(session)
+    result = service.recommend_metrics(ObjectiveType.GROWTH)
+    assert result["policy_version"] == "goal-metric-policy-v1"
+    assert result["method"] == "DETERMINISTIC_POLICY"
+    assert [item["key"] for item in result["recommended"]] == [
+        "GA4_SESSIONS",
+        "GA4_USERS",
+        "GSC_CLICKS",
+        "GSC_IMPRESSIONS",
+    ]
+    assert all(item["metric_capability"] == "SUPPORTED" for item in result["recommended"])
+    assert "MONTHLY_REVENUE" not in {item["key"] for item in result["recommended"]}
+
+
+def test_supported_binding_without_value_is_insufficient_data(session: Session) -> None:
+    service, objective = goal(session)
+    target = service.create_target(
+        objective=objective,
+        metric=service.ensure_registry()["GSC_IMPRESSIONS"],
+        family=TargetFamily.ABSOLUTE_METRIC,
+        direction=TargetDirection.AT_LEAST,
+        target_value=Decimal("4000"),
+        actor="operator",
+    )
+    assert target.measurement_health is ObjectiveMeasurementHealth.INSUFFICIENT_DATA
+    assert target.current_value is None
+    assert objective.measurement_health is ObjectiveMeasurementHealth.INSUFFICIENT_DATA
+
+
 def test_dag_allows_multiple_parents_and_rejects_cycles(session: Session) -> None:
     service, a = goal(session, name="A")
     _, b = goal(session, name="B")

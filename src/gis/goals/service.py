@@ -161,6 +161,66 @@ METRICS: dict[str, dict[str, Any]] = {
     },
 }
 
+SOURCE_LABELS = {
+    "GSC": "Google Search Console",
+    "GA4": "Google Analytics 4",
+    "SERP": "SERP observations",
+    "MARKET_INTELLIGENCE": "GIS market intelligence",
+    "CRUX": "Chrome UX Report",
+    "FINANCIAL": "First-party financial data",
+    "GIS_DETERMINISTIC": "GIS deterministic analysis",
+}
+
+METRIC_DISPLAY_NAMES = {
+    "GSC_IMPRESSIONS": "Search impressions",
+    "GSC_CLICKS": "Search clicks",
+    "GSC_CTR": "Organic click-through rate",
+    "GSC_POSITION": "Average search position",
+    "GA4_SESSIONS": "Website sessions",
+    "GA4_USERS": "Website users",
+    "QUERY_RANK": "Query rank",
+}
+
+RECOMMENDATION_POLICY_VERSION = "goal-metric-policy-v1"
+GOAL_METRIC_POLICY: dict[str, list[tuple[str, str]]] = {
+    "GROWTH": [
+        ("GA4_SESSIONS", "Measures visits and is a direct indicator of audience activity."),
+        ("GA4_USERS", "Measures the number of people using the site."),
+        ("GSC_CLICKS", "Measures visits earned directly from Google Search."),
+        ("GSC_IMPRESSIONS", "Measures how often the site appears in Google Search."),
+    ],
+    "CUSTOMER_ACQUISITION": [
+        ("GA4_USERS", "Tracks people reached while a customer conversion measure is unavailable."),
+        (
+            "GA4_SESSIONS",
+            "Tracks qualified traffic while a customer conversion measure is unavailable.",
+        ),
+    ],
+    "LEAD_GENERATION": [
+        (
+            "GA4_SESSIONS",
+            "Tracks traffic that can lead to inquiries while a lead measure is unavailable.",
+        ),
+        ("GSC_CLICKS", "Tracks visits earned from search while a lead measure is unavailable."),
+    ],
+    "USAGE": [
+        ("GA4_USERS", "Measures the people actively using the site."),
+        ("GA4_SESSIONS", "Measures repeat activity on the site."),
+    ],
+    "MARKET_POSITION": [
+        ("SEARCH_VISIBILITY_SHARE", "Measures visibility relative to the defined search market."),
+        ("QUERY_RANK", "Measures position for an individual tracked query."),
+        ("GSC_IMPRESSIONS", "Measures the site's exposure in Google Search."),
+    ],
+    "RETENTION": [
+        ("GA4_USERS", "Provides an audience measure, but does not by itself prove retention.")
+    ],
+    "EFFICIENCY": [("GSC_CTR", "Measures how efficiently search visibility becomes visits.")],
+    "REVENUE": [("MONTHLY_REVENUE", "Directly measures money generated in a month.")],
+    "PROFITABILITY": [],
+    "CUSTOM": [],
+}
+
 
 class GoalService:
     def __init__(self, session: Session):
@@ -229,6 +289,60 @@ class GoalService:
             self.session.add(rule)
         self.session.flush()
         return rows
+
+    def recommend_metrics(self, objective_type: ObjectiveType) -> dict[str, Any]:
+        """Return explainable planning choices; this never creates an objective or target."""
+        metrics = self.ensure_registry()
+        policy = GOAL_METRIC_POLICY.get(objective_type.value, [])
+        recommended: list[dict[str, Any]] = []
+        policy_keys = {key for key, _ in policy}
+        for rank, (key, reason) in enumerate(policy, start=1):
+            metric = metrics[key]
+            if metric.currently_measurable and not metric.derived:
+                recommended.append(self.metric_choice(metric, reason=reason, rank=rank))
+        available = [
+            self.metric_choice(metric)
+            for key, metric in metrics.items()
+            if metric.currently_measurable and not metric.derived and key not in policy_keys
+        ]
+        return {
+            "goal_type": objective_type.value,
+            "policy_version": RECOMMENDATION_POLICY_VERSION,
+            "method": "DETERMINISTIC_POLICY",
+            "recommended": recommended,
+            "available": sorted(available, key=lambda item: (item["domain"], item["name"])),
+            "explanation": (
+                "Recommendations use the selected business outcome and GIS measurement registry. "
+                "They are measurement choices, not forecasts or strategic decompositions."
+            ),
+        }
+
+    @staticmethod
+    def metric_choice(
+        metric: MetricDefinition, *, reason: Optional[str] = None, rank: Optional[int] = None
+    ) -> dict[str, Any]:
+        return {
+            "id": str(metric.id),
+            "key": metric.key,
+            "name": METRIC_DISPLAY_NAMES.get(metric.key, metric.name),
+            "description": metric.description,
+            "domain": metric.domain,
+            "unit": metric.unit,
+            "directionality": metric.directionality,
+            "authoritative_source": metric.source_system,
+            "source_name": SOURCE_LABELS.get(metric.source_system, metric.source_system),
+            "metric_capability": "SUPPORTED" if metric.currently_measurable else "UNSUPPORTED",
+            "currently_measurable": metric.currently_measurable,
+            "derived": metric.derived,
+            "recommendation_rank": rank,
+            "recommendation_reason": reason,
+            "target_suggestion_policy": (
+                "PERCENTAGE_PLANNING_OPTIONS"
+                if metric.unit in {"count", "visitors", "currency"}
+                and metric.directionality == "HIGHER_IS_BETTER"
+                else "CUSTOM_ONLY"
+            ),
+        }
 
     def _objective(
         self, objective_id: uuid.UUID, tenant_id: uuid.UUID, site_id: uuid.UUID
@@ -479,7 +593,7 @@ class GoalService:
                 "metric_key": metric.key,
                 "authoritative_source": metric.source_system,
             },
-            measurement_health=ObjectiveMeasurementHealth.MEASURABLE
+            measurement_health=ObjectiveMeasurementHealth.INSUFFICIENT_DATA
             if metric.currently_measurable
             else ObjectiveMeasurementHealth.NOT_YET_MEASURABLE,
             approval_state=approval,
@@ -487,6 +601,13 @@ class GoalService:
             suggested_value=suggested_value,
         )
         self.session.add(target)
+        # A supported binding without a resolved value is not "unmeasurable". Keep the
+        # persisted health honest while presentation exposes capability and binding separately.
+        objective.measurement_health = (
+            ObjectiveMeasurementHealth.INSUFFICIENT_DATA
+            if metric.currently_measurable
+            else ObjectiveMeasurementHealth.NOT_YET_MEASURABLE
+        )
         self._audit(
             objective,
             "TARGET_CREATED",

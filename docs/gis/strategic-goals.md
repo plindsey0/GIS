@@ -15,7 +15,7 @@ Alignment is a directed acyclic graph. `objective_relationship` supports many-to
 - `STATISTICAL` and `AI_PROPOSED` are forward-compatible provenance labels only; database constraints prevent them becoming active authoritative objectives.
 - A user override preserves both the calculated suggestion and the selected value, with rationale and audit history.
 
-Lifecycle, progress, measurement health, decomposition state, and approval are independent fields. An active goal can remain `NOT_YET_MEASURABLE`; a stale target can have `UNKNOWN` progress; a valid goal can have `BLOCKED_MISSING_DATA` decomposition.
+Lifecycle, progress, measurement health, decomposition state, and approval are independent fields. Measurement presentation additionally separates four questions: whether GIS supports the metric, whether the goal has an authoritative source binding, whether a current value exists, and whether that value is usable and fresh. A supported binding with no value is `INSUFFICIENT_DATA`, not a claim that the metric is unavailable. A stale target can have `UNKNOWN` progress; a valid goal can have `BLOCKED_MISSING_DATA` decomposition.
 
 ## Persisted model
 
@@ -44,9 +44,9 @@ Identical parent, rule version, and input measurement identity returns the same 
 
 ## API and operator workflow
 
-The `/api/v1/goals` API supports scoped creation, listing, detail, update, activation, pause, archive, approval/rejection, targets, relationships, decomposition/recalculation, metric discovery, target measurements, and the objective map. Mutations require review or approval roles and emit audit records. There is no destructive goal delete route.
+The `/api/v1/goals` API supports scoped creation, listing, detail, update, activation, pause, archive, approval/rejection, targets, relationships, decomposition/recalculation, metric discovery, target measurements, and the objective map. `GET /api/v1/goals/metrics?goal_type=…` applies the versioned `goal-metric-policy-v1` policy to return explainable, availability-aware measurement recommendations. These recommendations only help the operator choose a measure; they never create a goal or claim that a target is achievable. Mutations require review or approval roles and emit audit records. There is no destructive goal delete route.
 
-The `/goals` Workbench section provides the real empty state, six-step Business Goal creation, measurement and decomposition readiness, goal detail, “Why this target?” explanations, approvals, history, and a clickable objective map. The CLI entry point is `gis-goals`.
+The `/goals` Workbench section is permanently available in primary navigation. Its guided six-step flow starts with plain-language business intent, recommends suitable measures, presents only supported site scope, separates measurement capability from current data, explains decomposition without requiring internal enum knowledge, and ends with distinct draft and activation decisions. Goal detail presents strategic summary, progress, measurement, decomposition, alignment, target authority, and history without exposing database identifiers. The CLI entry point remains `gis-goals`.
 
 No Business Goals are seeded. Tests use transaction-isolated synthetic financial fixtures only.
 

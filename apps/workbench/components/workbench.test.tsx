@@ -22,11 +22,15 @@ describe("GIS Workbench", () => {
   });
 
   it("renders the six-step goal workflow with honest measurement readiness", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => answer({items:[{key:"MONTHLY_REVENUE",name:"Monthly revenue",unit:"currency",domain:"FINANCIAL",authoritative_source:"FINANCIAL",currently_measurable:false,description:"Future metric"}]})));
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => String(input).includes("/sites")
+      ? answer([{id:"site-1",name:"VAHomeMath"}])
+      : answer({recommended:[{key:"GA4_SESSIONS",name:"Sessions",unit:"count",domain:"TRAFFIC",authoritative_source:"GA4",source_name:"Google Analytics 4",currently_measurable:true,derived:false,description:"Sessions",recommendation_reason:"Direct activity measure"}],available:[],policy_version:"goal-metric-policy-v1",method:"DETERMINISTIC_POLICY",explanation:"Policy"})));
     render(<GoalCreate/>);
-    expect(await screen.findByText("Define authoritative business intent")).toBeInTheDocument();
-    expect(screen.getByText("Measurement check")).toBeInTheDocument();
+    expect(await screen.findByText("What are you trying to achieve?")).toBeInTheDocument();
+    expect(screen.getByText("Measurement Check")).toBeInTheDocument();
     expect(screen.getByText("Decomposition")).toBeInTheDocument();
+    expect(screen.queryByRole("button", {name:"Back"})).not.toBeInTheDocument();
+    expect(screen.getByText("Customer Acquisition")).toBeInTheDocument();
   });
 
   it("renders an empty persisted objective map without synthetic nodes", async () => {

@@ -310,7 +310,17 @@ def goals_map(
 
 
 @router.get("/goals/metrics", dependencies=[Depends(require_role(Role.READ))])
-def goal_metrics(session: Session = Depends(database)) -> dict[str, Any]:
+def goal_metrics(
+    goal_type: Optional[str] = None, session: Session = Depends(database)
+) -> dict[str, Any]:
+    service = GoalService(session)
+    if goal_type:
+        try:
+            result = service.recommend_metrics(ObjectiveType(goal_type))
+        except ValueError as exc:
+            raise ApiError(422, "INVALID_GOAL_TYPE", "Unsupported business goal type.") from exc
+        session.commit()
+        return result
     rows = list(
         session.scalars(
             select(MetricDefinition)
@@ -354,6 +364,17 @@ def goal_detail(
     targets = list(
         session.scalars(select(ObjectiveTarget).where(ObjectiveTarget.objective_id == row.id))
     )
+    metric_ids = [target.metric_definition_id for target in targets]
+    metrics = (
+        {
+            metric.id: metric
+            for metric in session.scalars(
+                select(MetricDefinition).where(MetricDefinition.id.in_(metric_ids))
+            )
+        }
+        if metric_ids
+        else {}
+    )
     derivations = list(
         session.scalars(
             select(ObjectiveDerivation)
@@ -383,8 +404,31 @@ def goal_detail(
         "resource_type": "goal",
         "data": {
             **row_data(row),
+            "measurement_summary": {
+                "metric_capability": (
+                    "SUPPORTED"
+                    if any(metrics[t.metric_definition_id].currently_measurable for t in targets)
+                    else "UNSUPPORTED"
+                )
+                if targets
+                else "NOT_SELECTED",
+                "binding": "BOUND" if targets else "NOT_BOUND",
+                "current_measurement": "AVAILABLE"
+                if any(t.current_value is not None for t in targets)
+                else "AWAITING_MEASUREMENT",
+                "health": row.measurement_health.value,
+            },
             "targets": [
-                {**row_data(target), "progress": GoalService.progress(target)} for target in targets
+                {
+                    **row_data(target),
+                    "metric": GoalService.metric_choice(metrics[target.metric_definition_id]),
+                    "progress": GoalService.progress(target),
+                    "binding_status": "BOUND" if target.measurement_binding_json else "NOT_BOUND",
+                    "current_measurement_status": "AVAILABLE"
+                    if target.current_value is not None
+                    else "AWAITING_MEASUREMENT",
+                }
+                for target in targets
             ],
             "derivations": [row_data(item) for item in derivations],
             "history": [row_data(item) for item in history],

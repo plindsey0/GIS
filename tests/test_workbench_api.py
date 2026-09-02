@@ -121,6 +121,25 @@ def test_goal_empty_create_detail_map_and_role_boundary(
     assert isolated.status_code == 404
 
 
+def test_goal_metric_recommendations_explain_measurement_choices(
+    client: TestClient, session: Session
+) -> None:
+    seed(session, hostname="vahomemath.test")
+    tenant = session.scalar(select(Tenant).where(Tenant.slug == "vahomemath"))
+    site = session.scalar(select(Site).where(Site.slug == "vahomemath"))
+    assert tenant and site
+    response = client.get(
+        "/api/v1/goals/metrics",
+        params={**params(tenant.id, site.id), "goal_type": "GROWTH"},
+        headers=headers(),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["method"] == "DETERMINISTIC_POLICY"
+    assert payload["recommended"][0]["recommendation_reason"]
+    assert payload["recommended"][0]["source_name"] == "Google Analytics 4"
+
+
 def test_opportunity_inbox_filters_pagination_and_detail(
     client: TestClient, session: Session
 ) -> None:
