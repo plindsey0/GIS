@@ -17,6 +17,7 @@ from gis.models import (
     AlertStatus,
     CostBudget,
     CostLedgerEntry,
+    ExecutionAttempt,
     ExecutorHeartbeat,
     ExecutorRole,
     FreshnessState,
@@ -249,25 +250,66 @@ def run(arguments: list[str] | None = None) -> int:
                         args.limit
                     )
                 ).all()
-                emit(
-                    [
+                now = datetime.now(timezone.utc)
+                payload = []
+                for item in rows:
+                    linked_run = session.scalar(
+                        select(OrchestrationRun)
+                        .where(OrchestrationRun.obligation_id == item.id)
+                        .order_by(OrchestrationRun.requested_at.desc())
+                        .limit(1)
+                    )
+                    pipeline = session.get(PipelineDefinition, item.pipeline_id)
+                    schedule = session.get(ScheduleDefinition, item.schedule_id)
+                    attempt_triggers = (
+                        list(
+                            session.scalars(
+                                select(ExecutionAttempt.trigger_type)
+                                .where(ExecutionAttempt.orchestration_run_id == linked_run.id)
+                                .order_by(ExecutionAttempt.attempt_number)
+                            )
+                        )
+                        if linked_run
+                        else []
+                    )
+                    completion = item.satisfied_at
+                    timeliness = (
+                        "ON_TIME"
+                        if completion and completion <= item.due_at
+                        else "RECOVERED_LATE"
+                        if item.status is ObligationStatus.SATISFIED
+                        else "MISSED_UNSATISFIED"
+                        if item.due_at < now
+                        else "NOT_YET_DUE"
+                    )
+                    payload.append(
                         {
                             "id": item.id,
-                            "pipeline_id": item.pipeline_id,
-                            "schedule_id": item.schedule_id,
+                            "pipeline": pipeline.key if pipeline else None,
+                            "schedule": schedule.name if schedule else None,
                             "window_start": item.window_start,
                             "window_end": item.window_end,
                             "due_at": item.due_at,
+                            "created_at": item.created_at,
+                            "completed_at": completion,
+                            "lateness_seconds": max(
+                                0.0, ((completion or now) - item.due_at).total_seconds()
+                            ),
+                            "timeliness": timeliness,
                             "status": item.status,
                             "completion_outcome": item.completion_outcome,
                             "attempt_count": item.attempt_count,
                             "next_attempt_at": item.next_attempt_at,
                             "failure_category": item.failure_category,
+                            "readiness": linked_run.readiness_state if linked_run else None,
+                            "trigger": linked_run.trigger_type if linked_run else None,
+                            "attempt_triggers": attempt_triggers,
+                            "orchestration_run_id": linked_run.id if linked_run else None,
+                            "ingestion_run_id": item.ingestion_run_id,
                             "reason": item.status_reason,
                         }
-                        for item in rows
-                    ]
-                )
+                    )
+                emit(payload)
                 return 0
             if args.command == "schedule":
                 pipeline = _pipeline(session, args.pipeline)

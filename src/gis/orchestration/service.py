@@ -423,7 +423,7 @@ class Worker:
             result = handler(self.session, run)
             if result.actual_cost < 0:
                 raise ValueError("actual cost cannot be negative")
-            completed = current
+            completed = now or utcnow()
             attempt.status = OrchestrationStatus.SUCCEEDED
             attempt.completed_at = completed
             attempt.ingestion_run_id = result.ingestion_run_id
@@ -480,7 +480,7 @@ class Worker:
             refreshed_attempt = self.session.get(ExecutionAttempt, attempt.id)
             assert run and refreshed_attempt
             attempt = refreshed_attempt
-            completed = current
+            completed = now or utcnow()
             attempt.status = OrchestrationStatus.FAILED
             attempt.completed_at = completed
             category, provider_retry_after = classify_failure(error)

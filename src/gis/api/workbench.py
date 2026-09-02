@@ -760,6 +760,8 @@ class WorkbenchQueries:
             if row.status.value == "DISABLED"
             else "EXECUTOR_OFFLINE"
             if not liveness.get("SCHEDULER") or not liveness.get("WORKER")
+            else "PROVIDER_DATA_PENDING"
+            if latest and latest.status is ObligationStatus.PROVIDER_DATA_PENDING
             else "RECOVERING"
             if overdue
             else "AWAITING_FIRST_SCHEDULED_RUN"

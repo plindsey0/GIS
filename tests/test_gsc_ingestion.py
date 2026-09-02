@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from gis.api.system import SystemQueries
 from gis.integrations.gsc.cli import configure_connection
 from gis.integrations.gsc.client import GSCClient
 from gis.integrations.gsc.config import CollectionGrain
@@ -239,6 +240,15 @@ def test_provider_revision_closes_old_version_and_appends_new(session: Session) 
     assert versions[0].effective_end is not None
     assert versions[1].effective_end is None
     assert versions[1].clicks == Decimal("26.000000")
+    site = session.get(Site, connection.site_id)
+    assert site is not None
+    source = session.get(DataSource, connection.data_source_id)
+    assert source is not None
+    counts = SystemQueries(session).source_summary(source, connection.tenant_id, site.id)
+    assert counts is not None
+    assert counts["stored_source_records"] == 2
+    assert counts["effective_observations"] == 1
+    assert counts["superseded_revision_records"] == 1
 
 
 def test_backfill_chunks_each_day_and_rerun_is_safe(session: Session) -> None:

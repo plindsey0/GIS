@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from gis.api.system import SystemQueries
 from gis.models import (
     CompletionOutcome,
     ExecutorHeartbeat,
@@ -174,3 +175,53 @@ def test_executor_heartbeat_expires_explicitly(session: Session) -> None:
     session.commit()
     assert refreshed.id == heartbeat.id
     assert session.scalar(select(func.count()).select_from(ExecutorHeartbeat)) == 1
+
+
+def test_recovered_late_is_currently_healthy_but_retained_in_history(session: Session) -> None:
+    now = datetime.now(timezone.utc)
+    tenant, site, pipeline, _ = reliability_scope(session, next_due=now - timedelta(hours=1))
+    run = Orchestrator(session).enqueue_due(now)[0]
+    completed = Worker(
+        session, {"FIXTURE": lambda _session, _run: PipelineResult()}, "late-worker"
+    ).run_once(now)
+    record_heartbeat(session, "late-runtime", ExecutorRole.SCHEDULER, now, 3600)
+    record_heartbeat(session, "late-runtime", ExecutorRole.WORKER, now, 3600)
+    session.commit()
+
+    assert completed and run.trigger_type is TriggerType.CATCH_UP
+    summary = SystemQueries(session).pipeline_summary(pipeline, tenant.id, site.id)
+    detail = SystemQueries(session).pipeline_detail(pipeline.key, tenant.id, site.id)
+    assert summary["health"] == "HEALTHY"
+    assert detail["latest_obligation"]["timeliness"] == "RECOVERED_LATE"
+    assert detail["latest_obligation"]["lateness_seconds"] >= 3600
+    assert detail["reliability"]["recovered_late_obligations"] == 1
+
+
+def test_future_first_obligation_is_neutral_awaiting_state(session: Session) -> None:
+    now = datetime.now(timezone.utc)
+    tenant, site, pipeline, _ = reliability_scope(session, next_due=now + timedelta(days=1))
+    record_heartbeat(session, "future-runtime", ExecutorRole.SCHEDULER, now, 3600)
+    record_heartbeat(session, "future-runtime", ExecutorRole.WORKER, now, 3600)
+    session.commit()
+
+    payload = SystemQueries(session).pipelines(tenant.id, site.id)
+    item = next(row for row in payload["items"] if row["key"] == pipeline.key)
+    assert item["health"] == "AWAITING_FIRST_SCHEDULED_RUN"
+    assert payload["health_counts"]["AWAITING_FIRST_SCHEDULED_RUN"] >= 1
+
+
+def test_real_worker_completion_timestamp_follows_handler_work(session: Session) -> None:
+    reliability_scope(session, next_due=datetime.now(timezone.utc) - timedelta(minutes=1))
+    run = Orchestrator(session).enqueue_due()[0]
+    handler_finished: datetime | None = None
+
+    def handler(_session: Session, _run: object) -> PipelineResult:
+        nonlocal handler_finished
+        handler_finished = datetime.now(timezone.utc)
+        return PipelineResult()
+
+    completed = Worker(session, {"FIXTURE": handler}, "clock-worker").run_once()
+    assert completed and completed.completed_at and handler_finished
+    assert completed.completed_at >= handler_finished
+    obligation = session.get(OrchestrationObligation, run.obligation_id)
+    assert obligation and obligation.satisfied_at == completed.completed_at

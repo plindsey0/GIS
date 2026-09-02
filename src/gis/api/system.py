@@ -21,8 +21,12 @@ from gis.models import (
     DataSource,
     DataSourceConnection,
     ExecutionAttempt,
+    ExecutorHeartbeat,
     FreshnessState,
+    GSCSearchObservation,
     IngestionRun,
+    ObligationStatus,
+    OrchestrationObligation,
     OrchestrationRun,
     PipelineDefinition,
     PipelineDependency,
@@ -88,7 +92,10 @@ def _expected_occurrences(
 
 
 def _reliability(
-    schedule: Optional[ScheduleDefinition], runs: list[OrchestrationRun], now: datetime
+    schedule: Optional[ScheduleDefinition],
+    runs: list[OrchestrationRun],
+    obligations: list[OrchestrationObligation],
+    now: datetime,
 ) -> dict[str, Any]:
     if not schedule or schedule.status.value != "ENABLED":
         return {
@@ -98,16 +105,19 @@ def _reliability(
             "attempted_runs": len(runs),
             "missed_runs": 0,
         }
-    since = max(now - timedelta(days=30), schedule.created_at)
+    since = now - timedelta(days=30)
     recent = [run for run in runs if run.requested_at >= since]
-    expected = _expected_occurrences(schedule, since, now)
-    tolerance = timedelta(minutes=max(15, min(schedule.retry_delay_seconds, 120 * 60) // 60))
-    missed = sum(
-        not any(
-            abs((run.scheduled_for or run.requested_at) - occurrence) <= tolerance for run in recent
-        )
-        for occurrence in expected
-    )
+    recent_obligations = [
+        item for item in obligations if item.due_at >= since and item.due_at <= now
+    ]
+    satisfied = [item for item in recent_obligations if item.status is ObligationStatus.SATISFIED]
+    on_time = [item for item in satisfied if item.satisfied_at and item.satisfied_at <= item.due_at]
+    recovered_late = [
+        item for item in satisfied if item.satisfied_at and item.satisfied_at > item.due_at
+    ]
+    unsatisfied = [
+        item for item in recent_obligations if item.status is not ObligationStatus.SATISFIED
+    ]
     succeeded = sum(run.status.value == "SUCCEEDED" for run in recent)
     failed = sum(run.status.value in {"FAILED", "PARTIAL"} for run in recent)
     completed = [run for run in recent if run.started_at and run.completed_at]
@@ -116,23 +126,27 @@ def _reliability(
         for run in completed
         if run.completed_at and run.started_at
     ]
-    insufficient = len(expected) < 2
+    insufficient = len(recent_obligations) < 2
     return {
         "state": "INSUFFICIENT_HISTORY"
         if insufficient
         else "RELIABLE"
-        if not failed and not missed
+        if not failed and not unsatisfied and not recovered_late
         else "DEGRADED",
         "history": "INSUFFICIENT_HISTORY" if insufficient else "AVAILABLE",
         "period_days": 30,
-        "expected_runs": len(expected),
+        "expected_runs": len(recent_obligations),
+        "expected_obligations": len(recent_obligations),
         "attempted_runs": len(recent),
         "successful_runs": succeeded,
         "failed_runs": failed,
-        "missed_runs": missed,
+        "on_time_obligations": len(on_time),
+        "recovered_late_obligations": len(recovered_late),
+        "unsatisfied_obligations": len(unsatisfied),
+        "missed_runs": len(unsatisfied),
         "success_rate": succeeded / len(recent) if recent else None,
         "median_duration_seconds": statistics.median(durations) if durations else None,
-        "missed_definition": f"Enabled-schedule occurrence with no orchestration attempt within ±{int(tolerance.total_seconds() / 60)} minutes. Disabled schedules never accrue misses.",
+        "missed_definition": "A due data obligation that remains unsatisfied. Recovered-late obligations remain visible in historical reliability.",
     }
 
 
@@ -140,9 +154,30 @@ def _health(
     schedule: Optional[ScheduleDefinition],
     freshness: Optional[FreshnessState],
     runs: list[OrchestrationRun],
+    obligations: list[OrchestrationObligation],
+    executors_alive: bool,
+    now: datetime,
 ) -> tuple[str, str]:
     if schedule and schedule.status.value == "DISABLED":
         return "DISABLED", "The schedule is intentionally disabled."
+    if schedule and not executors_alive:
+        return "EXECUTOR_OFFLINE", "The scheduler or worker heartbeat is stale or absent."
+    overdue = [
+        item
+        for item in obligations
+        if item.due_at < now
+        and item.status not in {ObligationStatus.SATISFIED, ObligationStatus.EXPIRED}
+    ]
+    if overdue:
+        if any(item.status is ObligationStatus.PROVIDER_DATA_PENDING for item in overdue):
+            return "PROVIDER_DATA_PENDING", "A due obligation is waiting for provider data."
+        return "MISSED_UNSATISFIED", f"{len(overdue)} due obligation(s) remain unsatisfied."
+    latest_obligation = obligations[0] if obligations else None
+    if latest_obligation and latest_obligation.status in {
+        ObligationStatus.BLOCKED,
+        ObligationStatus.FAILED,
+    }:
+        return "FAILING", latest_obligation.status_reason or "Latest obligation needs intervention."
     if freshness and freshness.consecutive_failures:
         return "FAILING", f"{freshness.consecutive_failures} consecutive execution failure(s)."
     latest = runs[0] if runs else None
@@ -150,8 +185,18 @@ def _health(
         return "FAILING", f"Latest attempt ended {latest.status.value}."
     if freshness and freshness.stale_since:
         return "STALE", "The latest successful output exceeds its configured freshness window."
+    if (
+        schedule
+        and not obligations
+        and schedule.next_scheduled_at
+        and schedule.next_scheduled_at > now
+    ):
+        return (
+            "AWAITING_FIRST_SCHEDULED_RUN",
+            "No scheduled obligation has reached its due time yet.",
+        )
     if not runs and not (freshness and freshness.last_successful_at):
-        return "INSUFFICIENT_HISTORY", "No completed operational history is available."
+        return "INSUFFICIENT_OPERATIONAL_HISTORY", "No completed operational history is available."
     return "HEALTHY", "Latest recorded execution succeeded and no staleness is recorded."
 
 
@@ -188,6 +233,7 @@ class SystemQueries:
     def pipeline_summary(
         self, pipeline: PipelineDefinition, tenant_id: uuid.UUID, site_id: uuid.UUID
     ) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
         schedule = self.session.scalar(
             select(ScheduleDefinition)
             .where(
@@ -219,7 +265,24 @@ class SystemQueries:
                 .limit(100)
             )
         )
-        health, reason = _health(schedule, freshness, runs)
+        obligations = (
+            list(
+                self.session.scalars(
+                    select(OrchestrationObligation)
+                    .where(OrchestrationObligation.schedule_id == schedule.id)
+                    .order_by(OrchestrationObligation.due_at.desc())
+                    .limit(100)
+                )
+            )
+            if schedule
+            else []
+        )
+        heartbeat_rows = list(self.session.scalars(select(ExecutorHeartbeat)))
+        executors_alive = all(
+            any(item.role.value == role and item.lease_expires_at >= now for item in heartbeat_rows)
+            for role in ("SCHEDULER", "WORKER")
+        )
+        health, reason = _health(schedule, freshness, runs, obligations, executors_alive, now)
         return {
             "key": pipeline.key,
             "label": pipeline.name,
@@ -244,6 +307,7 @@ class SystemQueries:
                 next((run.completed_at for run in runs if run.status.value == "SUCCEEDED"), None)
             ),
             "run_count": len(runs),
+            "obligation_count": len(obligations),
             "href": f"/system/pipelines/{pipeline.key}",
         }
 
@@ -275,6 +339,23 @@ class SystemQueries:
                 )
                 .order_by(OrchestrationRun.requested_at.desc())
                 .limit(500)
+            )
+        )
+        obligations = (
+            list(
+                self.session.scalars(
+                    select(OrchestrationObligation)
+                    .where(OrchestrationObligation.schedule_id == schedule.id)
+                    .order_by(OrchestrationObligation.due_at.desc())
+                    .limit(500)
+                )
+            )
+            if schedule
+            else []
+        )
+        heartbeats = list(
+            self.session.scalars(
+                select(ExecutorHeartbeat).order_by(ExecutorHeartbeat.last_heartbeat_at.desc())
             )
         )
         upstream_alias = aliased(PipelineDefinition)
@@ -370,7 +451,39 @@ class SystemQueries:
                     for item in downstream
                 ],
             },
-            "reliability": _reliability(schedule, runs, now),
+            "automation": {
+                "schedule_status": schedule.status.value if schedule else "NOT_CONFIGURED",
+                "cadence": cron_text(schedule.cron_expression, schedule.timezone)
+                if schedule
+                else None,
+                "retry_profile": schedule.retry_profile if schedule else None,
+                "next_due_at": encoded(schedule.next_scheduled_at) if schedule else None,
+                "pending_obligations": sum(
+                    item.status not in {ObligationStatus.SATISFIED, ObligationStatus.EXPIRED}
+                    for item in obligations
+                ),
+                "overdue_obligations": sum(
+                    item.due_at < now
+                    and item.status not in {ObligationStatus.SATISFIED, ObligationStatus.EXPIRED}
+                    for item in obligations
+                ),
+                "executors": [
+                    {
+                        "role": item.role.value,
+                        "state": "RUNNING" if item.lease_expires_at >= now else "OFFLINE",
+                        "last_heartbeat_at": encoded(item.last_heartbeat_at),
+                        "lease_expires_at": encoded(item.lease_expires_at),
+                    }
+                    for item in heartbeats
+                ],
+            },
+            "latest_obligation": self._obligation_summary(obligations[0], now)
+            if obligations
+            else {
+                "timeliness": "NOT_YET_DUE",
+                "reason": "No scheduled obligation has reached its due time yet.",
+            },
+            "reliability": _reliability(schedule, runs, obligations, now),
             "volume": {
                 "total_runs": len(runs),
                 "successful_runs": sum(run.status.value == "SUCCEEDED" for run in runs),
@@ -388,6 +501,46 @@ class SystemQueries:
                 "budgets": [row_data(item) for item in budgets],
             },
             "runs": [self.run_summary(run, pipeline) for run in runs[:100]],
+        }
+
+    def _obligation_summary(
+        self, obligation: OrchestrationObligation, now: datetime
+    ) -> dict[str, Any]:
+        run = self.session.scalar(
+            select(OrchestrationRun)
+            .where(OrchestrationRun.obligation_id == obligation.id)
+            .order_by(OrchestrationRun.requested_at.desc())
+            .limit(1)
+        )
+        completion = obligation.satisfied_at
+        timeliness = (
+            "ON_TIME"
+            if completion and completion <= obligation.due_at
+            else "RECOVERED_LATE"
+            if obligation.status is ObligationStatus.SATISFIED
+            else "MISSED_UNSATISFIED"
+            if obligation.due_at < now
+            else "NOT_YET_DUE"
+        )
+        return {
+            "status": obligation.status.value,
+            "reporting_window_start": encoded(obligation.window_start),
+            "reporting_window_end": encoded(obligation.window_end),
+            "preferred_due_at": encoded(obligation.due_at),
+            "created_at": encoded(obligation.created_at),
+            "completed_at": encoded(completion),
+            "timeliness": timeliness,
+            "lateness_seconds": max(0.0, (completion - obligation.due_at).total_seconds())
+            if completion
+            else max(0.0, (now - obligation.due_at).total_seconds()),
+            "attempts": obligation.attempt_count,
+            "completion_outcome": encoded(obligation.completion_outcome),
+            "failure_category": encoded(obligation.failure_category),
+            "reason": obligation.status_reason,
+            "trigger": run.trigger_type.value if run else None,
+            "readiness": run.readiness_state.value if run else None,
+            "run": f"/system/runs/{run.id}" if run else None,
+            "ingestion_linked": bool(obligation.ingestion_run_id),
         }
 
     def _ingestion(self, run: OrchestrationRun) -> Optional[IngestionRun]:
@@ -415,6 +568,7 @@ class SystemQueries:
             "pipeline_name": pipeline.name if pipeline else None,
             "status": run.status.value,
             "trigger": run.trigger_type.value,
+            "timeliness": self._run_timeliness(run),
             "requested_at": encoded(run.requested_at),
             "started_at": encoded(run.started_at),
             "completed_at": encoded(run.completed_at),
@@ -426,6 +580,26 @@ class SystemQueries:
             "currency": run.currency,
             "href": f"/system/runs/{run.id}",
         }
+
+    def _run_timeliness(self, run: OrchestrationRun) -> str:
+        obligation = (
+            self.session.get(OrchestrationObligation, run.obligation_id)
+            if run.obligation_id
+            else None
+        )
+        if not obligation:
+            return "NOT_APPLICABLE"
+        if obligation.status is ObligationStatus.SATISFIED:
+            return (
+                "ON_TIME"
+                if obligation.satisfied_at and obligation.satisfied_at <= obligation.due_at
+                else "RECOVERED_LATE"
+            )
+        return (
+            "MISSED_UNSATISFIED"
+            if obligation.due_at < datetime.now(timezone.utc)
+            else "NOT_YET_DUE"
+        )
 
     def runs(
         self,
@@ -497,12 +671,20 @@ class SystemQueries:
             if run.rights_policy_id
             else None
         )
+        obligation = (
+            self.session.get(OrchestrationObligation, run.obligation_id)
+            if run.obligation_id
+            else None
+        )
         return {
             **self.run_summary(run, pipeline),
             "resource_type": "orchestration_run",
             "error_classification": run.error_classification,
             "error_detail": run.error_detail,
             "attempts": [row_data(item) for item in attempts],
+            "obligation": self._obligation_summary(obligation, datetime.now(timezone.utc))
+            if obligation
+            else None,
             "ingestion_run": row_data(ingestion, exclude={"source_cursor"}) if ingestion else None,
             "rights_policy": row_data(policy) if policy else None,
             "configuration": {
@@ -561,6 +743,42 @@ class SystemQueries:
             or source.default_rights_policy_id
         )
         policy = self.session.get(DataRightsPolicy, policy_id) if policy_id else None
+        stored_source_records = sum(run.records_inserted for run in runs)
+        effective_observations: Optional[int] = None
+        superseded_records: Optional[int] = None
+        latest_provider_reporting_date: Any = None
+        if source.key == "google_search_console":
+            effective_observations = (
+                self.session.scalar(
+                    select(func.count())
+                    .select_from(GSCSearchObservation)
+                    .where(
+                        GSCSearchObservation.tenant_id == tenant_id,
+                        GSCSearchObservation.site_id == site_id,
+                        GSCSearchObservation.effective_end.is_(None),
+                    )
+                )
+                or 0
+            )
+            physical_observations = (
+                self.session.scalar(
+                    select(func.count())
+                    .select_from(GSCSearchObservation)
+                    .where(
+                        GSCSearchObservation.tenant_id == tenant_id,
+                        GSCSearchObservation.site_id == site_id,
+                    )
+                )
+                or 0
+            )
+            superseded_records = physical_observations - effective_observations
+            latest_provider_reporting_date = self.session.scalar(
+                select(func.max(GSCSearchObservation.observed_date)).where(
+                    GSCSearchObservation.tenant_id == tenant_id,
+                    GSCSearchObservation.site_id == site_id,
+                    GSCSearchObservation.effective_end.is_(None),
+                )
+            )
         return {
             "key": source.key,
             "label": source.name,
@@ -581,7 +799,16 @@ class SystemQueries:
                     default=None,
                 )
             ),
-            "records": sum(run.records_inserted for run in runs),
+            "records": stored_source_records,
+            "stored_source_records": stored_source_records,
+            "effective_observations": effective_observations,
+            "superseded_revision_records": superseded_records,
+            "latest_provider_reporting_date": encoded(latest_provider_reporting_date),
+            "record_semantics": (
+                "Stored source records include append-only historical revisions; effective observations exclude superseded revisions."
+                if source.key == "google_search_console"
+                else "Stored records are the sum of inserted records reported by source ingestion runs."
+            ),
             "cost": "PAID"
             if any(item.paid_provider for item in pipelines)
             else "ZERO_OR_UNTRACKED",

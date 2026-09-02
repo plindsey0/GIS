@@ -16,7 +16,7 @@ describe("GIS Workbench", () => {
     render(<OverviewPage/>);
     expect(screen.getByText("Loading current GIS state…")).toBeInTheDocument();
     expect(await screen.findByText("Intelligence overview")).toBeInTheDocument();
-    expect(screen.getByText("Stored GSC observations").parentElement).toHaveTextContent("146");
+    expect(screen.getByText("Current GSC observations").parentElement).toHaveTextContent("146");
     expect(screen.getByText("Recommendations to review").parentElement).toHaveTextContent("2");
     expect(screen.getByText(/acceptance creates a draft/i)).toBeInTheDocument();
   });

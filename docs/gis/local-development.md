@@ -47,6 +47,11 @@ are supervised: if one exits, the launcher stops its siblings. The executor writ
 and worker heartbeats and performs bounded, idempotent startup catch-up. Port 8000 is intentionally
 not used because it can belong to another local project.
 
+System reports an executor as `RUNNING` only while its lease is current. A process that stops
+updating its heartbeat becomes `OFFLINE` after lease expiry; an enabled schedule alone is not proof
+that collection is running. A pipeline whose first due time is still in the future displays the
+neutral `AWAITING_FIRST_SCHEDULED_RUN` state and does not count as needing attention.
+
 Inspect local automation without querying PostgreSQL:
 
 ```bash

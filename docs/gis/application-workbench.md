@@ -179,6 +179,10 @@ Pipeline health uses explicit states: `HEALTHY`, `STALE`, `FAILING`, `DISABLED`,
 
 Scheduler and worker leases make executor-offline states visible. The obligation reliability mart reports expected, on-time, recovered-late, unsatisfied, and terminal counts without fabricating historical runs. Operators can inspect obligations, request bounded reconciliation, retry eligible runs, and check liveness through the orchestration CLI; paid-source retries remain budget-checked and intentionally bounded.
 
+`AWAITING_FIRST_SCHEDULED_RUN` is a neutral automation state: the schedule is enabled, its first obligation is still in the future, and there is therefore no reliability history to judge. It is distinct from insufficient history after executions, an offline executor, an overdue unsatisfied obligation, and provider data pending. A recovered-late obligation can leave current health healthy once data is complete, while the late completion and its duration remain in historical reliability.
+
+GSC uses append-only revisions. “Stored source records” counts every inserted physical version, while “Current GSC observations” counts only rows whose `effective_end` is null. “Superseded revision records” explains the difference. Provider reporting date and lag describe the newest effective provider period, not ingestion time.
+
 The data-flow view renders only registered source-to-pipeline assignments, `PipelineDependency`, `DataAssetSource`, and `DataAssetLineage` edges. Missing metadata is identified as unmapped rather than inferred.
 
 ```mermaid
