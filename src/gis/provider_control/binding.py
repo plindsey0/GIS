@@ -299,7 +299,9 @@ def execution_arguments(
         policy.tenant_id, policy.site_id, target.target_type
     )
     if not any(
-        c["id"] == str(target.target_reference_id) and c["value"] == target.target_value
+        c["id"] == str(target.target_reference_id)
+        and c["value"] == target.target_value
+        and c.get("eligible") is not False
         for c in choices
     ):
         raise ValueError("Canonical target changed or is no longer active; review configuration.")
@@ -318,7 +320,12 @@ def execution_arguments(
         raise ValueError("The configured connection changed; replan execution.")
     args = ["sync", "--connection", str(policy.data_source_connection_id)]
     if pipeline.key == "serp":
-        args.extend(["--query-id", str(target.target_reference_id)])
+        args.extend(
+            [
+                "--query-id",
+                str(target.metadata_json.get("execution_query_id", target.target_reference_id)),
+            ]
+        )
     elif pipeline.key == "external_search":
         args = [
             "keywords",

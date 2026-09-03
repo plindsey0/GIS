@@ -33,6 +33,7 @@ from gis.models import (
     ScheduleDefinition,
 )
 from gis.orchestration.schedule import next_occurrence
+from gis.provider_control.runtime import readiness as provider_readiness
 
 PIPELINE_PURPOSES = {
     "gsc": "Collects first-party Google search performance used for visibility, collection planning, evidence, and measurement.",
@@ -869,6 +870,9 @@ class SystemQueries:
                     **row_data(item, exclude={"credential_reference", "configuration_json"}),
                     "configuration_present": bool(item.configuration_json),
                     "credential_configured": bool(item.credential_reference),
+                    "credential_readiness": provider_readiness(self.session, item)
+                    if source.key == "dataforseo"
+                    else None,
                 }
                 for item in connections
             ],

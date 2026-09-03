@@ -249,7 +249,49 @@ class ProviderControlService:
             if policy and policy.data_source_connection_id
             else None
         )
+        from gis.provider_control.runtime import readiness
+
+        runtime = readiness(self.session, connection) if key == "dataforseo" else None
+        # Summary covers the whole business month, independently of the recent-event page.
+        usage_totals = self.session.execute(
+            select(
+                func.coalesce(func.sum(ProviderUsageEvent.request_count), 0),
+                func.coalesce(
+                    func.sum(ProviderUsageEvent.request_count).filter(
+                        ProviderUsageEvent.actual_cost.is_(None)
+                    ),
+                    0,
+                ),
+                func.sum(ProviderUsageEvent.actual_cost),
+                func.sum(ProviderUsageEvent.reserved_cost).filter(
+                    ProviderUsageEvent.status == "RESERVED"
+                ),
+                func.count(ProviderUsageEvent.id),
+            ).where(
+                ProviderUsageEvent.tenant_id == tenant_id,
+                ProviderUsageEvent.site_id == site_id,
+                ProviderUsageEvent.provider_id == provider.id,
+                ProviderUsageEvent.occurred_at >= month_start,
+            )
+        ).one()
         return {
+            "credential_readiness": runtime,
+            "execution_readiness": "RUNNABLE"
+            if state == "ACTIVE" and (runtime is None or runtime["runnable"])
+            else "BLOCKED",
+            "cost_state": "UNKNOWN_UNRECONCILED"
+            if usage_totals[1]
+            else "KNOWN"
+            if usage_totals[4]
+            else "NO_USAGE",
+            "unknown_cost_requests": usage_totals[1],
+            "request_count": usage_totals[0],
+            "known_actual_cost_month": str(usage_totals[2])
+            if usage_totals[2] is not None
+            else None,
+            "known_reserved_cost_month": str(usage_totals[3])
+            if usage_totals[3] is not None
+            else None,
             "id": str(provider.id),
             "key": key,
             "name": provider.display_name,
@@ -260,7 +302,14 @@ class ProviderControlService:
             "is_commercial": provider.is_commercial,
             "connection_state": "CONNECTED" if connection else "NOT_CONNECTED",
             "collection_state": state,
-            "blocking_reason": reason,
+            "blocking_reason": reason
+            or (
+                "CREDENTIAL_UNAVAILABLE"
+                if runtime and not runtime["worker_verified"]
+                else "PAID_EXECUTION_HELD"
+                if runtime and runtime.get("execution_held")
+                else None
+            ),
             "policy": self._policy_data(policy),
             "budget": {
                 "spent_day": str(spent_day),

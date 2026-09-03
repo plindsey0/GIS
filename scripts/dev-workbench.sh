@@ -9,9 +9,13 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
+PAID_EXECUTION_HOLD=${GIS_PAID_EXECUTION_DISABLED:-}
 set -a
 . ./.env
 set +a
+if [ "$PAID_EXECUTION_HOLD" = "1" ]; then
+  export GIS_PAID_EXECUTION_DISABLED=1
+fi
 
 PYTHON="$REPO_DIR/.venv/bin/python"
 if [ ! -x "$PYTHON" ]; then
@@ -43,6 +47,8 @@ cleanup() {
   done
 }
 trap cleanup EXIT INT TERM
+
+"$PYTHON" -m gis.provider_control.runtime
 
 "$PYTHON" -m uvicorn gis.api.app:create_app --factory --host 127.0.0.1 --port 8001 &
 API_PID=$!

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import uuid
 from decimal import Decimal
 
@@ -22,6 +21,7 @@ from gis.models import (
     Tenant,
     TrackedQuery,
 )
+from gis.provider_control.credentials import CredentialUnavailable
 
 
 def _scope(session: Session, tenant_slug: str, site_slug: str) -> tuple[Tenant, Site]:
@@ -106,13 +106,9 @@ def add_query(
 
 
 def _credentials(reference: str | None) -> tuple[str, str]:
-    if not reference or not reference.startswith("env:"):
-        raise ValueError("DataForSEO credential reference must use env:VARIABLE")
-    raw = os.environ.get(reference[4:])
-    if not raw:
-        raise ValueError("referenced credential is unavailable")
-    payload = json.loads(raw)
-    return str(payload["login"]), str(payload["password"])
+    from gis.provider_control.credentials import dataforseo_credentials
+
+    return dataforseo_credentials(reference)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -279,7 +275,7 @@ def run(arguments: list[str] | None = None) -> int:
                 ]
         print(json.dumps(output))
         return 0
-    except (ValueError, KeyError, json.JSONDecodeError) as error:
+    except (ValueError, KeyError, json.JSONDecodeError, CredentialUnavailable) as error:
         print(json.dumps({"error": str(error)}))
         return 2
 

@@ -92,3 +92,17 @@ flowchart TD
 
 See [the GA4 integration guide](ga4-integration.md) for the report catalog, authentication,
 timezone behavior, versioning, and operational limits.
+
+## Provider runtime and planning boundaries
+
+Provider connections identify credentials, but only a fresh execution-worker
+attestation proves local resolvability. Provider authentication is not tested by a
+health probe. Authorization remains in capability/target policies and budgets;
+dispatch still checks rights and current binding. See
+[provider configuration](provider-configuration.md#runtime-readiness-and-recovery-epic-16b1).
+
+Provider target authorization is a human override, not an edit to the computed
+Collection Planning recommendation. Current obligations and future recurrence are
+independent. Recovery appends execution attempts to existing history. Unknown costs
+remain unreconciled, not zero. These changes reuse heartbeat metadata, target
+metadata, audit events and nullable usage costs; no new migration is required.
