@@ -86,6 +86,9 @@ from gis.models import (
     TargetFamily,
 )
 from gis.opportunities.service import OpportunityService
+from gis.provider_control.binding import reconcile_schedules, schedules_for
+from gis.provider_control.configuration import CollectionConfiguration, ConfigurationService
+from gis.provider_control.manual import ManualRequest, manual_run
 from gis.provider_control.service import ProviderControlService
 from gis.recommendations.provider import FixtureRecommendationProvider
 from gis.recommendations.service import RecommendationService
@@ -97,6 +100,93 @@ def database() -> Session:  # type: ignore[misc]
 
 
 router = APIRouter(prefix="/api/v1")
+
+
+@router.get(
+    "/providers/{provider_key}/configuration", dependencies=[Depends(require_role(Role.READ))]
+)
+def provider_configuration(
+    provider_key: str,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        result = ConfigurationService(session).read(tenant_id, site_id, provider_key)
+        result["schedules"] = schedules_for(
+            session, tenant_id, site_id, ProviderControlService(session).provider(provider_key).id
+        )
+        return result
+    except ValueError as exc:
+        raise ApiError(404, "PROVIDER_CONFIGURATION_NOT_FOUND", str(exc)) from exc
+
+
+@router.post(
+    "/providers/{provider_key}/configuration/preview",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def preview_provider_configuration(
+    provider_key: str,
+    payload: CollectionConfiguration,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        return ConfigurationService(session).preview(tenant_id, site_id, provider_key, payload)
+    except ValueError as exc:
+        raise ApiError(409, "PROVIDER_CONFIGURATION_INVALID", str(exc)) from exc
+
+
+@router.put(
+    "/providers/{provider_key}/configuration", dependencies=[Depends(require_role(Role.ADMIN))]
+)
+def save_provider_configuration(
+    provider_key: str,
+    payload: CollectionConfiguration,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        result = ConfigurationService(session).save(tenant_id, site_id, provider_key, payload)
+        session.commit()
+        return result
+    except ValueError as exc:
+        session.rollback()
+        raise ApiError(409, "PROVIDER_CONFIGURATION_INVALID", str(exc)) from exc
+
+
+@router.post("/providers/{provider_key}/run", dependencies=[Depends(require_role(Role.ADMIN))])
+def provider_manual_run(
+    provider_key: str,
+    payload: ManualRequest,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        result = manual_run(session, tenant_id, site_id, provider_key, payload)
+        session.commit()
+        return result
+    except ValueError as exc:
+        session.rollback()
+        raise ApiError(409, "PROVIDER_RUN_BLOCKED", str(exc)) from exc
+
+
+def disable_partial_configuration(
+    session: Session, tenant_id: uuid.UUID, site_id: uuid.UUID, key: str, actor: str
+) -> None:
+    """Legacy granular edits are drafts, never an alternate activation path."""
+    policy = ProviderControlService(session).transition(
+        tenant_id,
+        site_id,
+        key,
+        "DISABLE",
+        actor,
+        "Partial configuration edit; review configuration before activation",
+    )
+    reconcile_schedules(session, policy)
 
 
 @router.get("/providers", dependencies=[Depends(require_role(Role.READ))])
@@ -139,6 +229,7 @@ def provider_policy(
         )
     except (ValueError, KeyError) as exc:
         raise ApiError(409, "PROVIDER_POLICY_INVALID", str(exc)) from exc
+    disable_partial_configuration(session, tenant_id, site_id, provider_key, payload.actor)
     session.commit()
     return service.detail(tenant_id, site_id, provider_key)
 
@@ -153,9 +244,23 @@ def provider_action(
 ) -> dict[str, Any]:
     service = ProviderControlService(session)
     try:
-        service.transition(
+        if payload.action in {"ENABLE", "RESUME"}:
+            current = ConfigurationService(session).read(tenant_id, site_id, provider_key)
+            config = CollectionConfiguration.model_validate(
+                {
+                    "policy": {**current["policy"], "actor": payload.actor},
+                    "capabilities": current["capabilities"],
+                }
+            )
+            projection = ConfigurationService(session).preview(
+                tenant_id, site_id, provider_key, config
+            )
+            if projection["blockers"]:
+                raise ValueError(" ".join(projection["blockers"]))
+        policy = service.transition(
             tenant_id, site_id, provider_key, payload.action, payload.actor, payload.reason
         )
+        reconcile_schedules(session, policy)
     except ValueError as exc:
         raise ApiError(409, "PROVIDER_ACTION_BLOCKED", str(exc)) from exc
     session.commit()
@@ -187,6 +292,7 @@ def provider_capability_policy(
         )
     except ValueError as exc:
         raise ApiError(409, "PROVIDER_CAPABILITY_INVALID", str(exc)) from exc
+    disable_partial_configuration(session, tenant_id, site_id, provider_key, payload.actor)
     session.commit()
     return service.detail(tenant_id, site_id, provider_key)
 
@@ -217,6 +323,7 @@ def provider_target(
         )
     except ValueError as exc:
         raise ApiError(409, "PROVIDER_TARGET_INVALID", str(exc)) from exc
+    disable_partial_configuration(session, tenant_id, site_id, provider_key, payload.actor)
     session.commit()
     return service.detail(tenant_id, site_id, provider_key)
 
@@ -240,6 +347,7 @@ def provider_target_status(
         )
     except ValueError as exc:
         raise ApiError(404, "PROVIDER_TARGET_NOT_FOUND", str(exc)) from exc
+    disable_partial_configuration(session, tenant_id, site_id, provider_key, payload.actor)
     session.commit()
     return service.detail(tenant_id, site_id, provider_key)
 

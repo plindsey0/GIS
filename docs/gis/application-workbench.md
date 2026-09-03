@@ -1,5 +1,9 @@
 # GIS Application API and Intelligence Workbench
 
+Data Providers now includes the [guided collection configuration workflow](provider-configuration.md).
+Future provider, target, pricing or execution changes must update both this operator
+guide and Learn GIS; runtime status belongs in live System/provider views.
+
 > **The GIS Workbench is an application over GIS domain services. It must not duplicate or bypass deterministic GIS business logic.**
 
 > **Recommendation acceptance and intervention approval are separate operator decisions.**

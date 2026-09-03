@@ -10,7 +10,13 @@ from pathlib import Path
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from gis.models import DataSourceConnection, IngestionRun, OrchestrationRun, PipelineDefinition
+from gis.models import (
+    DataSourceConnection,
+    IngestionRun,
+    OrchestrationRun,
+    PipelineDefinition,
+    ProviderUsageEvent,
+)
 from gis.orchestration.reliability import collector_failure
 from gis.orchestration.service import PipelineHandler, PipelineResult
 
@@ -99,6 +105,11 @@ def collector_cli_handler(session: Session, run: OrchestrationRun) -> PipelineRe
     if not executable:
         raise ValueError(f"no allowlisted collector executable for {pipeline.key}")
     arguments = run.configuration_json.get("arguments")
+    from gis.provider_control.binding import execution_arguments
+
+    bound_arguments = execution_arguments(session, run, pipeline)
+    if bound_arguments is not None:
+        arguments = bound_arguments
     if not isinstance(arguments, list) or not all(isinstance(item, str) for item in arguments):
         raise ValueError("collector execution requires a string arguments list")
     if run.backfill_start and run.backfill_end:
@@ -131,7 +142,25 @@ def collector_cli_handler(session: Session, run: OrchestrationRun) -> PipelineRe
             .order_by(IngestionRun.created_at.desc())
             .limit(1)
         )
-    actual = Decimal(str(run.configuration_json.get("actual_cost", run.estimated_provider_cost)))
+    actual: Decimal | None = Decimal(
+        str(run.configuration_json.get("actual_cost", run.estimated_provider_cost))
+    )
+    if bound_arguments is not None and pipeline.paid_provider:
+        usage = (
+            session.scalar(
+                select(ProviderUsageEvent)
+                .where(
+                    ProviderUsageEvent.tenant_id == run.tenant_id,
+                    ProviderUsageEvent.site_id == run.site_id,
+                    ProviderUsageEvent.ingestion_run_id == ingestion_run.id,
+                )
+                .order_by(ProviderUsageEvent.occurred_at.desc())
+                .limit(1)
+            )
+            if ingestion_run
+            else None
+        )
+        actual = usage.actual_cost if usage else None
     outcome = str(run.configuration_json.get("completion_outcome", "SUCCEEDED_COMPLETE"))
     reason = run.configuration_json.get("completion_reason")
     if pipeline.key == "experience" and ingestion_run:

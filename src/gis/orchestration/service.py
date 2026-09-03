@@ -55,7 +55,7 @@ def utcnow() -> datetime:
 @dataclass(frozen=True)
 class PipelineResult:
     ingestion_run_id: uuid.UUID | None = None
-    actual_cost: Decimal = Decimal("0")
+    actual_cost: Decimal | None = Decimal("0")
     currency: str = "USD"
     metadata: dict[str, Any] | None = None
 
@@ -421,7 +421,7 @@ class Worker:
         try:
             handler = self.handlers[pipeline.handler_key]
             result = handler(self.session, run)
-            if result.actual_cost < 0:
+            if result.actual_cost is not None and result.actual_cost < 0:
                 raise ValueError("actual cost cannot be negative")
             completed = now or utcnow()
             attempt.status = OrchestrationStatus.SUCCEEDED

@@ -1,5 +1,8 @@
 # Data provider control plane
 
+See [Provider configuration and execution binding](gis/provider-configuration.md)
+for the guided workflow, derived schedules, manual confirmation and scoped pricing.
+
 The provider control plane separates technical access from authorization. A connection says GIS can authenticate; a collection policy says whether GIS may call that provider, for which capability and targets, at what cadence, and within which limits. Credentials remain in the existing secret-reference mechanism.
 
 ## Safety model

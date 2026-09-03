@@ -174,6 +174,9 @@ def run(arguments: list[str] | None = None) -> int:
             sync_connection = session.get(DataSourceConnection, args.connection)
             if sync_connection is None:
                 raise ValueError("connection not found")
+            from gis.provider_control.binding import guard_free_collection
+
+            guard_free_collection(session, sync_connection, "ga4", str(sync_connection.site_id))
             if (args.start_date is None) != (args.end_date is None):
                 raise ValueError("--start-date and --end-date must be supplied together")
             selected = tuple(ALL_DATASETS)

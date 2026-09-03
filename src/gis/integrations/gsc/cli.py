@@ -205,6 +205,11 @@ def run(arguments: list[str] | None = None) -> int:
             sync_connection = session.get(DataSourceConnection, args.connection)
             if sync_connection is None:
                 raise ValueError("connection not found")
+            from gis.provider_control.binding import guard_free_collection
+
+            guard_free_collection(
+                session, sync_connection, "google_search_console", str(sync_connection.site_id)
+            )
             client, _ = build_client(sync_connection)
             if args.start_date or args.end_date:
                 if args.start_date is None or args.end_date is None:

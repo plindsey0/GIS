@@ -5919,10 +5919,24 @@ class ProviderCollectionTarget(Base, TimestampMixin):
 class ProviderPricingConfiguration(Base, TimestampMixin):
     __tablename__ = "provider_pricing_configuration"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"],
+            [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"],
+            name="fk_provider_pricing_scope",
+        ),
+        CheckConstraint(
+            "(tenant_id IS NULL) = (site_id IS NULL)", name="ck_provider_pricing_scope_pair"
+        ),
         Index("ix_provider_pricing_effective", "provider_id", "effective_start_at"),
         {"schema": SCHEMA},
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.tenant.id")
+    )
+    site_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.site.id")
+    )
     provider_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.provider_definition.id"), nullable=False
     )

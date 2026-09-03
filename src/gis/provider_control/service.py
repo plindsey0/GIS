@@ -23,6 +23,7 @@ from gis.models import (
     ProviderPricingConfiguration,
     ProviderUsageEvent,
     ScheduleDefinition,
+    Site,
 )
 
 
@@ -239,7 +240,10 @@ class ProviderControlService:
         last_run = (
             self.session.scalar(
                 select(func.max(IngestionRun.completed_at)).where(
-                    IngestionRun.data_source_connection_id == policy.data_source_connection_id
+                    IngestionRun.data_source_connection_id == policy.data_source_connection_id,
+                    IngestionRun.tenant_id == tenant_id,
+                    IngestionRun.site_id == site_id,
+                    IngestionRun.status == "SUCCEEDED",
                 )
             )
             if policy and policy.data_source_connection_id
@@ -313,6 +317,24 @@ class ProviderControlService:
         reason: Optional[str],
     ) -> ProviderCollectionPolicy:
         provider = self.provider(key)
+        site = self.session.get(Site, site_id)
+        if not site or site.tenant_id != tenant_id:
+            raise ValueError("Site is outside the requested tenant")
+        if provider.implementation_status != "IMPLEMENTED":
+            raise ValueError("Provider adapter is not implemented")
+        connection_id = values.get("data_source_connection_id")
+        if connection_id:
+            connection = self.session.get(DataSourceConnection, connection_id)
+            source = self.session.get(DataSource, connection.data_source_id) if connection else None
+            keys = {"pagespeed", "crux"} if key == "google_pagespeed" else {key}
+            if (
+                not connection
+                or connection.tenant_id != tenant_id
+                or connection.site_id not in {None, site_id}
+                or not source
+                or source.key not in keys
+            ):
+                raise ValueError("Connection is outside this provider and site scope")
         policy = self.policy(tenant_id, site_id, provider.id, lock=True)
         before = self._policy_data(policy)
         if not policy:
@@ -525,6 +547,8 @@ class ProviderControlService:
     ) -> Preflight:
         provider = self.provider(provider_key)
         policy = self.policy(tenant_id, site_id, provider.id, lock=reserve)
+        if not target_values or estimated_requests < 1 or estimated_units <= 0:
+            raise ValueError("Preflight requires targets and positive request/unit estimates")
         cap = self.capability(provider.id, capability_key)
         reasons: list[str] = []
         warnings: list[str] = []
@@ -561,17 +585,24 @@ class ProviderControlService:
         )
         if target_values and not set(target_values).issubset(authorized):
             reasons.append("TARGET_NOT_AUTHORIZED")
-        pricing = self._pricing(provider.id, cap.id)
-        cost = estimated_cost_override
-        semantics = "CALLER_ESTIMATED" if cost is not None else "UNKNOWN"
+        pricing = self._pricing(provider.id, cap.id, tenant_id, site_id)
+        # Caller estimates are not authoritative pricing and cannot undercut policy.
+        cost = None
+        semantics = "UNKNOWN"
         if cost is None and pricing and pricing.unit_price is not None and pricing.units_per_price:
             cost = (estimated_units / pricing.units_per_price) * pricing.unit_price
             semantics = "GIS_ESTIMATED"
+        if pricing and policy and pricing.currency != policy.currency:
+            reasons.append("PRICING_CURRENCY_MISMATCH")
         if (
             provider.is_commercial
             and cost is None
             and not (
-                policy and policy.allow_unknown_cost and policy.per_run_request_limit is not None
+                policy
+                and policy.allow_unknown_cost
+                and policy.per_run_request_limit
+                and policy.daily_request_limit
+                and policy.monthly_request_limit
             )
         ):
             reasons.append("PROJECTED_COST_UNKNOWN")
@@ -598,6 +629,7 @@ class ProviderControlService:
                 provider_id=provider.id,
                 capability_id=cap.id,
                 collection_policy_id=policy.id,
+                data_source_connection_id=policy.data_source_connection_id,
                 occurred_at=datetime.now(timezone.utc),
                 request_count=estimated_requests,
                 unit_count=estimated_units,
@@ -688,20 +720,29 @@ class ProviderControlService:
                     ProviderUsageEvent.site_id == site_id,
                     ProviderUsageEvent.provider_id == provider_id,
                     ProviderUsageEvent.occurred_at >= start,
-                    ProviderUsageEvent.status.in_(["RESERVED", "SUCCEEDED"]),
                 )
             )
             or 0
         )
 
     def _pricing(
-        self, provider_id: uuid.UUID, capability_id: Optional[uuid.UUID] = None
+        self,
+        provider_id: uuid.UUID,
+        capability_id: Optional[uuid.UUID] = None,
+        tenant_id: Optional[uuid.UUID] = None,
+        site_id: Optional[uuid.UUID] = None,
     ) -> Optional[ProviderPricingConfiguration]:
         now = datetime.now(timezone.utc)
         return self.session.scalar(
             select(ProviderPricingConfiguration)
             .where(
                 ProviderPricingConfiguration.provider_id == provider_id,
+                or_(
+                    (ProviderPricingConfiguration.tenant_id == tenant_id)
+                    & (ProviderPricingConfiguration.site_id == site_id),
+                    ProviderPricingConfiguration.tenant_id.is_(None)
+                    & ProviderPricingConfiguration.site_id.is_(None),
+                ),
                 or_(
                     ProviderPricingConfiguration.capability_id == capability_id,
                     ProviderPricingConfiguration.capability_id.is_(None),
@@ -712,7 +753,11 @@ class ProviderControlService:
                     ProviderPricingConfiguration.effective_end_at > now,
                 ),
             )
-            .order_by(ProviderPricingConfiguration.capability_id.desc().nullslast())
+            .order_by(
+                ProviderPricingConfiguration.tenant_id.desc().nullslast(),
+                ProviderPricingConfiguration.capability_id.desc().nullslast(),
+                ProviderPricingConfiguration.effective_start_at.desc(),
+            )
             .limit(1)
         )
 
@@ -736,7 +781,6 @@ class ProviderControlService:
                     ProviderUsageEvent.site_id == site_id,
                     ProviderUsageEvent.provider_id == provider_id,
                     ProviderUsageEvent.occurred_at >= start,
-                    ProviderUsageEvent.status.in_(["RESERVED", "SUCCEEDED"]),
                 )
             )
             or 0

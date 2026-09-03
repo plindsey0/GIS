@@ -67,6 +67,34 @@ def test_health_openapi_and_auth_boundary(client: TestClient) -> None:
     assert "request_id" in response.json()["error"]
 
 
+def test_provider_configuration_api_is_admin_only_and_preview_has_no_work(
+    client: TestClient, session: Session
+) -> None:
+    from test_provider_configuration import setup
+
+    tenant, site, _, config, _ = setup(session)
+    query = params(tenant.id, site.id)
+    url = "/api/v1/providers/dataforseo/configuration"
+    body = config.model_dump(mode="json")
+    assert client.get(url, params=query, headers=headers()).status_code == 200
+    assert client.put(url, params=query, headers=headers(), json=body).status_code == 403
+    assert (
+        client.post(url + "/preview", params=query, headers=headers(), json=body).status_code == 403
+    )
+    preview = client.post(url + "/preview", params=query, headers=headers("ADMIN"), json=body)
+    assert preview.status_code == 200 and preview.json()["paid_calls_made"] == 0
+    saved = client.put(url, params=query, headers=headers("ADMIN"), json=body)
+    assert saved.status_code == 200
+    assert saved.json()["configuration"]["detail"]["collection_state"] == "CONNECTED_DISABLED"
+    run = client.post(
+        "/api/v1/providers/dataforseo/run",
+        params=query,
+        headers=headers(),
+        json={"request_id": str(uuid.uuid4())},
+    )
+    assert run.status_code == 403
+
+
 def test_site_and_tenant_isolation(client: TestClient, session: Session) -> None:
     seed(session, hostname="vahomemath.test")
     tenant = session.scalar(select(Tenant).where(Tenant.slug == "vahomemath"))

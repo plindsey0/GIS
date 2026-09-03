@@ -134,6 +134,9 @@ def run(arguments: list[str] | None = None) -> int:
                 connection = session.get(DataSourceConnection, args.connection)
                 if connection is None:
                     raise ValueError("connection not found")
+                from gis.provider_control.binding import guard_free_collection
+
+                guard_free_collection(session, connection, "google_pagespeed", args.target)
                 run = ExperienceCollector(
                     session, PageSpeedProvider(_key(connection.credential_reference))
                 ).sync(

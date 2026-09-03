@@ -79,6 +79,11 @@ class ExternalSearchCollector:
         if not source or not policy:
             raise ValueError("external-search source and rights policy are required")
         control = ProviderControlService(self.session)
+        collection_policy = control.policy(
+            site.tenant_id, site.id, control.provider("dataforseo").id
+        )
+        if collection_policy and collection_policy.data_source_connection_id != connection.id:
+            raise ValueError("Collection must use the connection selected by the provider policy")
         preflight = control.preflight(
             site.tenant_id,
             site.id,
@@ -115,6 +120,8 @@ class ExternalSearchCollector:
         )
         self.session.add(run)
         self.session.flush()
+        # Keep the usage reservation durable before an external charge can occur.
+        self.session.commit()
         savepoint = self.session.begin_nested()
         try:
             collection = self.provider.collect(request)

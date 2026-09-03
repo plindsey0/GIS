@@ -220,10 +220,44 @@ def run(arguments: list[str] | None = None) -> int:
                 query = session.get(TrackedQuery, args.query_id)
                 if connection is None or query is None:
                     raise ValueError("connection or tracked query not found")
+                from gis.provider_control.service import ProviderControlService
+
+                control = ProviderControlService(session)
+                policy = control.policy(
+                    query.tenant_id, query.site_id, control.provider("dataforseo").id
+                )
+                if not policy or policy.data_source_connection_id != connection.id:
+                    raise ValueError(
+                        "The SERP connection is not selected by the collection policy."
+                    )
+                preflight = control.preflight(
+                    query.tenant_id,
+                    query.site_id,
+                    "dataforseo",
+                    "SERP_COLLECTION",
+                    [query.normalized_query],
+                    1,
+                    Decimal(1),
+                    reserve=True,
+                )
+                if not preflight.can_execute or not preflight.reservation_id:
+                    raise ValueError(
+                        "Provider collection blocked: " + ", ".join(preflight.blocking_reasons)
+                    )
                 login, password = _credentials(connection.credential_reference)
+                session.commit()  # Durable reservation before the external API call.
                 run = SerpCollector(session, DataForSEOProvider(login, password)).sync(
                     connection.id, query
                 )
+                cost = run.source_metadata.get("provider_cost")
+                control.reconcile(
+                    preflight.reservation_id,
+                    actual_cost=Decimal(str(cost)) if cost is not None else None,
+                    semantics="PROVIDER_REPORTED" if cost is not None else "UNKNOWN",
+                    status=run.status.value,
+                    ingestion_run_id=run.id,
+                )
+                session.commit()
                 output = {
                     "run_id": str(run.id),
                     "status": run.status.value,
