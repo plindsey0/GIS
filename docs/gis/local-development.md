@@ -193,3 +193,34 @@ python -m build
 
 Tests migrate `gis_test` from empty to head and downgrade it after the suite. Override its URL
 with `TEST_DATABASE_URL`. Never point `TEST_DATABASE_URL` at a database containing useful data.
+
+## Provider credential readiness
+
+For no-paid-call runtime validation, start with:
+
+```sh
+GIS_PAID_EXECUTION_DISABLED=1 scripts/dev-workbench.sh
+```
+
+This preserves configured policies and obligations but prevents paid worker pickup.
+Do not remove the hold until an operator authorizes paid acceptance. Startup warns
+about active DataForSEO policies with unresolved credentials without blocking the
+entire application. Provider and System health show live worker readiness.
+
+Use the connection's `env:` reference with a JSON object containing `login` and
+`password` in the process environment. Never commit its value. Legacy references
+`env:GIS_DATAFORSEO_CREDENTIAL` and `env:DATAFORSEO_CREDENTIAL_JSON` also support
+`DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD` or the existing owner-only (0600)
+`~/.config/gis/secrets/dataforseo.env` file with those assignments. Symlinks and
+group/world-readable files are rejected. The file is parsed, not executed. API,
+scheduler and worker use the same resolver; child collectors receive the resolved
+credential only in their environment. Restart after changing environment variables.
+Health checks never make external provider calls or display secret values.
+
+For tests, set **both** database variables to the disposable database if DATABASE_URL
+is already exported (the Alembic environment honors it):
+
+```sh
+DATABASE_URL=postgresql+psycopg://gis:gis@localhost:5433/gis_test \
+TEST_DATABASE_URL=postgresql+psycopg://gis:gis@localhost:5433/gis_test .venv/bin/pytest
+```

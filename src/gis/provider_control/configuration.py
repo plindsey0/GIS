@@ -14,9 +14,6 @@ from sqlalchemy.orm import Session
 
 from gis.api.schemas import ProviderPolicyInput
 from gis.models import (
-    CollectionTarget,
-    CollectionTargetStatus,
-    CollectionTargetType,
     DataSource,
     DataSourceConnection,
     Domain,
@@ -40,6 +37,11 @@ BINDINGS = {
     "FIELD_CRUX": ("experience", "URL"),
     "SERP_COLLECTION": ("serp", "QUERY"),
     "DOMAIN_SEARCH_INTELLIGENCE": ("external_search", "DOMAIN"),
+}
+
+CAPABILITY_HELP = {
+    "SERP_COLLECTION": "Retrieves ranked search results, result URLs and SERP features for authorized queries. Paid requests feed SERP observations, market visibility and evidence packages. Weekly is a typical starting cadence; choose it according to change rate and budget.",
+    "DOMAIN_SEARCH_INTELLIGENCE": "Retrieves provider-reported ranked keywords and competitive domain evidence. Paid requests feed external-search observations and demand/market analysis. Monthly is a typical starting cadence; this is separate from GIS computed collection recommendations.",
 }
 
 
@@ -83,28 +85,11 @@ class ConfigurationService:
             raise ValueError("Site is outside the requested tenant.")
         return row
 
-    def choices(self, tenant_id: uuid.UUID, site_id: uuid.UUID, kind: str) -> list[dict[str, str]]:
+    def choices(self, tenant_id: uuid.UUID, site_id: uuid.UUID, kind: str) -> list[dict[str, Any]]:
         site = self.site(tenant_id, site_id)
-        extra = (
-            [
-                {
-                    "id": str(t.id),
-                    "label": t.display_value,
-                    "value": t.normalized_identity,
-                    "type": kind,
-                }
-                for t in self.session.scalars(
-                    select(CollectionTarget).where(
-                        CollectionTarget.tenant_id == tenant_id,
-                        CollectionTarget.site_id == site_id,
-                        CollectionTarget.target_type == CollectionTargetType(kind),
-                        CollectionTarget.status == CollectionTargetStatus.ACTIVE,
-                    )
-                )
-            ]
-            if kind in {"URL", "DOMAIN"}
-            else []
-        )
+        from gis.provider_control.planning import planning_choices
+
+        extra = planning_choices(self.session, tenant_id, site_id, kind)
         if kind in {"SITE", "URL"}:
             return extra + [
                 {
@@ -211,6 +196,7 @@ class ConfigurationService:
             capabilities.append(
                 {
                     **cap,
+                    "description": CAPABILITY_HELP.get(cap["key"], cap["description"]),
                     "target_type": binding[1],
                     "choices": self.choices(tenant_id, site_id, binding[1]),
                     "target_ids": [
@@ -268,7 +254,60 @@ class ConfigurationService:
             if policy and policy.data_source_connection_id
             else []
         )
+        from gis.api.system import SystemQueries
+        from gis.models import ExecutionAttempt, OrchestrationObligation
+
+        operational = SystemQueries(self.session)
+        obligations = (
+            list(
+                self.session.scalars(
+                    select(OrchestrationObligation)
+                    .where(
+                        OrchestrationObligation.tenant_id == tenant_id,
+                        OrchestrationObligation.site_id == site_id,
+                        OrchestrationObligation.data_source_connection_id
+                        == policy.data_source_connection_id,
+                        OrchestrationObligation.status != "SATISFIED",
+                        OrchestrationObligation.due_at <= datetime.now(timezone.utc),
+                    )
+                    .order_by(OrchestrationObligation.due_at.desc())
+                    .limit(10)
+                )
+            )
+            if policy and policy.data_source_connection_id
+            else []
+        )
+        failed = (
+            self.session.scalar(
+                select(ExecutionAttempt)
+                .join(
+                    OrchestrationRun, OrchestrationRun.id == ExecutionAttempt.orchestration_run_id
+                )
+                .where(
+                    OrchestrationRun.tenant_id == tenant_id,
+                    OrchestrationRun.site_id == site_id,
+                    OrchestrationRun.data_source_connection_id == policy.data_source_connection_id,
+                    ExecutionAttempt.status == "FAILED",
+                )
+                .order_by(ExecutionAttempt.started_at.desc())
+                .limit(1)
+            )
+            if policy and policy.data_source_connection_id
+            else None
+        )
         return {
+            "current_obligations": [
+                {"id": str(o.id), **operational._obligation_summary(o, datetime.now(timezone.utc))}
+                for o in obligations
+            ],
+            "latest_failed_attempt": {
+                "at": failed.started_at,
+                "category": failed.failure_category.value if failed.failure_category else None,
+                "reason": failed.error_detail,
+                "run_id": str(failed.orchestration_run_id),
+            }
+            if failed
+            else None,
             "recent_runs": [
                 {"id": str(r.id), "status": r.status.value, "at": r.requested_at}
                 for r in recent_runs
@@ -336,6 +375,10 @@ class ConfigurationService:
             }
             if not set(cap.target_ids).issubset(choices):
                 raise ValueError("A selected target is outside the canonical site scope.")
+            if any(choices[t].get("eligible") is False for t in cap.target_ids):
+                raise ValueError(
+                    "A selected target is blocked by rights or canonical lifecycle validity."
+                )
             if len(cap.target_ids) != len(set(cap.target_ids)):
                 raise ValueError("Duplicate targets are not allowed.")
             if not cap.enabled:
@@ -478,6 +521,18 @@ class ConfigurationService:
                 )
             ).all()
             for previous_target in targets:
+                if (
+                    previous_target.enabled
+                    and previous_target.target_reference_id not in cap.target_ids
+                ):
+                    self.control._audit(
+                        policy,
+                        "TARGET_AUTHORIZATION_REMOVED",
+                        config.policy.actor,
+                        config.policy.reason,
+                        {"target": previous_target.target_value, **previous_target.metadata_json},
+                        {"enabled": False},
+                    )
                 previous_target.enabled = False
             for target_id in cap.target_ids:
                 target = next((t for t in targets if t.target_reference_id == target_id), None)
@@ -490,6 +545,25 @@ class ConfigurationService:
                     )
                     self.session.add(target)
                 target.enabled = True
+                from gis.provider_control.planning import authorization_metadata
+
+                before_target = dict(target.metadata_json or {})
+                authorization_metadata(
+                    self.session,
+                    target,
+                    choices[target_id],
+                    cap.cadence,
+                    config.policy.actor,
+                    config.policy.reason,
+                )
+                self.control._audit(
+                    policy,
+                    "TARGET_AUTHORIZED",
+                    config.policy.actor,
+                    config.policy.reason,
+                    before_target,
+                    {"target": target.target_value, "capability": cap.key, **target.metadata_json},
+                )
             if provider.is_commercial:
                 now = datetime.now(timezone.utc)
                 previous = self.session.scalars(

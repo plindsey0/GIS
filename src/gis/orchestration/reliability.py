@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -113,7 +114,14 @@ def classify_failure(error: Exception) -> tuple[FailureCategory, int | None]:
 
 def collector_failure(message: str) -> ClassifiedFailure:
     normalized = message.casefold()
-    if "429" in normalized or "rate limit" in normalized:
+    if (
+        "credential_unavailable" in normalized
+        or "referenced credential is unavailable" in normalized
+        or "credential_invalid_configuration" in normalized
+    ):
+        category = FailureCategory.CONFIGURATION_ERROR
+        message = "CREDENTIAL_UNAVAILABLE: check execution-worker credential configuration"
+    elif "429" in normalized or "rate limit" in normalized:
         category = FailureCategory.PROVIDER_429
     elif "401" in normalized or "authentication" in normalized or "credential" in normalized:
         category = FailureCategory.AUTHENTICATION_FAILED
@@ -121,13 +129,30 @@ def collector_failure(message: str) -> ClassifiedFailure:
         category = FailureCategory.AUTHORIZATION_FAILED
     elif any(token in normalized for token in ("500", "502", "503", "504")):
         category = FailureCategory.PROVIDER_5XX
+    elif any(
+        token in normalized
+        for token in ("timed out", "timeout", "connection error", "network error")
+    ):
+        category = FailureCategory.TRANSIENT_NETWORK
+    elif "provider data pending" in normalized:
+        category = FailureCategory.PROVIDER_DATA_PENDING
     elif "rights" in normalized:
         category = FailureCategory.RIGHTS_BLOCKED
     elif "budget" in normalized:
         category = FailureCategory.BUDGET_BLOCKED
     else:
         category = FailureCategory.UNKNOWN_RETRYABLE
-    return ClassifiedFailure(category, message)
+    retry_after = re.search(r"retry[-_ ]after\s*[:=]\s*(\d+)", normalized)
+    safe_message = (
+        message
+        if category == FailureCategory.CONFIGURATION_ERROR
+        else f"Collector reported {category.value}; inspect provider configuration and request diagnostics"
+    )
+    return ClassifiedFailure(
+        category,
+        safe_message,
+        retry_after_seconds=int(retry_after.group(1)) if retry_after else None,
+    )
 
 
 def completion_outcome(metadata: dict[str, object] | None) -> CompletionOutcome:

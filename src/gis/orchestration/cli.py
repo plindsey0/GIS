@@ -105,6 +105,7 @@ def _parser() -> argparse.ArgumentParser:
     retry = commands.add_parser("retry")
     retry.add_argument("--tenant", required=True)
     retry.add_argument("--execution", type=uuid.UUID, required=True)
+    retry.add_argument("--confirm-provider-recovery", action="store_true")
     worker = commands.add_parser("worker")
     worker.add_argument("--once", action="store_true")
     worker.add_argument("--sleep-seconds", type=float, default=15)
@@ -424,6 +425,9 @@ def run(arguments: list[str] | None = None) -> int:
                     }
                 )
             elif args.command == "retry":
+                execution = session.get(OrchestrationRun, args.execution)
+                if execution and execution.configuration_json.get("provider_capability_policy_id") and not args.confirm_provider_recovery:
+                    raise ValueError("Provider recovery can consume credits; review in Workbench or explicitly pass --confirm-provider-recovery")
                 emit(_run_json(orchestrator.retry(tenant.id, args.execution)))
             elif args.command == "budget":
                 _assert_site_scope(session, tenant, args.site)

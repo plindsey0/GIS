@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -7,7 +8,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, true
 from sqlalchemy.orm import Session
 
 from gis.models import (
@@ -290,11 +291,19 @@ class Orchestrator:
         return run
 
     def retry(self, tenant_id: uuid.UUID, run_id: uuid.UUID) -> OrchestrationRun:
-        run = self.session.get(OrchestrationRun, run_id)
+        run = self.session.scalar(
+            select(OrchestrationRun).where(OrchestrationRun.id == run_id).with_for_update()
+        )
         if not run or run.tenant_id != tenant_id:
             raise ValueError("execution not found")
         if run.status not in {OrchestrationStatus.FAILED, OrchestrationStatus.BLOCKED}:
             raise ValueError("only failed or blocked executions can be retried")
+        if run.configuration_json.get("provider_capability_policy_id"):
+            from gis.provider_control.recovery import recovery_preview
+
+            check = recovery_preview(self.session, run)
+            if check["blockers"]:
+                raise ValueError("; ".join(check["blockers"]))
         run.status = OrchestrationStatus.PENDING
         run.trigger_type = TriggerType.RETRY
         run.available_at = utcnow()
@@ -341,6 +350,11 @@ class Worker:
                     ]
                 ),
                 OrchestrationRun.available_at <= current,
+                OrchestrationRun.pipeline_id.not_in(
+                    select(PipelineDefinition.id).where(PipelineDefinition.paid_provider.is_(True))
+                )
+                if os.environ.get("GIS_PAID_EXECUTION_DISABLED") == "1"
+                else true(),
             )
             .order_by(OrchestrationRun.available_at, OrchestrationRun.requested_at)
             .with_for_update(skip_locked=True)
@@ -819,6 +833,9 @@ def record_heartbeat(
     else:
         heartbeat.last_heartbeat_at = current
         heartbeat.lease_expires_at = current + timedelta(seconds=lease_seconds)
+    from gis.provider_control.runtime import attest
+
+    heartbeat.metadata_json = {**(heartbeat.metadata_json or {}), **attest(session)}
     session.flush()
     return heartbeat
 

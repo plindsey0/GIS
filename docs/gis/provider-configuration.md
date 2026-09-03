@@ -117,3 +117,82 @@ production build and dbt parse passed. Local migration head is `20260903_0030`;
 Alembic reported no schema drift. Tests also exercised migration creation/rollback
 on the disposable database. Existing Python 3.9/google-auth and dbt deprecation
 warnings remain; runtime dependency upgrades are outside this epic.
+
+## Runtime readiness and recovery (Epic 16B.1)
+
+Connection metadata is not authentication. DataForSEO health now separates the
+connection record, credential resolution by a live execution worker, policy
+authorization, and execution readiness. Worker heartbeats attest only readiness
+and a reference fingerprint, never credential values. An expired/missing worker
+lease cannot prove readiness. Resolution does not validate credentials with the
+provider; authentication can still be rejected during a separately authorized call.
+
+The September 3 failure was caused by an environment-reference mismatch: the
+connection used `env:GIS_DATAFORSEO_CREDENTIAL`, while the local secret existed as
+split login/password assignments in the legacy owner-only secret file. The previous
+collector resolved only a JSON environment variable. The shared resolver now
+supports the two documented legacy JSON aliases and split-variable/file fallback.
+It does not execute the file as shell code. Custom references never silently fall
+back to unrelated credentials. Missing secrets produce terminal
+`CONFIGURATION_ERROR` / `CredentialUnavailable` with `CREDENTIAL_UNAVAILABLE`;
+malformed configuration uses `CREDENTIAL_INVALID_CONFIGURATION`. Provider rejection,
+rate limiting, transient failures and pending data retain separate categories.
+
+The detail page lists current failed/overdue obligations separately from **Next
+recurrence**. **Preview retry of failed obligation** checks the current credential,
+worker readiness, rights, target binding, policy and budget. Confirmation can spend
+credits. It reuses the original execution and obligation, appending an attempt;
+success after the deadline is reported as **Recovered late**. Historical attempts
+and their original error classifications are not rewritten. Changes since preview
+require a new preview. Worker execution revalidates policy and reserves usage again.
+
+API: `POST /api/v1/providers/{key}/recover/{run_id}` uses the same site scope and
+ADMIN role as other provider mutations. Send `confirmed:false` first, then the
+returned fingerprint with `confirmed:true`. CLI users must explicitly provide
+`gis-orchestrator retry --tenant <slug> --execution <id> --confirm-provider-recovery`.
+Prefer Workbench for runtime-readiness preview. A queued recovery is not a successful
+collection and must not be retried repeatedly if a response is uncertain.
+
+### Candidate authorization is a separate human decision
+
+The Targets step includes canonical Collection Planning candidates as well as
+tracked entities. Search shows computed lifecycle, source, priority, recommended
+cadence and blockers. Eligible candidate/active identities with allowed plan rights
+can be explicitly authorized. Missing/unknown/prohibited rights remain blocked.
+Discovery alone does not authorize paid requests. Provider authorization records
+actor, reason, timestamp, computed status/cadence and configured provider cadence in
+target metadata and audit history. Removal disables authorization without deleting
+history. For query candidates, saving binds a canonical tracked execution query.
+It does not promote the planning target or change its computed decision, blockers,
+priority, cadence or human-managed flag. Monthly GIS advice can coexist with an
+explicit weekly provider authorization.
+
+### Cost reporting
+
+Business-month request totals are independent of the recent-event display limit.
+Known actual costs, known outstanding reservations, and unreconciled request counts
+are separate. A missing actual cost remains unknown even if an estimate exists.
+No usage means no ledger activity, not free future collection. Known/estimated
+subtotals are budget-accounting figures, not a complete provider invoice. Currency
+presentation does not change stored decimal precision or invent provider pricing.
+
+### Local acceptance boundary
+
+The original September 3 obligation and failed attempt remain untouched in the
+development database. The legacy credential is locally present and resolves in the
+worker; external authentication is unverified. `va funding fee calculator` is
+discoverable and eligible but was not authorized during implementation. No paid
+recovery was executed. The runtime is held with `GIS_PAID_EXECUTION_DISABLED=1`
+pending explicit operator approval; this excludes paid pipelines from worker pickup
+without changing saved policies or erasing obligations. A normal launcher restart
+without this hold can resume authorized paid collection and must be deliberate.
+
+Validation: 312 Python tests and 27 Workbench tests passed; 69 focused provider,
+orchestration and API tests passed after the final safety guard. Ruff, mypy, ESLint,
+TypeScript, Next production build, shell syntax and dbt parse passed. Analytics SQL
+is unchanged, so no live dbt rebuild was performed. Local Alembic current/head are
+`20260903_0030`, with no detected schema drift; disposable migration tests passed.
+Browser checks covered inventory, detail, wizard candidate search, blocked recovery
+confirmation and original System run history, with no observed console errors.
+Changed files were checked for credential values and common secret signatures with
+no findings. Existing Python 3.9/google-auth and dbt deprecation warnings remain.

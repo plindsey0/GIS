@@ -86,9 +86,12 @@ from gis.models import (
     TargetFamily,
 )
 from gis.opportunities.service import OpportunityService
+from gis.orchestration.service import Orchestrator
 from gis.provider_control.binding import reconcile_schedules, schedules_for
 from gis.provider_control.configuration import CollectionConfiguration, ConfigurationService
 from gis.provider_control.manual import ManualRequest, manual_run
+from gis.provider_control.recovery import recovery_preview
+from gis.provider_control.runtime import readiness
 from gis.provider_control.service import ProviderControlService
 from gis.recommendations.provider import FixtureRecommendationProvider
 from gis.recommendations.service import RecommendationService
@@ -166,7 +169,25 @@ def provider_manual_run(
     session: Session = Depends(database),
 ) -> dict[str, Any]:
     try:
+        from gis.models import DataSourceConnection
+
+        control = ProviderControlService(session)
+        policy = control.policy(tenant_id, site_id, control.provider(provider_key).id)
+        health = (
+            readiness(
+                session,
+                session.get(DataSourceConnection, policy.data_source_connection_id)
+                if policy and policy.data_source_connection_id
+                else None,
+            )
+            if provider_key == "dataforseo"
+            else None
+        )
+        if payload.confirmed and health and not health["runnable"]:
+            raise ValueError(health["reason"])
         result = manual_run(session, tenant_id, site_id, provider_key, payload)
+        if health and not health["runnable"]:
+            result["blockers"].append(health["reason"])
         session.commit()
         return result
     except ValueError as exc:
@@ -187,6 +208,72 @@ def disable_partial_configuration(
         "Partial configuration edit; review configuration before activation",
     )
     reconcile_schedules(session, policy)
+
+
+@router.post(
+    "/providers/{provider_key}/recover/{run_id}", dependencies=[Depends(require_role(Role.ADMIN))]
+)
+def provider_recover(
+    provider_key: str,
+    run_id: uuid.UUID,
+    payload: ManualRequest,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    from gis.models import (
+        DataSourceConnection,
+        OrchestrationRun,
+        ProviderCapabilityPolicy,
+        ProviderCollectionPolicy,
+    )
+
+    try:
+        run = session.scalar(
+            select(OrchestrationRun)
+            .where(
+                OrchestrationRun.id == run_id,
+                OrchestrationRun.tenant_id == tenant_id,
+                OrchestrationRun.site_id == site_id,
+            )
+            .with_for_update()
+        )
+        if not run:
+            raise ValueError("Execution not found in this site")
+        cp = session.get(
+            ProviderCapabilityPolicy,
+            uuid.UUID(str(run.configuration_json.get("provider_capability_policy_id"))),
+        )
+        policy = session.get(ProviderCollectionPolicy, cp.collection_policy_id) if cp else None
+        control = ProviderControlService(session)
+        if not policy or policy.provider_id != control.provider(provider_key).id:
+            raise ValueError("Execution does not belong to this provider")
+        check = recovery_preview(session, run)
+        connection = (
+            session.get(DataSourceConnection, run.data_source_connection_id)
+            if run.data_source_connection_id
+            else None
+        )
+        health = readiness(session, connection) if provider_key == "dataforseo" else None
+        if health and not health["runnable"]:
+            check["blockers"].append(health["reason"])
+            check["can_retry"] = False
+        if payload.confirmed:
+            if payload.fingerprint != check["fingerprint"] or check["blockers"]:
+                raise ValueError("Recovery requires a current unblocked preview")
+            control._audit(
+                policy,
+                "OBLIGATION_RECOVERY_REQUESTED",
+                "workbench-admin",
+                "Explicit operator retry confirmation",
+                {"run_id": str(run.id), "failure": run.error_detail},
+                {"obligation_id": str(run.obligation_id), "request_id": str(payload.request_id)},
+            )
+            Orchestrator(session).retry(tenant_id, run.id)
+        return {**check, "queued": payload.confirmed}
+    except (ValueError, RuntimeError) as exc:
+        session.rollback()
+        raise ApiError(409, "RECOVERY_BLOCKED", str(exc)) from exc
 
 
 @router.get("/providers", dependencies=[Depends(require_role(Role.READ))])

@@ -45,6 +45,24 @@ def collector_environment(
     secret_file: Path = PAGESPEED_SECRET_FILE,
 ) -> dict[str, str]:
     environment = os.environ.copy()
+    if pipeline.key in {"serp", "external_search"}:
+        import json
+
+        from gis.provider_control.credentials import dataforseo_credentials
+
+        connection = (
+            session.get(DataSourceConnection, run.data_source_connection_id)
+            if run.data_source_connection_id
+            else None
+        )
+        if not connection:
+            raise ValueError("Provider connection is missing")
+        login, password = dataforseo_credentials(connection.credential_reference)
+        assert connection.credential_reference is not None
+        environment[connection.credential_reference.removeprefix("env:")] = json.dumps(
+            {"login": login, "password": password}
+        )
+        return environment
     if pipeline.key != "experience":
         return environment
     connection = (
@@ -130,7 +148,7 @@ def collector_cli_handler(session: Session, run: OrchestrationRun) -> PipelineRe
         env=collector_environment(session, run, pipeline),
     )
     if completed.returncode:
-        raise RuntimeError(completed.stderr[-2000:] or completed.stdout[-2000:])
+        raise collector_failure(completed.stderr[-2000:] or completed.stdout[-2000:])
     ingestion_run = None
     if run.data_source_connection_id:
         ingestion_run = session.scalar(

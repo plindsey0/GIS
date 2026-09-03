@@ -93,6 +93,17 @@ def test_provider_configuration_api_is_admin_only_and_preview_has_no_work(
         json={"request_id": str(uuid.uuid4())},
     )
     assert run.status_code == 403
+    recovery_url = f"/api/v1/providers/dataforseo/recover/{uuid.uuid4()}"
+    assert (
+        client.post(
+            recovery_url, params=query, headers=headers(), json={"request_id": str(uuid.uuid4())}
+        ).status_code
+        == 403
+    )
+    missing = client.post(
+        recovery_url, params=query, headers=headers("ADMIN"), json={"request_id": str(uuid.uuid4())}
+    )
+    assert missing.status_code == 409 and missing.json()["error"]["code"] == "RECOVERY_BLOCKED"
 
 
 def test_site_and_tenant_isolation(client: TestClient, session: Session) -> None:
