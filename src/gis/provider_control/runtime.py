@@ -17,6 +17,7 @@ from gis.models import (
     ProviderCollectionPolicy,
 )
 from gis.provider_control.credentials import probe
+from gis.provider_control.operations import authentication
 
 
 def attest(session: Session) -> dict[str, Any]:
@@ -61,16 +62,23 @@ def readiness(session: Session, connection: DataSourceConnection | None) -> dict
         if local["state"] == "INVALID_CONFIGURATION"
         else "CONNECTED_CREDENTIAL_UNAVAILABLE"
     )
+    auth = authentication(session, connection)
     return {
+        **auth,
         "state": state,
-        "runnable": verified and not disabled and connection.status.value == "ACTIVE",
+        "runnable": verified
+        and not disabled
+        and connection.status.value == "ACTIVE"
+        and auth["authentication_state"] != "AUTHENTICATION_FAILED",
         "worker_verified": verified,
         "api_resolution": local["state"],
-        "authentication": "NOT_EXTERNALLY_VALIDATED",
+        "authentication": auth["authentication_state"],
         "execution_held": disabled,
         "reason": "Paid execution is held for no-call validation"
         if disabled
-        else "Credential resolved by live execution worker; provider authentication is not yet validated"
+        else "The provider rejected authentication after the last successful interaction"
+        if auth["authentication_state"] == "AUTHENTICATION_FAILED"
+        else "Credential resolved by live execution worker. " + auth["authentication_explanation"]
         if verified
         else "The configured credential is unavailable or not yet verified by a live execution worker",
     }

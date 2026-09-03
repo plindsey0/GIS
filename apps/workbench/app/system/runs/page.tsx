@@ -1,3 +1,3 @@
-import {Explorer} from "@/components/explorer";
+import {RunHistory} from "@/components/run-history";
 import {SystemNav} from "@/components/system-explorer";
-export default function Page(){return <><SystemNav/><Explorer title="Run history" description="External ingestion and local processing executions, with trigger and obligation timeliness preserved." endpoint="/api/v1/system/runs" empty="No operational runs match this view." columns={[{key:"label",label:"Pipeline / run"},{key:"status",label:"Status"},{key:"trigger",label:"Trigger"},{key:"timeliness",label:"Timeliness"},{key:"started_at",label:"Started",format:"date"},{key:"records_received",label:"Received",format:"count"},{key:"records_inserted",label:"Inserted",format:"count"},{key:"errors",label:"Errors",format:"count"}]} filters={[{name:"status",label:"Status",options:[{value:"SUCCEEDED",label:"Succeeded"},{value:"FAILED",label:"Failed"},{value:"PARTIAL",label:"Partial"},{value:"RUNNING",label:"Running"}]}]}/></>}
+export default function Page(){return <><SystemNav/><RunHistory/></>}

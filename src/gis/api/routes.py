@@ -1777,10 +1777,23 @@ def system_runs(
     limit: int = Query(25, ge=1, le=100),
     status: Optional[str] = None,
     pipeline_key: Optional[str] = None,
+    provider_key: Optional[str] = None,
+    trigger: Optional[str] = None,
+    timeliness: Optional[str] = None,
+    outcome: Optional[str] = None,
     session: Session = Depends(database),
 ) -> dict[str, Any]:
     return SystemQueries(session).runs(
-        tenant_id, site_id, page=page, limit=limit, status=status, pipeline_key=pipeline_key
+        tenant_id,
+        site_id,
+        page=page,
+        limit=limit,
+        status=status,
+        pipeline_key=pipeline_key,
+        provider_key=provider_key,
+        trigger=trigger,
+        timeliness=timeliness,
+        outcome=outcome,
     )
 
 

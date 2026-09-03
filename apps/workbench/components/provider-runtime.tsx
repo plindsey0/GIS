@@ -4,7 +4,7 @@ import {useState} from "react";
 import {api,siteScope} from "../lib/api";
 import {formatDate,humanize} from "../lib/format";
 
-export type CredentialReadiness={state:string;reason:string;worker_verified?:boolean;execution_held?:boolean};
+export type CredentialReadiness={state:string;reason:string;worker_verified?:boolean;execution_held?:boolean;authentication_state?:string;last_authentication_success_at?:string|null;last_authentication_failure_at?:string|null};
 export type Obligation={id:string;preferred_due_at:string;status:string;timeliness:string;reason:string;run:string|null};
 type RetryPreview={fingerprint:string;blockers:string[];can_retry:boolean};
 export function RecoveryControl({providerKey,run}:{providerKey:string;run:string}){

@@ -252,6 +252,65 @@ class ProviderControlService:
         from gis.provider_control.runtime import readiness
 
         runtime = readiness(self.session, connection) if key == "dataforseo" else None
+        execution_blockers: list[str] = []
+        budget_warnings: list[str] = []
+        if state == "ACTIVE" and policy:
+            from gis.models import PermittedUse, RightsStatus
+            from gis.provenance.service import evaluate_connection_use
+
+            if (
+                connection
+                and evaluate_connection_use(
+                    self.session, connection, PermittedUse.NORMALIZED_RETENTION
+                ).status
+                != RightsStatus.ALLOWED
+            ):
+                execution_blockers.append("RIGHTS_BLOCKED")
+            for cap in capabilities:
+                cp = capability_policies.get(cap.id)
+                if not cp or not cp.enabled:
+                    continue
+                target = self.session.scalar(
+                    select(ProviderCollectionTarget)
+                    .where(
+                        ProviderCollectionTarget.capability_policy_id == cp.id,
+                        ProviderCollectionTarget.enabled.is_(True),
+                    )
+                    .limit(1)
+                )
+                if not target or not target.target_value:
+                    execution_blockers.append("No targets authorized for an enabled capability")
+                    continue
+                preflight = self.preflight(
+                    tenant_id,
+                    site_id,
+                    key,
+                    cap.capability_key,
+                    [target.target_value],
+                    1,
+                    Decimal(1),
+                )
+                execution_blockers.extend(preflight.blocking_reasons)
+                budget_warnings.extend(preflight.warnings)
+        from gis.provider_control.operations import provider_operations
+
+        operations = provider_operations(
+            self.session, connection.id if connection else None, tenant_id, site_id
+        )
+        health = (
+            "UNAVAILABLE"
+            if state == "UNAVAILABLE"
+            else "PAUSED"
+            if state == "PAUSED" or (runtime and runtime.get("execution_held"))
+            else "DISABLED"
+            if state == "CONNECTED_DISABLED"
+            else "ATTENTION_REQUIRED"
+            if reason
+            or execution_blockers
+            or operations["current_incidents"]
+            or (runtime and not runtime["runnable"])
+            else "HEALTHY"
+        )
         # Summary covers the whole business month, independently of the recent-event page.
         usage_totals = self.session.execute(
             select(
@@ -275,9 +334,15 @@ class ProviderControlService:
             )
         ).one()
         return {
+            "operations": operations,
+            "execution_blockers": list(dict.fromkeys(execution_blockers)),
+            "budget_warnings": list(dict.fromkeys(budget_warnings)),
+            "operational_health": health,
             "credential_readiness": runtime,
             "execution_readiness": "RUNNABLE"
-            if state == "ACTIVE" and (runtime is None or runtime["runnable"])
+            if state == "ACTIVE"
+            and not execution_blockers
+            and (runtime is None or runtime["runnable"])
             else "BLOCKED",
             "cost_state": "UNKNOWN_UNRECONCILED"
             if usage_totals[1]

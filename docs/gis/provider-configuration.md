@@ -196,3 +196,14 @@ Browser checks covered inventory, detail, wizard candidate search, blocked recov
 confirmation and original System run history, with no observed console errors.
 Changed files were checked for credential values and common secret signatures with
 no findings. Existing Python 3.9/google-auth and dbt deprecation warnings remain.
+
+## Provider operations inspection
+
+See [Provider operations semantics](provider-operations.md) for the three-level
+inspection model, historical authentication evidence, per-target activity,
+attempt timing, current incidents versus recovered history, and exact costs.
+The primary view is decision information; execution/data is one disclosure away;
+configuration history, IDs, complete rights and source metadata remain in audit
+disclosures. Disable now requires confirmation; paid execution still requires its
+existing preview and confirmation. A validation hold is explicit and does not
+change collection authorization.

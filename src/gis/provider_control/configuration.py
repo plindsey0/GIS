@@ -120,6 +120,15 @@ class ConfigurationService:
                 "label": row.query_text if isinstance(row, TrackedQuery) else row.hostname,
                 "value": row.normalized_query if isinstance(row, TrackedQuery) else row.hostname,
                 "type": kind,
+                "href": next(
+                    (
+                        c.get("href")
+                        for c in extra
+                        if c["value"]
+                        == (row.normalized_query if isinstance(row, TrackedQuery) else row.hostname)
+                    ),
+                    None,
+                ),
             }
             for row in rows
             if not isinstance(row, TrackedQuery) or row.active

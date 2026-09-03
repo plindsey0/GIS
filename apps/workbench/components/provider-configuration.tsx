@@ -4,19 +4,21 @@ import Link from "next/link";
 import {useCallback, useEffect, useState} from "react";
 import {api, siteScope} from "../lib/api";
 import {formatDate, formatNumber, humanize} from "../lib/format";
+import {ProviderOverview} from "./provider-overview";
+import type {Activity} from "../lib/operations";
 import {ProviderRuntime,scheduleLabel,type CredentialReadiness,type Obligation} from "./provider-runtime";
 import {ErrorState, LoadingState, PageHeader, StatusBadge} from "./ui";
 
 type Policy = Record<string, string | number | boolean | null>;
 type Capability = {
   key:string; name:string; description:string; enabled:boolean; target_ids:string[];
-  choices:Array<{id:string;label:string;type:string;computed_status?:string;computed_cadence?:string;priority?:string;source?:string;blocker?:string;eligible?:boolean;unavailable_reason?:string}>; cadence:string;
+  choices:Array<{id:string;label:string;type:string;computed_status?:string;computed_cadence?:string;priority?:string;source?:string;blocker?:string;eligible?:boolean;href?:string;unavailable_reason?:string}>; cadence:string;
   hour:number; minute:number; weekday:number; month_day:number; freshness_hours:number;
   per_run_limit:number; unit_price:string|null; pricing_notes:string;
   pricing_provenance:string; last_verified:string|null;
 };
-type Configuration = {
-  detail:{credential_readiness?:CredentialReadiness|null;execution_readiness?:string;known_actual_cost_month?:string|null;known_reserved_cost_month?:string|null;cost_state?:string;request_count?:number;unknown_cost_requests?:number;name:string;description:string;implementation_status:string;connection_state:string;collection_state:string;blocking_reason:string|null;is_commercial:boolean;last_collection:string|null;next_collection:string|null;budget:{spent_day:string;spent_month:string};usage:Array<{id:string;status:string;requests:number;actual_cost:string|null;estimated_cost:string|null;occurred_at:string}>};
+export type Configuration = {
+  detail:{budget_warnings?:string[];execution_blockers?:string[];operations?:{activity:Activity[];current_incidents:number;reliability:{expected:number;on_time:number;recovered_late:number;missed:number}};operational_health?:string;credential_readiness?:CredentialReadiness|null;execution_readiness?:string;known_actual_cost_month?:string|null;known_reserved_cost_month?:string|null;cost_state?:string;request_count?:number;unknown_cost_requests?:number;name:string;description:string;implementation_status:string;connection_state:string;collection_state:string;blocking_reason:string|null;is_commercial:boolean;last_collection:string|null;next_collection:string|null;budget:{spent_day:string;spent_month:string};usage:Array<{id:string;status:string;requests:number;actual_cost:string|null;estimated_cost:string|null;occurred_at:string}>};
   policy:Policy; capabilities:Capability[];
   current_obligations?:Obligation[];latest_failed_attempt?:{at:string;category:string;reason:string;run_id:string}|null;
   connections:Array<{id:string;label:string;status:string}>;
@@ -39,6 +41,7 @@ export function ProviderConfigurationPage({providerKey}:{providerKey:string}) {
   const [message,setMessage]=useState<string>();
   const [search,setSearch]=useState("");
   const [busy,setBusy]=useState(false);
+  const [confirmDisable,setConfirmDisable]=useState(false);
   const [authorizationReason,setAuthorizationReason]=useState("Reviewed provider configuration");
   const [runPreview,setRunPreview]=useState<{fingerprint:string;requests:number;estimated_cost:string|null;blockers:string[];queued:number}>();
   const [runRequestId,setRunRequestId]=useState("");
@@ -81,16 +84,17 @@ export function ProviderConfigurationPage({providerKey}:{providerKey:string}) {
   const d=data.detail, implemented=d.implementation_status==="IMPLEMENTED";
   return <>
     <PageHeader eyebrow="Data provider" title={d.name} description={d.description}/>
-    <div className="providerToolbar"><Link href="/providers">All providers</Link><StatusBadge>{humanize(d.connection_state)}</StatusBadge><StatusBadge>{humanize(d.collection_state)}</StatusBadge>
+    <div className="providerToolbar"><Link href="/providers">All providers</Link>
       {implemented&&step===null&&<button onClick={()=>{setStep(0);setMessage(undefined)}}>Configure collection</button>}
-      {implemented&&d.collection_state==="ACTIVE"&&<><button className="secondaryButton" disabled={busy} onClick={()=>void action("PAUSE")}>Emergency pause</button><button className="secondaryButton" disabled={busy} onClick={()=>void action("DISABLE")}>Disable collection</button></>}
+      {implemented&&d.collection_state==="ACTIVE"&&<><button className="secondaryButton" disabled={busy} onClick={()=>void action("PAUSE")}>Pause</button><button className="secondaryButton" disabled={busy} onClick={()=>setConfirmDisable(true)}>Disable collection</button></>}
       {implemented&&d.collection_state==="PAUSED"&&<button disabled={busy} onClick={()=>void action("RESUME")}>Resume existing policy</button>}
     </div>
     {error&&<ErrorState message={error}/>} {message&&<p role="status" className="providerNotice">{message}</p>}
     {implemented&&step===null&&<button className="secondaryButton" disabled={busy} onClick={()=>void run()}>Preview manual run</button>}
     {runPreview&&<section className="providerSection" aria-label="Manual run preview"><h2>Confirm manual collection</h2><p>{runPreview.requests} target requests · Estimated cost: {runPreview.estimated_cost===null?"Unknown":`$${runPreview.estimated_cost}`}</p><p>Confirmation queues work under the current policy. It does not bypass budgets, rights or disabled targets.</p>{runPreview.blockers.map(b=><p role="alert" key={b}>{humanize(b)}</p>)}<div className="providerToolbar"><button className="secondaryButton" onClick={()=>setRunPreview(undefined)}>Cancel run</button><button disabled={busy||runPreview.blockers.length>0} onClick={()=>void run(true)}>Confirm and queue collection</button></div></section>}
     {!implemented?<section className="recordCard"><h2>Integration planned</h2><p>This provider remains inspectable, but activation is unavailable until an executable adapter is implemented. No schedule or budget changes are offered.</p></section>:null}
-    {step===null?<>
+    {confirmDisable&&<section role="dialog" aria-label="Confirm disable collection"><p>Disable collection? Future provider work will stop; history remains intact. Already dispatched requests cannot be recalled.</p><button onClick={()=>setConfirmDisable(false)}>Cancel disable</button><button disabled={busy} onClick={()=>{setConfirmDisable(false);void action("DISABLE")}}>Confirm disable</button></section>}
+    {step===null?<><ProviderOverview data={data} providerKey={providerKey}/><details className="operationalDisclosure"><summary>Configuration, governance and audit history</summary>
       <section className="providerSection"><h2>Operational status</h2><dl className="detailGrid"><div><dt>Implementation</dt><dd>{humanize(d.implementation_status)}</dd></div><div><dt>Last successful collection</dt><dd>{formatDate(d.last_collection)}</dd></div><div><dt>Next recurrence (not proof of completion)</dt><dd>{d.next_collection?formatDate(d.next_collection):"Not scheduled"}</dd></div><div><dt>Collection authorization</dt><dd>{humanize(d.collection_state)}</dd></div><div><dt>Execution readiness</dt><dd>{humanize(d.execution_readiness??"UNKNOWN")}</dd></div></dl></section>
       <ProviderRuntime providerKey={providerKey} credential={d.credential_readiness} obligations={data.current_obligations} failed={data.latest_failed_attempt}/>
       <section className="providerSection"><h2>Configuration summary</h2><div className="providerGrid">{caps.map(c=><article className="recordCard providerCapability" key={c.key}><StatusBadge>{c.enabled?"Enabled":"Disabled"}</StatusBadge><h3>{c.name}</h3><p>{c.description}</p><p>{c.target_ids.length} authorized targets · Configured cadence: {humanize(c.cadence)}</p><ul>{c.choices.filter(t=>c.target_ids.includes(t.id)).map(t=><li key={t.id}>{t.label}{t.computed_cadence&&<small>GIS recommendation: {humanize(t.computed_cadence)} · Provider override: Yes</small>}</li>)}</ul><p>Freshness: {c.freshness_hours%24===0?`${c.freshness_hours/24} days`:`${c.freshness_hours} hours`}</p>{d.is_commercial&&<><p>Pricing: {c.unit_price===null?"Not configured":`${new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:8}).format(Number(c.unit_price))} per target request`}</p><p>Pricing source: {c.pricing_provenance==="USER_CONFIGURED"?"Operator-entered / user-managed":humanize(c.pricing_provenance)}</p><p>Last verified: {formatDate(c.last_verified)}</p>{c.pricing_notes&&<p>{c.pricing_notes}</p>}</>}</article>)}</div></section>
@@ -99,7 +103,7 @@ export function ProviderConfigurationPage({providerKey}:{providerKey:string}) {
       <section className="providerSection"><h2>Usage</h2><p>Requests this business month: {d.request_count??0} · Cost state: {humanize(d.cost_state??"NO_USAGE")}</p>{d.unknown_cost_requests? <p>{d.unknown_cost_requests} requests have unknown/unreconciled cost. Known totals below are not complete spend.</p>:null}<p>Known actual cost this month: {d.known_actual_cost_month==null?"Not recorded":formatNumber(d.known_actual_cost_month,"currency")} · Known reserved cost: {d.known_reserved_cost_month==null?"None recorded":formatNumber(d.known_reserved_cost_month,"currency")}</p><p>Known/estimated recorded subtotal today: {formatNumber(d.budget.spent_day,"currency")} · Month: {formatNumber(d.budget.spent_month,"currency")}</p>{d.usage.length===0?<p>No control-plane usage recorded. This is not a statement that future calls are free.</p>:<ul>{d.usage.map(u=><li key={u.id}>{formatDate(u.occurred_at)} · {u.requests} requests · {humanize(u.status)} · Actual cost: {u.actual_cost===null?"Unknown / unreconciled":formatNumber(u.actual_cost,"currency")}</li>)}</ul>}</section>
       <section className="providerSection"><h2>Recent executions</h2>{data.recent_runs?.length?<ul>{data.recent_runs.map(r=><li key={r.id}><Link href={`/system/runs/${r.id}`}>{formatDate(r.at)} · {humanize(r.status)}</Link></li>)}</ul>:<p>No orchestration history for this connection yet.</p>}<Link href="/system/pipelines">Inspect live pipelines</Link>{" · "}<Link href="/system/sources">Inspect sources and rights</Link></section>
       <section className="providerSection"><h2>Configuration history</h2>{data.history.length===0?<p>No configuration changes yet.</p>:<ul>{data.history.map((h,i)=><li key={i}>{formatDate(h.at)} · {humanize(h.action)} · {h.actor}{h.reason?` — ${h.reason}`:""}</li>)}</ul>}</section>
-    </>:<section className="providerWizard" aria-label="Collection configuration">
+    </details></>:<section className="providerWizard" aria-label="Collection configuration">
       <ol className="providerSteps">{steps.map((s,i)=><li key={s} aria-current={step===i?"step":undefined}>{s}</li>)}</ol>
       <h2>{steps[step]}</h2>
       {step===0&&<><p>Connection metadata identifies the credential reference; it does not prove runtime authentication. Connecting does not authorize collection or spending.</p>{d.credential_readiness&&<p>Saved connection readiness: {humanize(d.credential_readiness.state)}. {d.credential_readiness.reason}</p>}<label>Existing connection<select value={String(policy.data_source_connection_id??"")} onChange={e=>updatePolicy("data_source_connection_id",e.target.value||null)}><option value="">Select a connection</option>{data.connections.map(c=><option key={c.id} value={c.id}>{c.label} — {humanize(c.status)}</option>)}</select></label>{data.connections.length===0&&<p>No existing connection is available. You may inspect configuration, but activation is blocked.</p>}</>}

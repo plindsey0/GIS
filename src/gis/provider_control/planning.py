@@ -70,6 +70,7 @@ def planning_choices(
                 "label": target.display_value,
                 "value": target.normalized_identity,
                 "type": kind,
+                "href": f"/collection/{target.id}",
                 "computed_status": status,
                 "computed_cadence": decision.computed_cadence.value if decision else "UNKNOWN",
                 "priority": decision.priority_tier.value if decision else "UNKNOWN",

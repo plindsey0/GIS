@@ -97,6 +97,7 @@ def _reliability(
     runs: list[OrchestrationRun],
     obligations: list[OrchestrationObligation],
     now: datetime,
+    session: Optional[Session] = None,
 ) -> dict[str, Any]:
     if not schedule or schedule.status.value != "ENABLED":
         return {
@@ -121,11 +122,14 @@ def _reliability(
     ]
     succeeded = sum(run.status.value == "SUCCEEDED" for run in recent)
     failed = sum(run.status.value in {"FAILED", "PARTIAL"} for run in recent)
-    completed = [run for run in recent if run.started_at and run.completed_at]
+    from gis.provider_control.operations import run_evidence
+
     durations = [
-        (run.completed_at - run.started_at).total_seconds()
-        for run in completed
-        if run.completed_at and run.started_at
+        value
+        for run in recent
+        if session
+        for value in [run_evidence(session, run)["active_execution_duration"]]
+        if value is not None
     ]
     insufficient = len(recent_obligations) < 2
     return {
@@ -484,7 +488,7 @@ class SystemQueries:
                 "timeliness": "NOT_YET_DUE",
                 "reason": "No scheduled obligation has reached its due time yet.",
             },
-            "reliability": _reliability(schedule, runs, obligations, now),
+            "reliability": _reliability(schedule, runs, obligations, now, self.session),
             "volume": {
                 "total_runs": len(runs),
                 "successful_runs": sum(run.status.value == "SUCCEEDED" for run in runs),
@@ -557,11 +561,9 @@ class SystemQueries:
         self, run: OrchestrationRun, pipeline: Optional[PipelineDefinition] = None
     ) -> dict[str, Any]:
         ingestion = self._ingestion(run)
-        duration = (
-            (run.completed_at - run.started_at).total_seconds()
-            if run.started_at and run.completed_at
-            else None
-        )
+        from gis.provider_control.operations import run_evidence
+
+        evidence = run_evidence(self.session, run)
         return {
             "id": str(run.id),
             "label": f"{pipeline.name if pipeline else 'Pipeline'} run",
@@ -573,13 +575,14 @@ class SystemQueries:
             "requested_at": encoded(run.requested_at),
             "started_at": encoded(run.started_at),
             "completed_at": encoded(run.completed_at),
-            "duration_seconds": duration,
+            "duration_seconds": evidence["active_execution_duration"],
             "records_received": ingestion.records_received if ingestion else None,
             "records_inserted": ingestion.records_inserted if ingestion else None,
             "errors": ingestion.error_count if ingestion else (1 if run.error_detail else 0),
             "cost": encoded(run.actual_provider_cost),
             "currency": run.currency,
             "href": f"/system/runs/{run.id}",
+            **evidence,
         }
 
     def _run_timeliness(self, run: OrchestrationRun) -> str:
@@ -611,6 +614,10 @@ class SystemQueries:
         limit: int,
         status: Optional[str] = None,
         pipeline_key: Optional[str] = None,
+        provider_key: Optional[str] = None,
+        trigger: Optional[str] = None,
+        timeliness: Optional[str] = None,
+        outcome: Optional[str] = None,
     ) -> dict[str, Any]:
         self._site(tenant_id, site_id)
         filters: list[Any] = [
@@ -619,6 +626,44 @@ class SystemQueries:
         ]
         if status:
             filters.append(OrchestrationRun.status == status)
+        if trigger:
+            filters.append(OrchestrationRun.trigger_type == trigger)
+        if provider_key:
+            keys = ["pagespeed", "crux"] if provider_key == "google_pagespeed" else [provider_key]
+            filters.append(
+                OrchestrationRun.data_source_connection_id.in_(
+                    select(DataSourceConnection.id).join(DataSource).where(DataSource.key.in_(keys))
+                )
+            )
+        if timeliness:
+            predicate = (
+                OrchestrationObligation.satisfied_at <= OrchestrationObligation.due_at
+                if timeliness == "ON_TIME"
+                else OrchestrationObligation.satisfied_at > OrchestrationObligation.due_at
+                if timeliness == "RECOVERED_LATE"
+                else (
+                    OrchestrationObligation.satisfied_at.is_(None)
+                    & (OrchestrationObligation.due_at < datetime.now(timezone.utc))
+                )
+            )
+            filters.append(
+                OrchestrationRun.obligation_id.in_(
+                    select(OrchestrationObligation.id).where(predicate)
+                )
+            )
+        if outcome == "RECOVERED":
+            filters.extend(
+                [
+                    OrchestrationRun.status == "SUCCEEDED",
+                    OrchestrationRun.id.in_(
+                        select(ExecutionAttempt.orchestration_run_id).where(
+                            ExecutionAttempt.status == "FAILED"
+                        )
+                    ),
+                ]
+            )
+        elif outcome:
+            filters.append(OrchestrationRun.status == outcome)
         query = select(OrchestrationRun, PipelineDefinition).join(PipelineDefinition)
         if pipeline_key:
             filters.append(PipelineDefinition.key == pipeline_key)

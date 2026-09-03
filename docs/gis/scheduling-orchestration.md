@@ -175,3 +175,16 @@ out of scope.
   implemented.
 - Cadence templates are deliberately inactive and incomplete until an operator supplies connections,
   targets, rights approval, and budget limits.
+## Operational timing and activity (Epic 16B.2)
+
+`duration_seconds` in operational API summaries now means the sum of complete
+attempt durations, never original start to recovered completion. Missing attempt
+intervals produce unknown runtime. Wall-clock resolution, recovery latency and
+obligation lateness are separate fields. Historical timestamps are unchanged.
+See [the timing contract](provider-operations.md#timing-contract).
+
+Provider activity groups retries under their durable obligation, preserving one
+row per target obligation. A recovered incident is excluded from current incidents
+but retained in 30-day reliability counts. Small samples use counts, not rates.
+No dbt mart changes are required; operational counts come directly from the same
+durable obligation records and do not depend on an asynchronous mart refresh.

@@ -6,6 +6,15 @@ const configuration={detail:{name:"DataForSEO",description:"Commercial search in
 function response(body:unknown){return Promise.resolve({ok:true,status:200,text:()=>Promise.resolve(JSON.stringify(body))} as Response)}
 afterEach(()=>{cleanup();vi.unstubAllGlobals()});
 
+it("puts decision information first and keeps the audit history collapsed",async()=>{
+  vi.stubGlobal("fetch",vi.fn(()=>response({...configuration,detail:{...configuration.detail,operational_health:"HEALTHY",credential_readiness:{state:"CONNECTED_AND_RESOLVABLE",authentication_state:"VALIDATED",reason:"Historical provider acceptance"},operations:{activity:[],current_incidents:0,reliability:{expected:1,on_time:0,recovered_late:1,missed:0}}}})));
+  render(<ProviderConfigurationPage providerKey="dataforseo"/>);
+  expect(await screen.findByText("No current collection incidents.")).toBeInTheDocument();
+  expect(screen.getByText("Validated by provider interaction")).toBeVisible();
+  expect(screen.getByText("Configuration, governance and audit history").closest("details")).not.toHaveAttribute("open");
+  expect(screen.getByText("Targets and purpose: SERP collection").closest("details")).not.toHaveAttribute("open");
+});
+
 it("selects canonical targets, previews, and saves disabled without queuing collection",async()=>{
   const fetcher=vi.fn((url:string,options?:RequestInit)=>response(url.includes("/preview")?{can_activate:false,blockers:["Configure pricing"],plans:[],estimated_requests_month:"4.345",estimated_cost_month:null,timezone:"America/New_York",semantics:"Estimated"}:options?.method==="PUT"?{}:configuration));
   vi.stubGlobal("fetch",fetcher);

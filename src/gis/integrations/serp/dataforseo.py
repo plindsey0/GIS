@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -98,6 +99,21 @@ class DataForSEOProvider:
             raise DataForSEOResponseError(f"HTTP {response.status_code}{detail}")
         if not isinstance(payload, dict):
             raise DataForSEOResponseError("response JSON must be an object")
+        # Preserve the provider's monetary decimal lexeme before JSON float rounding.
+        # Other response metrics retain their existing representation.
+        raw_text = getattr(response, "text", None)
+        if isinstance(raw_text, str) and raw_text:
+            exact_payload = json.loads(raw_text, parse_float=str)
+            exact_tasks = exact_payload.get("tasks", []) if isinstance(exact_payload, dict) else []
+            parsed_tasks = payload.get("tasks")
+            task_pairs = (
+                zip(parsed_tasks, exact_tasks)
+                if (isinstance(parsed_tasks, list) and isinstance(exact_tasks, list))
+                else []
+            )
+            for task, exact_task in task_pairs:
+                if isinstance(task, dict) and isinstance(exact_task, dict) and "cost" in exact_task:
+                    task["cost"] = exact_task["cost"]
         top_status = payload.get("status_code")
         if not isinstance(top_status, int):
             raise DataForSEOResponseError("response is missing top-level status_code")
