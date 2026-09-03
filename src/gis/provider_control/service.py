@@ -81,20 +81,62 @@ class ProviderControlService:
         return row
 
     def _connection(
-        self, policy: Optional[ProviderCollectionPolicy]
+        self,
+        policy: Optional[ProviderCollectionPolicy],
+        *,
+        tenant_id: Optional[uuid.UUID] = None,
+        site_id: Optional[uuid.UUID] = None,
+        provider_key: Optional[str] = None,
     ) -> Optional[DataSourceConnection]:
+        """Resolve authentication independently from collection authorization.
+
+        Legacy connections predate provider policies, so a missing policy must not
+        make an existing connection appear absent. Prefer an explicitly selected
+        policy connection, then a site connection, then a tenant-wide connection.
+        """
         return (
             self.session.get(DataSourceConnection, policy.data_source_connection_id)
             if policy and policy.data_source_connection_id
-            else None
+            else self._legacy_connection(tenant_id, site_id, provider_key)
         )
 
+    def _legacy_connection(
+        self,
+        tenant_id: Optional[uuid.UUID],
+        site_id: Optional[uuid.UUID],
+        provider_key: Optional[str],
+    ) -> Optional[DataSourceConnection]:
+        if tenant_id is None or site_id is None or provider_key is None:
+            return None
+        source_keys = (
+            ("pagespeed", "crux") if provider_key == "google_pagespeed" else (provider_key,)
+        )
+        return self.session.scalars(
+            select(DataSourceConnection)
+            .join(DataSource)
+            .where(
+                DataSourceConnection.tenant_id == tenant_id,
+                or_(
+                    DataSourceConnection.site_id == site_id,
+                    DataSourceConnection.site_id.is_(None),
+                ),
+                DataSource.key.in_(source_keys),
+            )
+            .order_by(
+                (DataSourceConnection.site_id == site_id).desc(),
+                (DataSourceConnection.status == "ACTIVE").desc(),
+                DataSourceConnection.created_at.desc(),
+            )
+        ).first()
+
     def state(
-        self, provider: ProviderDefinition, policy: Optional[ProviderCollectionPolicy]
+        self,
+        provider: ProviderDefinition,
+        policy: Optional[ProviderCollectionPolicy],
+        connection: Optional[DataSourceConnection],
     ) -> tuple[str, Optional[str]]:
         if provider.implementation_status not in {"IMPLEMENTED", "PARTIAL"}:
             return "UNAVAILABLE", "ADAPTER_NOT_IMPLEMENTED"
-        connection = self._connection(policy)
         if not connection:
             return "NOT_CONNECTED", "CONNECTION_MISSING"
         if connection.status.value != "ACTIVE":
@@ -137,7 +179,10 @@ class ProviderControlService:
     def detail(self, tenant_id: uuid.UUID, site_id: uuid.UUID, key: str) -> dict[str, Any]:
         provider = self.provider(key)
         policy = self.policy(tenant_id, site_id, provider.id)
-        state, reason = self.state(provider, policy)
+        connection = self._connection(
+            policy, tenant_id=tenant_id, site_id=site_id, provider_key=provider.provider_key
+        )
+        state, reason = self.state(provider, policy, connection)
         capabilities = list(
             self.session.scalars(
                 select(ProviderCapability)
@@ -173,7 +218,10 @@ class ProviderControlService:
                 .limit(30)
             )
         )
-        source = self.session.scalar(select(DataSource).where(DataSource.key == key))
+        source_keys = ("pagespeed", "crux") if key == "google_pagespeed" else (key,)
+        source = self.session.scalars(
+            select(DataSource).where(DataSource.key.in_(source_keys)).order_by(DataSource.key)
+        ).first()
         connection_id = policy.data_source_connection_id if policy else None
         schedules = (
             list(
@@ -206,7 +254,7 @@ class ProviderControlService:
             "pricing_model": provider.pricing_model,
             "implementation_status": provider.implementation_status,
             "is_commercial": provider.is_commercial,
-            "connection_state": "CONNECTED" if self._connection(policy) else "NOT_CONNECTED",
+            "connection_state": "CONNECTED" if connection else "NOT_CONNECTED",
             "collection_state": state,
             "blocking_reason": reason,
             "policy": self._policy_data(policy),
@@ -320,7 +368,12 @@ class ProviderControlService:
         if action == "ENABLE":
             if provider.implementation_status != "IMPLEMENTED":
                 raise ValueError("provider adapter is not implemented")
-            if not self._connection(policy):
+            if not self._connection(
+                policy,
+                tenant_id=tenant_id,
+                site_id=site_id,
+                provider_key=provider.provider_key,
+            ):
                 raise ValueError("provider connection is required")
             if provider.is_commercial and policy.monthly_hard_budget is None:
                 raise ValueError("commercial provider requires a monthly hard budget")
@@ -475,7 +528,10 @@ class ProviderControlService:
         cap = self.capability(provider.id, capability_key)
         reasons: list[str] = []
         warnings: list[str] = []
-        state, reason = self.state(provider, policy)
+        connection = self._connection(
+            policy, tenant_id=tenant_id, site_id=site_id, provider_key=provider.provider_key
+        )
+        state, reason = self.state(provider, policy, connection)
         if reason:
             reasons.append(reason)
         cap_policy = (

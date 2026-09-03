@@ -5816,12 +5816,11 @@ class ProviderCapability(Base, TimestampMixin):
 class ProviderCollectionPolicy(Base, TimestampMixin):
     __tablename__ = "provider_collection_policy"
     __table_args__ = (
-        Index(
-            "uq_provider_policy_scope",
+        UniqueConstraint(
             "tenant_id",
             "site_id",
             "provider_id",
-            unique=True,
+            name="uq_provider_policy_scope",
             postgresql_nulls_not_distinct=True,
         ),
         Index("ix_provider_policy_scope", "tenant_id", "site_id", "status"),
@@ -5897,6 +5896,7 @@ class ProviderCollectionTarget(Base, TimestampMixin):
             "target_reference_id",
             "target_value",
             name="uq_provider_collection_target",
+            postgresql_nulls_not_distinct=True,
         ),
         {"schema": SCHEMA},
     )

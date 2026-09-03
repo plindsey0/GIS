@@ -141,6 +141,44 @@ def test_connection_does_not_authorize_collection_and_budget_is_required(session
         service.transition(tenant.id, site.id, "dataforseo", "ENABLE", "test-admin", None)
 
 
+def test_legacy_connection_without_policy_is_connected_but_disabled(session: Session) -> None:
+    tenant, site, _connection = scope(session)
+    detail = ProviderControlService(session).detail(tenant.id, site.id, "dataforseo")
+    assert detail["connection_state"] == "CONNECTED"
+    assert detail["collection_state"] == "CONNECTED_DISABLED"
+    assert detail["blocking_reason"] == "POLICY_DISABLED"
+    assert detail["policy"] is None
+    assert detail["usage"] == []
+
+
+def test_inventory_isolated_by_tenant_and_site(session: Session) -> None:
+    tenant, site, _connection = scope(session)
+    other_tenant = Tenant(name="Other Provider", slug="other-provider")
+    session.add(other_tenant)
+    session.flush()
+    other_org = Organization(
+        tenant_id=other_tenant.id, name="Other Provider", slug="other-provider"
+    )
+    session.add(other_org)
+    session.flush()
+    other_site = Site(
+        tenant_id=other_tenant.id,
+        organization_id=other_org.id,
+        name="Other Provider",
+        slug="other-provider",
+        canonical_url="https://other-provider.example",
+        timezone="UTC",
+    )
+    session.add(other_site)
+    session.flush()
+    service = ProviderControlService(session)
+    assert service.detail(tenant.id, site.id, "dataforseo")["connection_state"] == "CONNECTED"
+    assert (
+        service.detail(other_tenant.id, other_site.id, "dataforseo")["connection_state"]
+        == "NOT_CONNECTED"
+    )
+
+
 def test_budget_validation_and_unknown_price_fail_closed(session: Session) -> None:
     tenant, site, connection = scope(session)
     service = ProviderControlService(session)

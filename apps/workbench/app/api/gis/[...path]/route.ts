@@ -13,7 +13,23 @@ async function forward(request: NextRequest, context: {params: Promise<{path: st
     if (process.env.GIS_API_OPERATOR_KEY) headers.set("X-GIS-Operator-Key", process.env.GIS_API_OPERATOR_KEY);
     const body = request.method === "GET" ? undefined : await request.text();
     const response = await fetch(target, {method: request.method, headers, body, cache: "no-store", signal: AbortSignal.timeout(10_000)});
-    return new NextResponse(await response.text(), {status: response.status, headers: {"Content-Type": response.headers.get("Content-Type") ?? "application/json"}});
+    const text = await response.text();
+    let payload: unknown;
+    try { payload = JSON.parse(text); }
+    catch {
+      payload = {
+        error: {
+          code: "GIS_UPSTREAM_ERROR",
+          message: response.ok
+            ? "The GIS API returned an unreadable response."
+            : "The GIS API could not complete this request.",
+          request_id: response.headers.get("X-Request-ID") ?? "workbench-proxy",
+          details: null,
+          retryable: response.status >= 500,
+        },
+      };
+    }
+    return NextResponse.json(payload, {status: response.status});
   } catch {
     return NextResponse.json(
       {

@@ -29,6 +29,14 @@ export GIS_API_BASE_URL=http://127.0.0.1:8001
 export PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 export PATH="$REPO_DIR/.venv/bin:$PATH"
 
+CURRENT_REV=$($REPO_DIR/.venv/bin/alembic current 2>/dev/null | awk 'NF {print $1; exit}')
+HEAD_REV=$($REPO_DIR/.venv/bin/alembic heads 2>/dev/null | awk 'NF {print $1; exit}')
+if [ "$CURRENT_REV" != "$HEAD_REV" ]; then
+  echo "GIS database migration is $CURRENT_REV; application head is $HEAD_REV." >&2
+  echo "Run: .venv/bin/alembic upgrade head" >&2
+  exit 1
+fi
+
 cleanup() {
   for pid in ${WORKBENCH_PID:-} ${WORKER_PID:-} ${API_PID:-}; do
     if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi
