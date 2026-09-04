@@ -45,9 +45,10 @@ it("keeps planned providers inspectable but not configurable",async()=>{
   expect(screen.queryByRole("button",{name:"Preview manual run"})).not.toBeInTheDocument();
 });
 
-it("shows manual-run blockers and never offers an enabled confirmation",async()=>{
-  vi.stubGlobal("fetch",vi.fn((url:string)=>response(url.includes("/run?")?{fingerprint:"policy",requests:1,estimated_cost:null,blockers:["POLICY_DISABLED"],queued:0}:configuration)));
+it("requires explicit scope before offering confirmation",async()=>{
+  vi.stubGlobal("fetch",vi.fn((url:string)=>response(url.includes("/run?")?{choices:[],scope:[],fingerprint:"policy",requests:0,estimated_cost:null,blockers:["POLICY_DISABLED"],queued:0}:configuration)));
   render(<ProviderConfigurationPage providerKey="dataforseo"/>);
   fireEvent.click(await screen.findByRole("button",{name:"Preview manual run"}));
-  expect(await screen.findByRole("button",{name:"Confirm and queue collection"})).toBeDisabled();
+  expect(await screen.findByRole("button",{name:"Review selected collection"})).toBeDisabled();
+  expect(screen.queryByRole("button",{name:"Confirm and queue collection"})).not.toBeInTheDocument();
 });

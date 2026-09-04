@@ -347,6 +347,16 @@ def schedules_for(
     policy = ProviderControlService(session).policy(tenant_id, site_id, provider_id)
     if not policy:
         return []
+    capabilities = {
+        str(cp.id): (cp, cap)
+        for cp, cap in session.execute(
+            select(ProviderCapabilityPolicy, ProviderCapability)
+            .join(
+                ProviderCapability, ProviderCapability.id == ProviderCapabilityPolicy.capability_id
+            )
+            .where(ProviderCapabilityPolicy.collection_policy_id == policy.id)
+        )
+    }
     return [
         {
             "id": str(s.id),
@@ -355,6 +365,16 @@ def schedules_for(
             "timezone": s.timezone,
             "next_at": s.next_scheduled_at,
             "policy_version": s.policy_version,
+            "cadence": capabilities[str(s.configuration_json.get("provider_capability_policy_id"))][
+                0
+            ].cadence
+            if str(s.configuration_json.get("provider_capability_policy_id")) in capabilities
+            else None,
+            "capability_key": capabilities[
+                str(s.configuration_json.get("provider_capability_policy_id"))
+            ][1].capability_key
+            if str(s.configuration_json.get("provider_capability_policy_id")) in capabilities
+            else None,
         }
         for s in session.scalars(
             select(ScheduleDefinition).where(

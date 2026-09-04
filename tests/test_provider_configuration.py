@@ -176,12 +176,25 @@ def test_removed_target_and_disabled_policy_block_dispatch(session: Session) -> 
 
 def test_manual_preview_confirmation_idempotency_and_current_policy(session: Session) -> None:
     tenant, site, _, config, service = setup(session)
+    from gis.models import DataRightsPolicy, RightsDecision
+
+    rights = DataRightsPolicy(
+        tenant_id=tenant.id,
+        name="Manual fixture rights",
+        derived_storage_allowed=RightsDecision.ALLOWED,
+    )
+    session.add(rights)
+    session.flush()
+    session.get(
+        DataSourceConnection, config.policy.data_source_connection_id
+    ).rights_policy_id = rights.id
     service.save(tenant.id, site.id, "dataforseo", config)
     request = ManualRequest(request_id=uuid.uuid4())
     preview = manual_run(session, tenant.id, site.id, "dataforseo", request)
     assert preview["blockers"] and preview["paid_calls_made"] == 0
     config.activate = True
     service.save(tenant.id, site.id, "dataforseo", config)
+    request.target_ids = [session.scalar(select(ProviderCollectionTarget.id))]
     preview = manual_run(session, tenant.id, site.id, "dataforseo", request)
     assert preview["blockers"] == [] and preview["requests"] == 1
     assert session.scalar(select(func.count()).select_from(OrchestrationRun)) == 0

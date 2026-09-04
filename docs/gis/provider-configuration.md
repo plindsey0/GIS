@@ -199,6 +199,12 @@ no findings. Existing Python 3.9/google-auth and dbt deprecation warnings remain
 
 ## Provider operations inspection
 
+Manual execution now requires a one-time target selection grouped by capability.
+See [manual scope and API semantics](provider-operations.md#explicit-manual-execution-scope).
+It is independent of recurring schedules and cannot implicitly run all authorized
+provider targets. Scheduled targets are unselected by default. Manual-only entries
+display **Not scheduled**, regardless of dormant stored clock values.
+
 See [Provider operations semantics](provider-operations.md) for the three-level
 inspection model, historical authentication evidence, per-target activity,
 attempt timing, current incidents versus recovered history, and exact costs.
