@@ -100,6 +100,7 @@ def run(arguments: list[str] | None = None) -> int:
                 print(
                     json.dumps({"ingestion_run_id": str(result.id), "status": result.status.value})
                 )
+                return 0 if result.status.value == "SUCCEEDED" and not result.error_count else 1
         return 0
     except ClassifiedFailure as error:
         print(

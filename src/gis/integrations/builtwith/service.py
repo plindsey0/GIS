@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
 
-from gis.integrations.builtwith.provider import ENDPOINT, Profile
+from gis.integrations.builtwith.provider import ENDPOINT, Profile, provider_date
 from gis.integrations.external_search.dataforseo import normalize_domain
 from gis.integrations.technology_intelligence.service import resolve_provider_technology
 from gis.models import (
@@ -163,6 +163,8 @@ class BuiltWithCollector:
             evidence_seen: set[tuple[uuid.UUID, str]] = set()
             for item in profile.technologies:
                 tech = item["technology"]
+                first_seen = provider_date(tech.get("FirstDetected"))
+                last_seen = provider_date(tech.get("LastDetected"))
                 identity = resolve_provider_technology(
                     self.session,
                     tech["Name"],
@@ -177,6 +179,8 @@ class BuiltWithCollector:
                         technology_id=identity.id,
                         provider_technology_name=tech["Name"],
                         provider_category=str(tech.get("Tag") or "UNKNOWN"),
+                        provider_first_seen_at=first_seen,
+                        provider_last_seen_at=last_seen,
                         presence_status="UNKNOWN",
                         detection_scope="DOMAIN",
                         confidence=Decimal("1"),
@@ -189,6 +193,15 @@ class BuiltWithCollector:
                     self.session.add(detection)
                     self.session.flush()
                     detections[identity.id] = detection
+                else:
+                    if first_seen:
+                        detection.provider_first_seen_at = min(
+                            first_seen, detection.provider_first_seen_at or first_seen
+                        )
+                    if last_seen:
+                        detection.provider_last_seen_at = max(
+                            last_seen, detection.provider_last_seen_at or last_seen
+                        )
                 value = json.dumps(item, sort_keys=True, default=str)
                 evidence_hash = hashlib.sha256(value.encode()).hexdigest()
                 if (detection.id, evidence_hash) in evidence_seen:
@@ -240,6 +253,13 @@ class BuiltWithCollector:
                 if isinstance(error, ClassifiedFailure)
                 else "Internal BuiltWith processing error"
             )
+            run.source_metadata = {
+                **run.source_metadata,
+                "failure_category": error.category.value
+                if isinstance(error, ClassifiedFailure)
+                else FailureCategory.INTERNAL_PROCESSING_ERROR.value,
+                "provider_cost": None,
+            }
             control.reconcile(
                 reservation,
                 actual_cost=None,
@@ -247,7 +267,5 @@ class BuiltWithCollector:
                 status="FAILED",
                 ingestion_run_id=run.id,
             )
-            self.session.commit()
-            raise
         self.session.commit()
         return run

@@ -75,6 +75,7 @@ export function ProviderConfigurationPage({providerKey}:{providerKey:string}) {
   return <>
     <PageHeader eyebrow="Data provider" title={d.name} description={d.description}/>
     <div className="providerToolbar"><Link href="/providers">All providers</Link>
+      {providerKey==="builtwith"&&<Link href="/docs/builtwith-acceptance">First collection guide</Link>}
       {implemented&&step===null&&<button onClick={()=>{setStep(0);setMessage(undefined)}}>Configure collection</button>}
       {implemented&&d.collection_state==="ACTIVE"&&<><button className="secondaryButton" disabled={busy} onClick={()=>void action("PAUSE")}>Pause</button><button className="secondaryButton" disabled={busy} onClick={()=>setConfirmDisable(true)}>Disable collection</button></>}
       {implemented&&d.collection_state==="PAUSED"&&<button disabled={busy} onClick={()=>void action("RESUME")}>Resume existing policy</button>}

@@ -6,6 +6,20 @@ const configuration={detail:{name:"DataForSEO",description:"Commercial search in
 function response(body:unknown){return Promise.resolve({ok:true,status:200,text:()=>Promise.resolve(JSON.stringify(body))} as Response)}
 afterEach(()=>{cleanup();vi.unstubAllGlobals()});
 
+it("configures BuiltWith DOMAIN profiles without DataForSEO market parameters",async()=>{
+  vi.stubGlobal("fetch",vi.fn(()=>response({...configuration,detail:{...configuration.detail,name:"BuiltWith"},capabilities:[{...configuration.capabilities[0],key:"TECHNOLOGY_PROFILE",name:"Technology profile",cadence:"MANUAL_ONLY",choices:[{id:"domain-1",label:"vahomemath.com",type:"DOMAIN"}]}]})));
+  render(<ProviderConfigurationPage providerKey="builtwith"/>);
+  fireEvent.click(await screen.findByRole("button",{name:"Configure collection"}));
+  fireEvent.click(screen.getByRole("button",{name:"Continue"}));
+  expect(screen.queryByLabelText(/location/i)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/language/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button",{name:"Continue"}));
+  expect(screen.getByLabelText("vahomemath.com")).not.toBeChecked();
+  fireEvent.click(screen.getByLabelText("vahomemath.com"));
+  fireEvent.click(screen.getByRole("button",{name:"Continue"}));
+  expect(screen.queryByLabelText("Day")).not.toBeInTheDocument();
+});
+
 it("puts decision information first and keeps the audit history collapsed",async()=>{
   vi.stubGlobal("fetch",vi.fn(()=>response({...configuration,detail:{...configuration.detail,operational_health:"HEALTHY",credential_readiness:{state:"CONNECTED_AND_RESOLVABLE",authentication_state:"VALIDATED",reason:"Historical provider acceptance"},operations:{activity:[],current_incidents:0,reliability:{expected:1,on_time:0,recovered_late:1,missed:0}}}})));
   render(<ProviderConfigurationPage providerKey="dataforseo"/>);

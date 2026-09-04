@@ -15,7 +15,7 @@ Connection ≠ credential resolution ≠ authentication ≠ authorization ≠ ex
 Authorized target ≠ selected target ≠ executed target. Both manual-only and scheduled
 targets start unselected. A manual invocation never alters a recurring schedule.
 
-## API and costs (documentation checked September 4, 2026)
+## API and costs
 
 The [Domain API](https://api.builtwith.com/domain-api) endpoint is
 `https://api.builtwith.com/v23/api.json`. One root-domain request returns technology
@@ -114,3 +114,47 @@ internal. See [provider error codes](https://api.builtwith.com/errorCodes).
 credential safety, failure classes, explicit scope, limits, and the complete worker →
 attempt → ingestion → technology evidence → usage → activity chain. Live acceptance
 requires an operator-provided key, entitlement, reviewed rights, and explicit approval.
+
+The CLI returns the exact ingestion identifier even when ingestion fails, with a nonzero
+exit status. The worker links that failed ingestion to the attempt and applies the shared
+failure/retry policy. A successful process exit alone never establishes collection success.
+The isolated `test_builtwith_acceptance.py` exercises this real CLI contract using mocked
+HTTP responses; its records are not production authentication or acceptance evidence.
+
+Documented offset-bearing ISO detection timestamps populate normalized first/last-seen
+fields in UTC. Unrecognized, numeric, or timezone-less values remain in raw evidence,
+with normalized dates unknown. Repeated technology paths use earliest first/latest last
+dates. Provider history is not proof of current presence. Existing technology staging
+models expose these observations and detections; opportunity qualification is unchanged.
+
+## First live acceptance: operator checklist (not performed by this epic)
+
+1. Review and merge the branch, install the editable package, and restart GIS.
+2. Configure the secret reference above and verify worker credential resolvability.
+   This does not validate the key with BuiltWith. Confirm Domain API entitlement separately.
+3. Review rights with an identified authority. Explicitly permit raw and normalized
+   retention only if licensed; leave other unreviewed uses UNKNOWN.
+4. Configure BuiltWith → TECHNOLOGY_PROFILE → existing DOMAIN `vahomemath.com`.
+   Keep **Manual only · Not scheduled**. No location/language parameters are required.
+5. Set conservative hard budgets and explicit request limits (one per execution and
+   one per day for this test). Enter pricing only on a documented basis. If actual/estimated
+   price is unknown, explicitly review bounded unknown-cost permission; it is not free.
+6. Activate BuiltWith collection. Check credential, authorization, rights, budgets and
+   readiness separately. Do not alter DataForSEO settings or recurrence.
+7. Release the process-level paid-execution hold only with explicit live-test approval.
+   This is a global hold: inspect pending paid work first, since releasing it also permits
+   already-authorized DataForSEO work. Restart with the approved runtime environment.
+8. Preview manual run, select only `vahomemath.com`, review **1 capability / 1 target /
+   1 provider request**, cost Known or Unknown, and no schedule impact. Preview spends nothing.
+9. Explicitly confirm once. Follow activity → run → attempt → ingestion → technology
+   evidence → usage. Verify endpoint v23, domain, timestamps, rights and source provenance.
+10. Verify actual credit/cost telemetry if available. Cumulative credit headers and site
+    `Spend` are not an exact request charge. Leave unresolved actual USD unknown; do not
+    repeat a request merely to obtain billing evidence. Record acceptance separately.
+
+If credentials, rights, budget or scope block preview, correct that specific control before
+confirmation. For provider rejection inspect the classified cause and linked ingestion;
+do not repeatedly click confirm. Rate-limit/transient failures may enter bounded retries:
+inspect queued work and daily request controls before authorizing further attempts.
+An empty technology profile can be a valid provider result; it does not justify synthetic
+evidence or lowering detector thresholds.

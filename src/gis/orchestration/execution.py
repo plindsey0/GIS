@@ -160,7 +160,7 @@ def collector_cli_handler(session: Session, run: OrchestrationRun) -> PipelineRe
         timeout=int(run.configuration_json.get("timeout_seconds", 3600)),
         env=collector_environment(session, run, pipeline),
     )
-    if completed.returncode and pipeline.key != "external_search":
+    if completed.returncode and pipeline.key not in {"external_search", "builtwith_technology"}:
         raise collector_failure(completed.stderr[-2000:] or completed.stdout[-2000:])
     ingestion_run = None
     if pipeline.key in {"builtwith_technology", "external_search"}:

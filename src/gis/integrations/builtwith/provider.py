@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -11,6 +12,17 @@ from gis.models import FailureCategory
 from gis.orchestration.reliability import ClassifiedFailure
 
 ENDPOINT = "https://api.builtwith.com/v23/api.json"
+
+
+def provider_date(value: Any) -> datetime | None:
+    """Normalize documented offset-bearing timestamps; never invent an unknown timezone."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
