@@ -15,7 +15,8 @@ export function RecoveryControl({providerKey,run}:{providerKey:string;run:string
 export function ProviderRuntime({providerKey,credential,obligations=[],failed}:{providerKey:string;credential?:CredentialReadiness|null;obligations?:Obligation[];failed?:{at:string;category:string;reason:string;run_id:string}|null}){
   return <section className="providerSection"><h2>Execution readiness and current obligations</h2>{credential&&<><p>Credential readiness: <strong>{humanize(credential.state)}</strong></p><p>{credential.reason}</p><p>Credential resolution is not proof of provider authentication or permission to spend.</p></>}{obligations.length===0?<p>No current overdue obligation recorded.</p>:obligations.map(o=><article key={o.id}><h3>Due {formatDate(o.preferred_due_at)}</h3><p>{humanize(o.status)} · {humanize(o.timeliness)}</p><p>{o.reason}</p>{o.run&&<><Link href={o.run}>Inspect original execution and attempts</Link>{["FAILED","BLOCKED"].includes(o.status)&&<RecoveryControl providerKey={providerKey} run={o.run}/>}</>}</article>)}{failed&&<p>Latest failed attempt: <Link href={`/system/runs/${failed.run_id}`}>{formatDate(failed.at)}</Link> · {humanize(failed.category??"UNKNOWN")} · {failed.reason}</p>}</section>
 }
-export function scheduleLabel(cron:string,timezone:string,next:string|null):string{
+export function scheduleLabel(cron:string,timezone:string,next:string|null,cadence?:string|null):string{
+  if(cadence==="MANUAL_ONLY")return "Manual only · Not scheduled";
   const [minute,hour,day,,weekday]=cron.split(" ");
   if(!/^\d+$/.test(minute??"")||!/^\d+$/.test(hour??""))return "Custom schedule";
   const h=Number(hour),time=`${h%12||12}:${minute.padStart(2,"0")} ${h<12?"AM":"PM"}`;

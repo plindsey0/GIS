@@ -5,6 +5,7 @@ import {useCallback, useEffect, useState} from "react";
 import {api, siteScope} from "../lib/api";
 import {formatDate, formatNumber, humanize} from "../lib/format";
 import {ProviderOverview} from "./provider-overview";
+import {ManualExecution} from "./manual-execution";
 import type {Activity} from "../lib/operations";
 import {ProviderRuntime,scheduleLabel,type CredentialReadiness,type Obligation} from "./provider-runtime";
 import {ErrorState, LoadingState, PageHeader, StatusBadge} from "./ui";
@@ -23,7 +24,7 @@ export type Configuration = {
   current_obligations?:Obligation[];latest_failed_attempt?:{at:string;category:string;reason:string;run_id:string}|null;
   connections:Array<{id:string;label:string;status:string}>;
   history:Array<{action:string;actor:string;at:string;reason:string|null}>;
-  schedules:Array<{id:string;status:string;cron:string;timezone:string;next_at:string|null}>;
+  schedules:Array<{id:string;status:string;cron:string;timezone:string;next_at:string|null;cadence?:string|null;capability_key?:string|null}>;
   recent_runs?:Array<{id:string;status:string;at:string}>;
 };
 type Preview={can_activate:boolean;blockers:string[];estimated_requests_month:string;estimated_cost_month:string|null;timezone:string;semantics:string;plans:Array<{key:string;targets:number;cadence:string;cron:string;estimated_requests_month:string;estimated_cost_month:string|null}>};
@@ -43,8 +44,6 @@ export function ProviderConfigurationPage({providerKey}:{providerKey:string}) {
   const [busy,setBusy]=useState(false);
   const [confirmDisable,setConfirmDisable]=useState(false);
   const [authorizationReason,setAuthorizationReason]=useState("Reviewed provider configuration");
-  const [runPreview,setRunPreview]=useState<{fingerprint:string;requests:number;estimated_cost:string|null;blockers:string[];queued:number}>();
-  const [runRequestId,setRunRequestId]=useState("");
   const base=`/api/v1/providers/${providerKey}`;
   const load=useCallback(async()=>{
     try {
@@ -71,15 +70,6 @@ export function ProviderConfigurationPage({providerKey}:{providerKey:string}) {
     try {await api(`${base}/actions?${siteScope()}`,{method:"POST",body:JSON.stringify({action,actor:"workbench-admin",reason:"Operator provider control"})});setMessage("Policy and future orchestration work reconciled. Historical records are preserved.");await load()}
     catch(e){setError((e as Error).message)}finally{setBusy(false)}
   }
-  async function run(confirmed=false) {
-    setBusy(true);setError(undefined);
-    const requestId=confirmed?runRequestId:crypto.randomUUID();
-    try {
-      const result=await api<NonNullable<typeof runPreview>>(`${base}/run?${siteScope()}`,{method:"POST",body:JSON.stringify({confirmed,request_id:requestId,fingerprint:runPreview?.fingerprint??""})});
-      if(confirmed){setRunPreview(undefined);setMessage(`${result.queued} target executions queued. The orchestrator rechecks current policy before collection.`);await load()}
-      else{setRunRequestId(requestId);setRunPreview(result)}
-    }catch(e){setError((e as Error).message)}finally{setBusy(false)}
-  }
   if(!data)return error?<ErrorState message={error}/>:<LoadingState/>;
   const d=data.detail, implemented=d.implementation_status==="IMPLEMENTED";
   return <>
@@ -90,15 +80,14 @@ export function ProviderConfigurationPage({providerKey}:{providerKey:string}) {
       {implemented&&d.collection_state==="PAUSED"&&<button disabled={busy} onClick={()=>void action("RESUME")}>Resume existing policy</button>}
     </div>
     {error&&<ErrorState message={error}/>} {message&&<p role="status" className="providerNotice">{message}</p>}
-    {implemented&&step===null&&<button className="secondaryButton" disabled={busy} onClick={()=>void run()}>Preview manual run</button>}
-    {runPreview&&<section className="providerSection" aria-label="Manual run preview"><h2>Confirm manual collection</h2><p>{runPreview.requests} target requests · Estimated cost: {runPreview.estimated_cost===null?"Unknown":`$${runPreview.estimated_cost}`}</p><p>Confirmation queues work under the current policy. It does not bypass budgets, rights or disabled targets.</p>{runPreview.blockers.map(b=><p role="alert" key={b}>{humanize(b)}</p>)}<div className="providerToolbar"><button className="secondaryButton" onClick={()=>setRunPreview(undefined)}>Cancel run</button><button disabled={busy||runPreview.blockers.length>0} onClick={()=>void run(true)}>Confirm and queue collection</button></div></section>}
+    {implemented&&step===null&&<ManualExecution providerKey={providerKey} onQueued={load}/>}
     {!implemented?<section className="recordCard"><h2>Integration planned</h2><p>This provider remains inspectable, but activation is unavailable until an executable adapter is implemented. No schedule or budget changes are offered.</p></section>:null}
     {confirmDisable&&<section role="dialog" aria-label="Confirm disable collection"><p>Disable collection? Future provider work will stop; history remains intact. Already dispatched requests cannot be recalled.</p><button onClick={()=>setConfirmDisable(false)}>Cancel disable</button><button disabled={busy} onClick={()=>{setConfirmDisable(false);void action("DISABLE")}}>Confirm disable</button></section>}
     {step===null?<><ProviderOverview data={data} providerKey={providerKey}/><details className="operationalDisclosure"><summary>Configuration, governance and audit history</summary>
       <section className="providerSection"><h2>Operational status</h2><dl className="detailGrid"><div><dt>Implementation</dt><dd>{humanize(d.implementation_status)}</dd></div><div><dt>Last successful collection</dt><dd>{formatDate(d.last_collection)}</dd></div><div><dt>Next recurrence (not proof of completion)</dt><dd>{d.next_collection?formatDate(d.next_collection):"Not scheduled"}</dd></div><div><dt>Collection authorization</dt><dd>{humanize(d.collection_state)}</dd></div><div><dt>Execution readiness</dt><dd>{humanize(d.execution_readiness??"UNKNOWN")}</dd></div></dl></section>
       <ProviderRuntime providerKey={providerKey} credential={d.credential_readiness} obligations={data.current_obligations} failed={data.latest_failed_attempt}/>
       <section className="providerSection"><h2>Configuration summary</h2><div className="providerGrid">{caps.map(c=><article className="recordCard providerCapability" key={c.key}><StatusBadge>{c.enabled?"Enabled":"Disabled"}</StatusBadge><h3>{c.name}</h3><p>{c.description}</p><p>{c.target_ids.length} authorized targets · Configured cadence: {humanize(c.cadence)}</p><ul>{c.choices.filter(t=>c.target_ids.includes(t.id)).map(t=><li key={t.id}>{t.label}{t.computed_cadence&&<small>GIS recommendation: {humanize(t.computed_cadence)} · Provider override: Yes</small>}</li>)}</ul><p>Freshness: {c.freshness_hours%24===0?`${c.freshness_hours/24} days`:`${c.freshness_hours} hours`}</p>{d.is_commercial&&<><p>Pricing: {c.unit_price===null?"Not configured":`${new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:8}).format(Number(c.unit_price))} per target request`}</p><p>Pricing source: {c.pricing_provenance==="USER_CONFIGURED"?"Operator-entered / user-managed":humanize(c.pricing_provenance)}</p><p>Last verified: {formatDate(c.last_verified)}</p>{c.pricing_notes&&<p>{c.pricing_notes}</p>}</>}</article>)}</div></section>
-      <section className="providerSection"><h2>Execution policy</h2>{data.schedules.length===0?<p>No derived execution schedule yet.</p>:data.schedules.map(s=><div key={s.id}><p>{humanize(s.status)} · {scheduleLabel(s.cron,s.timezone,s.next_at)}</p><p>Next recurrence: {s.next_at?formatDate(s.next_at):"Not scheduled"}</p><details><summary>Technical schedule</summary>{s.cron} ({s.timezone})</details></div>)}</section>
+      <section className="providerSection"><h2>Execution policy</h2>{data.schedules.length===0?<p>No derived execution schedule yet.</p>:data.schedules.map(s=><div key={s.id}><p>{humanize(s.status)} · {scheduleLabel(s.cron,s.timezone,s.next_at,s.cadence)}</p><p>Next recurrence: {s.next_at?formatDate(s.next_at):"Not scheduled"}</p><details><summary>Technical schedule</summary>{s.cron} ({s.timezone})</details></div>)}</section>
       {d.is_commercial&&<section className="providerSection"><h2>Budget and request limits</h2><div className="providerFields"><div>{budgets.map(key=><p key={key}>{humanize(key)}: {policy[key]==null?"Not configured":formatNumber(policy[key],"currency")}</p>)}</div><div><p>Daily requests: {policy.daily_request_limit??"Not configured"}</p><p>Monthly requests: {policy.monthly_request_limit??"Not configured"}</p><p>Per-execution requests: {policy.per_run_request_limit??"Not configured"}</p><p>Unknown cost: {policy.allow_unknown_cost?"Explicitly permitted within request limits":"Blocked"}</p></div></div></section>}
       <section className="providerSection"><h2>Usage</h2><p>Requests this business month: {d.request_count??0} · Cost state: {humanize(d.cost_state??"NO_USAGE")}</p>{d.unknown_cost_requests? <p>{d.unknown_cost_requests} requests have unknown/unreconciled cost. Known totals below are not complete spend.</p>:null}<p>Known actual cost this month: {d.known_actual_cost_month==null?"Not recorded":formatNumber(d.known_actual_cost_month,"currency")} · Known reserved cost: {d.known_reserved_cost_month==null?"None recorded":formatNumber(d.known_reserved_cost_month,"currency")}</p><p>Known/estimated recorded subtotal today: {formatNumber(d.budget.spent_day,"currency")} · Month: {formatNumber(d.budget.spent_month,"currency")}</p>{d.usage.length===0?<p>No control-plane usage recorded. This is not a statement that future calls are free.</p>:<ul>{d.usage.map(u=><li key={u.id}>{formatDate(u.occurred_at)} · {u.requests} requests · {humanize(u.status)} · Actual cost: {u.actual_cost===null?"Unknown / unreconciled":formatNumber(u.actual_cost,"currency")}</li>)}</ul>}</section>
       <section className="providerSection"><h2>Recent executions</h2>{data.recent_runs?.length?<ul>{data.recent_runs.map(r=><li key={r.id}><Link href={`/system/runs/${r.id}`}>{formatDate(r.at)} · {humanize(r.status)}</Link></li>)}</ul>:<p>No orchestration history for this connection yet.</p>}<Link href="/system/pipelines">Inspect live pipelines</Link>{" · "}<Link href="/system/sources">Inspect sources and rights</Link></section>

@@ -1,5 +1,45 @@
 # Provider operations semantics
 
+## Explicit manual execution scope
+
+Use **Preview manual run** to open a compact selector, grouped by capability.
+Only enabled, authorized provider targets are offered. Manual-only targets may
+start selected; scheduled targets never do. Selecting a scheduled target explicitly
+adds a manual execution without moving, replacing, or satisfying its scheduled work.
+Review the capability, target and request totals, costs, and blockers, then confirm.
+No target outside that reviewed scope is queued. An empty scope cannot execute.
+
+A connection identifies access to a provider; a capability identifies a supported
+collection type; an authorized target defines what that capability may observe.
+A schedule governs recurring work. A manual scope is a one-time operator selection,
+not a change to any of those authorizations or schedules. **Manual only / Not
+scheduled** hides dormant clock values from the operational view.
+
+Each selected target gets its own MANUAL run and existing attempt/ingestion/usage
+links. Its configuration records the provider-target and capability-policy IDs,
+one requested provider request, full reviewed scope, request ID, confirmation
+fingerprint, and the current single-admin actor (`workbench-admin`). Queueing is
+not provider usage: the existing collector reserves and reconciles actual usage
+when execution occurs. Unknown estimated cost is not a recorded zero actual cost.
+Current rights, target validity, credential/readiness, pause, and budget controls
+are checked again before execution. Preview does not reserve credits.
+
+## API contract and future jobs
+
+`POST /api/v1/providers/{key}/run` accepts `request_id`, `target_ids` (authorized
+ProviderCollectionTarget UUIDs), `confirmed`, and `fingerprint`. Omitted/empty
+target IDs return choices with zero requests and cannot confirm. Defaults are UI
+suggestions only: the server never silently executes them. Confirmation binds the
+scope to the current configuration; changed scope requires another preview, and
+a queued request ID cannot be reused for a different scope. Repeated confirmation
+is idempotent. Targets are resolved within the requesting tenant/site/provider.
+
+The per-run ceiling applies to each one-target execution; daily/monthly limits
+also cover the whole selected batch. Execution-time reservations remain authoritative
+under concurrency. This is not a new collection-job framework. Future independently
+configured jobs can reuse explicit scope and attribution without reintroducing
+provider-wide implicit execution.
+
 ## Pre-change audit (Epic 16B.2)
 
 Base: `8d3782ab0f61430fef53508feb084028ff9b4940`; database head: `20260903_0030`.

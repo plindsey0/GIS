@@ -224,6 +224,10 @@ def run_evidence(session: Session, run: OrchestrationRun) -> dict[str, Any]:
         "provider_name": provider.display_name if provider else None,
         "provider_href": f"/providers/{key}" if provider else None,
         "capability_key": cap.capability_key if cap else None,
+        "capability_name": cap.display_name if cap else None,
+        "request_count": sum(u.request_count for u in uses)
+        if uses
+        else run.configuration_json.get("request_count"),
         "target_display_name": target.target_value if target else "Not recorded",
         "target_href": f"/collection/{canonical.id}" if canonical else None,
         "source_href": f"/system/sources/{source.key}" if source else None,

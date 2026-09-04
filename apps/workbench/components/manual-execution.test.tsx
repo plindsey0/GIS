@@ -1,0 +1,20 @@
+import {cleanup,fireEvent,render,screen,waitFor} from "@testing-library/react";
+import {afterEach,expect,it,vi} from "vitest";
+import {ManualExecution} from "./manual-execution";
+import {scheduleLabel} from "./provider-runtime";
+const choices=[{id:"domain",capability_key:"DOMAIN_SEARCH_INTELLIGENCE",capability_name:"Domain Search Intelligence",target:"vahomemath.com",cadence:"MANUAL_ONLY",default_selected:true},{id:"query",capability_key:"SERP_COLLECTION",capability_name:"SERP Collection",target:"va loan calculator",cadence:"WEEKLY",default_selected:false}];
+afterEach(()=>{cleanup();vi.unstubAllGlobals()});
+it("selects manual-only targets, reviews exact scope and sends only reviewed targets",async()=>{
+ const fetcher=vi.fn((_url:string,options:RequestInit)=>{const body=JSON.parse(options.body as string);return Promise.resolve({ok:true,status:200,text:()=>Promise.resolve(JSON.stringify({choices,scope:choices.filter(c=>body.target_ids.includes(c.id)),capabilities:body.target_ids.length,targets:body.target_ids.length,requests:body.target_ids.length,estimated_cost:null,fingerprint:"scoped",blockers:[],warnings:[],queued:body.confirmed?1:0}))} as Response)});
+ vi.stubGlobal("fetch",fetcher);const queued=vi.fn(async()=>{});
+ render(<ManualExecution providerKey="dataforseo" onQueued={queued}/>);
+ fireEvent.click(screen.getByRole("button",{name:"Preview manual run"}));
+ expect(await screen.findByLabelText(/vahomemath.com/)).toBeChecked();expect(screen.getByLabelText(/va loan calculator/)).not.toBeChecked();
+ expect(screen.queryByRole("button",{name:"Confirm and queue collection"})).not.toBeInTheDocument();
+ fireEvent.click(screen.getByRole("button",{name:"Review selected collection"}));
+ expect(await screen.findByText("1 capability · 1 target · 1 provider request")).toBeInTheDocument();
+ fireEvent.click(screen.getByRole("button",{name:"Confirm and queue collection"}));
+ await waitFor(()=>expect(queued).toHaveBeenCalledOnce());
+ const bodies=fetcher.mock.calls.map(([,options])=>JSON.parse(options.body as string));expect(bodies.map(b=>b.target_ids)).toEqual([[],["domain"],["domain"]]);expect(bodies[2].fingerprint).toBe("scoped");expect(bodies[2].confirmed).toBe(true);
+});
+it("never presents dormant manual-only clock values as a recurrence",()=>{expect(scheduleLabel("0 8 * * *","America/New_York",null,"MANUAL_ONLY")).toBe("Manual only · Not scheduled")});
