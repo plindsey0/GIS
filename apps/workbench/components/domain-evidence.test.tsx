@@ -53,7 +53,7 @@ describe("entity-centered evidence", () => {
     expect(screen.getByText("Unknown")).toBeInTheDocument();
     expect(screen.getByText("$0.04950000 estimate")).toBeInTheDocument();
     expect(screen.getByText("Not reported")).toBeInTheDocument();
-    expect(screen.getByText("1999")).toBeInTheDocument();
+    expect(screen.getByText("1,999")).toBeInTheDocument();
     expect(screen.getByRole("link", {name: "Orchestration run"})).toHaveAttribute("href", "/system/runs/run-1");
   });
 
