@@ -62,7 +62,7 @@ def test_explicit_scope_excludes_scheduled_target_and_preserves_schedule(session
         c for c in options["choices"] if c["capability_key"] == "DOMAIN_SEARCH_INTELLIGENCE"
     )
     serp = next(c for c in options["choices"] if c["capability_key"] == "SERP_COLLECTION")
-    assert domain["default_selected"] and not serp["default_selected"]
+    assert not domain["default_selected"] and not serp["default_selected"]
     snapshots = [
         (s.id, s.cron_expression, s.next_scheduled_at, s.status, s.policy_version)
         for s in session.scalars(select(ScheduleDefinition))

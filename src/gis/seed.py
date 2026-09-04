@@ -75,7 +75,9 @@ SOURCES = (
     ),
     SourceDefinition("ahrefs", "Ahrefs", "Ahrefs", SourceType.COMMERCIAL),
     SourceDefinition("semrush", "Semrush", "Semrush", SourceType.COMMERCIAL),
-    SourceDefinition("builtwith", "BuiltWith", "BuiltWith", SourceType.COMMERCIAL),
+    SourceDefinition(
+        "builtwith", "BuiltWith", "BuiltWith", SourceType.COMMERCIAL, AcquisitionMethod.LICENSED_API
+    ),
     SourceDefinition(
         "scrapy", "Scrapy", "Scrapy", SourceType.CRAWLED, AcquisitionMethod.PUBLIC_WEB
     ),
