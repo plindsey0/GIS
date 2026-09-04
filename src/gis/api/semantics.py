@@ -57,6 +57,7 @@ def evidence_inventory(
     entity_type: Optional[str] = None,
     sufficiency: Optional[str] = None,
     source: Optional[str] = None,
+    evidence_type: Optional[str] = None,
     sort: str = "updated",
     order: str = "desc",
 ) -> dict[str, Any]:
@@ -80,6 +81,14 @@ def evidence_inventory(
             EvidencePackage.id.in_(
                 select(EvidencePackageItem.evidence_package_id).where(
                     EvidencePackageItem.root_source_key == source
+                )
+            )
+        )
+    if evidence_type:
+        filters.append(
+            EvidencePackage.id.in_(
+                select(EvidencePackageItem.evidence_package_id).where(
+                    EvidencePackageItem.evidence_type == evidence_type
                 )
             )
         )
@@ -132,6 +141,7 @@ def evidence_inventory(
             "canonical_key": entity.canonical_key,
             "entity_type": entity.entity_type.value,
             "classification": package.classification,
+            "evidence_type": contract.contract_key,
             "status": package.sufficiency.value,
             "status_label": f"Evidence {package.sufficiency.value.casefold().replace('_', ' ')}",
             "contract": contract.contract_key,

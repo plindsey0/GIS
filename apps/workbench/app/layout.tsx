@@ -6,6 +6,7 @@ import "./polish.css";
 import "./docs.css";
 import "./providers.css";
 import "./rights.css";
+import "./evidence-explorer.css";
 import {PrimaryNavigation} from "../components/navigation";
 
 export const metadata: Metadata = {title: "GIS Intelligence Workbench", description: "Governed growth decision intelligence"};

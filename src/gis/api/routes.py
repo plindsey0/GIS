@@ -13,6 +13,12 @@ from sqlalchemy.orm import Session
 
 from gis.api.auth import Role, require_role
 from gis.api.errors import ApiError
+from gis.api.evidence_explorer import (
+    domain_evidence_detail,
+    source_options,
+    technology_detection_detail,
+    technology_domain_inventory,
+)
 from gis.api.schemas import (
     DecisionInput,
     GenerationInput,
@@ -1624,11 +1630,24 @@ def evidence_packages(
     entity_type: Optional[str] = None,
     sufficiency: Optional[str] = None,
     source: Optional[str] = None,
+    evidence_type: Optional[str] = None,
     sort: str = Query("updated", pattern="^(name|updated|status|freshness)$"),
     order: str = Query("desc", pattern="^(asc|desc)$"),
     session: Session = Depends(database),
 ) -> dict[str, Any]:
     WorkbenchQueries(session).site(tenant_id, site_id)
+    if source == "builtwith" or evidence_type == "TECHNOLOGY_PROFILE":
+        if source and source != "builtwith":
+            return {"items": [], "page": page, "limit": limit, "total": 0}
+        if evidence_type and evidence_type != "TECHNOLOGY_PROFILE":
+            return {"items": [], "page": page, "limit": limit, "total": 0}
+        if entity_type and entity_type != "DOMAIN":
+            return {"items": [], "page": page, "limit": limit, "total": 0}
+        if sufficiency and sufficiency != "OBSERVED":
+            return {"items": [], "page": page, "limit": limit, "total": 0}
+        return technology_domain_inventory(
+            session, tenant_id, site_id, page=page, limit=limit, search=search
+        )
     return evidence_inventory(
         session,
         tenant_id,
@@ -1639,9 +1658,40 @@ def evidence_packages(
         entity_type=entity_type,
         sufficiency=sufficiency,
         source=source,
+        evidence_type=evidence_type,
         sort=sort,
         order=order,
     )
+
+
+@router.get("/evidence/options", dependencies=[Depends(require_role(Role.READ))])
+def evidence_options(
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    return {"sources": source_options(session)}
+
+
+@router.get("/evidence/domains/{domain_id}", dependencies=[Depends(require_role(Role.READ))])
+def domain_evidence(
+    domain_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    return domain_evidence_detail(session, domain_id, tenant_id, site_id)
+
+
+@router.get("/evidence/technology/{detection_id}", dependencies=[Depends(require_role(Role.READ))])
+def technology_evidence(
+    detection_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    return technology_detection_detail(session, detection_id, tenant_id, site_id)
 
 
 @router.get(

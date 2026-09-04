@@ -564,6 +564,19 @@ class SystemQueries:
         from gis.provider_control.operations import run_evidence
 
         evidence = run_evidence(self.session, run)
+        accounting_explanation = None
+        if (
+            pipeline
+            and pipeline.key == "builtwith_technology"
+            and ingestion
+            and ingestion.records_received != ingestion.records_inserted
+        ):
+            accounting_explanation = (
+                f"BuiltWith returned {ingestion.records_received} technology entries. GIS normalized "
+                f"them into {ingestion.records_inserted} unique canonical technology detections; "
+                "repeated source signatures remain preserved as provenance evidence. This difference "
+                "is normalization, not rejection or collection loss."
+            )
         return {
             "id": str(run.id),
             "label": f"{pipeline.name if pipeline else 'Pipeline'} run",
@@ -578,6 +591,7 @@ class SystemQueries:
             "duration_seconds": evidence["active_execution_duration"],
             "records_received": ingestion.records_received if ingestion else None,
             "records_inserted": ingestion.records_inserted if ingestion else None,
+            "record_accounting_explanation": accounting_explanation,
             "errors": ingestion.error_count if ingestion else (1 if run.error_detail else 0),
             "cost": encoded(run.actual_provider_cost),
             "currency": run.currency,

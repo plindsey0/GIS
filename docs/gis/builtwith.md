@@ -1,5 +1,10 @@
 # BuiltWith technology profile intelligence
 
+For operator inspection after collection, see the
+[entity-centered Evidence Explorer](evidence-explorer.md). It documents canonical-domain
+navigation, historical detection semantics, raw-display enforcement, provenance, credit
+and cost labels, and the verified 25-source-entry to 24-canonical-detection accounting.
+
 ## Contract and conservative defaults
 
 See [rights evidence and review](builtwith-rights-review.md) and

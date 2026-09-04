@@ -1,0 +1,29 @@
+.entitySummary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.entitySummary div,.facetGrid article,.technologyGrid article { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; }
+.entitySummary span { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; }
+.entitySummary strong { display:block; margin-top:6px; overflow-wrap:anywhere; }
+.facetGrid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.facetGrid article h3 { margin:12px 0 4px; }
+.facetGrid article small { color:var(--muted); }
+.technologyGroup { margin:22px 0; }
+.technologyGroup>h3 { display:flex; align-items:center; gap:8px; }
+.technologyGroup>h3 span { font:12px Inter,sans-serif; background:#e8eeea; border-radius:999px; padding:3px 8px; }
+.technologyGrid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.technologyGrid article p { color:var(--muted); font-size:12px; }
+.technologyGrid dl { margin:0; }
+.technologyGrid dl div { display:flex; justify-content:space-between; gap:10px; border-top:1px solid var(--line); padding:7px 0; }
+.technologyGrid dd { text-align:right; font-size:13px; }
+.semanticSection,.detailGrid,.detailGrid>div,.detailGrid dt,.detailGrid dd { min-width:0; }
+.detailGrid dd { overflow-wrap:anywhere; }
+@media(max-width:800px) { .technologyGrid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:650px) {
+  .entitySummary,.facetGrid,.technologyGrid { grid-template-columns:1fr; }
+  .technologyGrid article { min-width:0; }
+  .tableWrap table { min-width:0; }
+  .tableWrap thead { display:none; }
+  .tableWrap tr { display:block; border-bottom:1px solid var(--line); padding:10px; }
+  .tableWrap td { display:grid; grid-template-columns:42% 1fr; border:0; padding:6px; }
+  .tableWrap td:before { content:attr(data-label); color:var(--muted); font-size:11px; text-transform:uppercase; }
+  .filterBar label { flex:1 1 100%; }
+  .filterBar input,.filterBar select { width:100%; min-width:0; }
+}

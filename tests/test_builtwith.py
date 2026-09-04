@@ -7,6 +7,13 @@ import pytest
 from sqlalchemy import select
 from test_provider_control import scope
 
+from gis.api.evidence_explorer import (
+    domain_evidence_detail,
+    source_options,
+    technology_detection_detail,
+    technology_domain_inventory,
+)
+from gis.api.system import SystemQueries
 from gis.integrations.builtwith.cli import configure
 from gis.integrations.builtwith.provider import BuiltWithProvider, parse_profile
 from gis.integrations.builtwith.service import BuiltWithCollector
@@ -149,6 +156,9 @@ def test_fixture_execution_links_full_control_plane_without_live_calls(session, 
     result = Worker(session, {"COLLECTOR_CLI": handler}, "fixture-worker").run_once(
         queued.available_at + timedelta(seconds=1)
     )
+    pipeline = session.get(PipelineDefinition, result.pipeline_id)
+    summary = SystemQueries(session).run_summary(result, pipeline)
+    assert summary["record_accounting_explanation"] is None
     assert result.status.value == "SUCCEEDED" and calls == ["vahomemath.com"]
     attempt = session.scalar(select(ExecutionAttempt))
     usage = session.scalar(select(ProviderUsageEvent))
@@ -179,6 +189,82 @@ def test_fixture_execution_links_full_control_plane_without_live_calls(session, 
     assert not service.control.preflight(
         tenant.id, site.id, "builtwith", "TECHNOLOGY_PROFILE", ["vahomemath.com"], 1, Decimal(1)
     ).can_execute
+
+
+def test_entity_centered_builtwith_evidence_is_read_only_and_rights_guarded(session, monkeypatch):
+    """Two provider signatures may normalize to one canonical detection without data loss."""
+    monkeypatch.delenv("GIS_PAID_EXECUTION_DISABLED", raising=False)
+    tenant, site, connection, _ = configured(session)
+    response = payload()
+    duplicate_path = json.loads(json.dumps(response["Results"][0]["Result"]["Paths"][0]))
+    duplicate_path["Url"] = "second-provider-path"
+    response["Results"][0]["Result"]["Paths"].append(duplicate_path)
+
+    class Fixture:
+        def collect(self, domain):
+            assert domain == "vahomemath.com"
+            return parse_profile(
+                response,
+                domain,
+                {
+                    "x-api-credits-used": "1",
+                    "x-api-credits-available": "2000",
+                    "x-api-credits-remaining": "1999",
+                },
+            )
+
+    run = BuiltWithCollector(session, Fixture()).sync(connection.id, site.id, "vahomemath.com")
+    domain = session.scalar(
+        select(Domain).where(
+            Domain.tenant_id == tenant.id,
+            Domain.site_id == site.id,
+            Domain.hostname == "vahomemath.com",
+        )
+    )
+    before = (
+        session.query(TechnologyObservation).count(),
+        session.query(TechnologyDetection).count(),
+        session.query(TechnologyEvidence).count(),
+    )
+    inventory = technology_domain_inventory(
+        session, tenant.id, site.id, page=1, limit=25, search="vahomemath"
+    )
+    detail = domain_evidence_detail(session, domain.id, tenant.id, site.id)
+    assert inventory["total"] == 1
+    assert inventory["items"][0]["entity_type"] == "DOMAIN"
+    assert inventory["items"][0]["evidence_type"] == "TECHNOLOGY_PROFILE"
+    assert detail["summary"]["canonical_subject"] == domain.hostname
+    assert detail["technology_profile"]["detections"][0]["technology_name"] == "Google Analytics 4"
+    assert detail["collection_accounting"]["records_received"] == 2
+    assert detail["collection_accounting"]["normalized_detections_inserted"] == 1
+    assert "both distinct source signatures" in detail["collection_accounting"]["explanation"]
+    assert detail["cost_and_credits"] == {
+        "provider_requests": 1,
+        "provider_reported_credits_consumed": "1",
+        "provider_reported_credits_remaining": "1999",
+        "provider_reported_credits_available": "2000",
+        "estimated_economic_cost": "0.04950000",
+        "estimated_cost_currency": "USD",
+        "actual_provider_usd_charge": None,
+        "actual_cost_semantics": "NOT_REPORTED",
+    }
+    detection_id = uuid.UUID(detail["technology_profile"]["detections"][0]["id"])
+    protected = technology_detection_detail(session, detection_id, tenant.id, site.id)
+    assert protected["raw_display"]["status"] == "WITHHELD"
+    assert "raw_provider_evidence" not in protected
+    rights = session.get(DataRightsPolicy, run.rights_policy_id)
+    rights.raw_display_allowed = RightsDecision.ALLOWED
+    session.flush()
+    permitted = technology_detection_detail(session, detection_id, tenant.id, site.id)
+    assert permitted["raw_display"]["status"] == "ALLOWED"
+    assert len(permitted["raw_provider_evidence"]) == 2
+    assert any(option["value"] == "builtwith" for option in source_options(session))
+    after = (
+        session.query(TechnologyObservation).count(),
+        session.query(TechnologyDetection).count(),
+        session.query(TechnologyEvidence).count(),
+    )
+    assert after == before
 
 
 def test_credentials_and_safe_failures(tmp_path, monkeypatch):
