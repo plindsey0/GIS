@@ -9,8 +9,8 @@ export function ManualExecution({providerKey,onQueued}:{providerKey:string;onQue
  async function request(mode:"select"|"preview"|"confirm"){
   setBusy(true);setError("");
   const id=mode==="select"?crypto.randomUUID():requestId;
-  try{const result=await api<Preview>(`/api/v1/providers/${providerKey}/run?${siteScope()}`,{method:"POST",body:JSON.stringify({request_id:id,target_ids:mode==="select"?[]:selected,confirmed:mode==="confirm",fingerprint:mode==="confirm"?preview?.fingerprint:""})});
-   if(mode==="select"){setRequestId(id);setChoices(result.choices);setSelected(result.choices.filter(c=>c.default_selected).map(c=>c.id));setPreview(undefined);setMessage("")}
+  try{const result=mode==="select"?await api<Preview>(`/api/v1/providers/${providerKey}/manual-scope?${siteScope()}`):await api<Preview>(`/api/v1/providers/${providerKey}/run?${siteScope()}`,{method:"POST",body:JSON.stringify({request_id:id,target_ids:selected,confirmed:mode==="confirm",fingerprint:mode==="confirm"?preview?.fingerprint:""})});
+   if(mode==="select"){if(!Array.isArray(result.choices))throw new Error("Manual scope API is incompatible. Restart the GIS API and Workbench together, then reload.");setRequestId(id);setChoices(result.choices);setSelected([]);setPreview(undefined);setMessage("")}
    else if(mode==="preview")setPreview(result);
    else{setChoices(undefined);setPreview(undefined);setMessage(`${result.queued} selected target executions queued. Current controls are rechecked before collection.`);await onQueued()}
   }catch(e){setError((e as Error).message)}finally{setBusy(false)}

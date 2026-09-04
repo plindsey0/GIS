@@ -22,10 +22,16 @@ from gis.provider_control.operations import authentication
 
 def attest(session: Session) -> dict[str, Any]:
     rows = session.scalars(
-        select(DataSourceConnection).join(DataSource).where(DataSource.key == "dataforseo")
+        select(DataSourceConnection)
+        .join(DataSource)
+        .where(DataSource.key.in_(["dataforseo", "builtwith"]))
     ).all()
     return {
-        "provider_credentials": {str(c.id): probe(c.credential_reference) for c in rows},
+        "provider_credentials": {
+            str(c.id): probe(c.credential_reference, source.key)
+            for c in rows
+            if (source := session.get(DataSource, c.data_source_id)) is not None
+        },
         "paid_execution_disabled": os.environ.get("GIS_PAID_EXECUTION_DISABLED") == "1",
     }
 
@@ -38,7 +44,8 @@ def readiness(session: Session, connection: DataSourceConnection | None) -> dict
             "worker_verified": False,
             "reason": "No connection selected",
         }
-    local = probe(connection.credential_reference)
+    source = session.get(DataSource, connection.data_source_id)
+    local = probe(connection.credential_reference, source.key if source else "dataforseo")
     workers = session.scalars(
         select(ExecutorHeartbeat).where(
             ExecutorHeartbeat.role == ExecutorRole.WORKER,

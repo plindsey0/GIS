@@ -91,7 +91,7 @@ def test_realistic_pre_0029_state_migrates_to_provider_inventory(
             assert items["google_pagespeed"]["collection_state"] == "ACTIVE"
             assert items["dataforseo"]["connection_state"] == "CONNECTED"
             assert items["dataforseo"]["collection_state"] == "CONNECTED_DISABLED"
-            assert items["builtwith"]["collection_state"] == "UNAVAILABLE"
+            assert items["builtwith"]["collection_state"] == "NOT_CONNECTED"
             assert items["whoisxmlapi"]["collection_state"] == "UNAVAILABLE"
 
             session.execute(

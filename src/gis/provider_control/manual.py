@@ -72,6 +72,14 @@ def manual_run(
         != RightsStatus.ALLOWED
     ):
         blockers.append("RIGHTS_BLOCKED")
+    if (
+        selected
+        and connection
+        and key == "builtwith"
+        and evaluate_connection_use(session, connection, PermittedUse.RAW_RETENTION).status
+        != RightsStatus.ALLOWED
+    ):
+        blockers.append("RAW_RETENTION_RIGHTS_BLOCKED")
     fingerprint = hashlib.sha256(
         json.dumps(
             {
@@ -113,7 +121,7 @@ def manual_run(
                         "capability_name": cap.display_name,
                         "target": target.target_value,
                         "cadence": cp.cadence,
-                        "default_selected": cp.cadence == "MANUAL_ONLY",
+                        "default_selected": False,
                     }
                 )
                 if target.id not in selected:
@@ -177,6 +185,7 @@ def manual_run(
         # Per-run ceilings were checked per target above; period limits cover the whole preview.
         blockers.extend(r for r in batch_reasons if not r.startswith("PER_RUN_"))
     result: dict[str, Any] = {
+        "scope_contract_version": 1,
         "warnings": warnings,
         "choices": choices,
         "scope": [c for c in choices if uuid.UUID(c["id"]) in selected],

@@ -46,7 +46,7 @@ it("keeps planned providers inspectable but not configurable",async()=>{
 });
 
 it("requires explicit scope before offering confirmation",async()=>{
-  vi.stubGlobal("fetch",vi.fn((url:string)=>response(url.includes("/run?")?{choices:[],scope:[],fingerprint:"policy",requests:0,estimated_cost:null,blockers:["POLICY_DISABLED"],queued:0}:configuration)));
+  vi.stubGlobal("fetch",vi.fn((url:string)=>response(url.includes("/manual-scope?")?{choices:[],scope:[],fingerprint:"policy",requests:0,estimated_cost:null,blockers:["POLICY_DISABLED"],queued:0}:configuration)));
   render(<ProviderConfigurationPage providerKey="dataforseo"/>);
   fireEvent.click(await screen.findByRole("button",{name:"Preview manual run"}));
   expect(await screen.findByRole("button",{name:"Review selected collection"})).toBeDisabled();

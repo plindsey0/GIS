@@ -82,9 +82,55 @@ def dataforseo_credentials(
         raise CredentialUnavailable(invalid=True) from exc
 
 
-def probe(reference: str | None) -> dict[str, str]:
+def builtwith_credentials(
+    reference: str | None,
+    *,
+    environment: Mapping[str, str] | None = None,
+    secret_file: Path | None = None,
+) -> str:
+    """Resolve an API key locally using the same owner-only env-reference contract."""
+    env = os.environ if environment is None else environment
+    if not reference or not reference.startswith("env:") or not reference[4:].isidentifier():
+        raise CredentialUnavailable(invalid=True)
+    name = reference[4:]
+    raw = env.get(name)
+    if not raw and name == "GIS_BUILTWITH_CREDENTIAL":
+        path = secret_file or Path.home() / ".config/gis/secrets/builtwith.env"
+        try:
+            if (
+                path.is_symlink()
+                or path.stat().st_mode & 0o077
+                or path.stat().st_uid != os.getuid()
+            ):
+                raise CredentialUnavailable(invalid=True)
+            for line in path.read_text(encoding="utf-8").splitlines():
+                key, separator, value = line.strip().removeprefix("export ").partition("=")
+                if separator and key.strip() == name:
+                    parts = shlex.split(value, comments=True)
+                    if len(parts) != 1:
+                        raise CredentialUnavailable(invalid=True)
+                    raw = parts[0]
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError) as exc:
+            raise CredentialUnavailable(invalid=True) from exc
+    if not raw:
+        raise CredentialUnavailable()
     try:
-        dataforseo_credentials(reference)
+        key = json.loads(raw)["api_key"] if raw.lstrip().startswith("{") else raw
+        if not isinstance(key, str) or not key.strip() or any(c.isspace() for c in key):
+            raise ValueError("invalid key")
+        return key
+    except (ValueError, TypeError, KeyError) as exc:
+        raise CredentialUnavailable(invalid=True) from exc
+
+
+def probe(reference: str | None, provider_key: str = "dataforseo") -> dict[str, str]:
+    try:
+        if provider_key == "builtwith":
+            builtwith_credentials(reference)
+        else:
+            dataforseo_credentials(reference)
         state = "CONNECTED_AND_RESOLVABLE"
     except CredentialUnavailable as exc:
         state = (

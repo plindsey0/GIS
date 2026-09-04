@@ -169,6 +169,10 @@ def provider_manual_run(
     session: Session = Depends(database),
 ) -> dict[str, Any]:
     try:
+        if not payload.target_ids:
+            raise ValueError(
+                "Manual preview requires explicit targets. Reload the Workbench and use the manual scope selector before previewing."
+            )
         from gis.models import DataSourceConnection
 
         control = ProviderControlService(session)
@@ -180,7 +184,7 @@ def provider_manual_run(
                 if policy and policy.data_source_connection_id
                 else None,
             )
-            if provider_key == "dataforseo"
+            if provider_key in {"dataforseo", "builtwith"}
             else None
         )
         if payload.confirmed and health and not health["runnable"]:
@@ -193,6 +197,25 @@ def provider_manual_run(
     except ValueError as exc:
         session.rollback()
         raise ApiError(409, "PROVIDER_RUN_BLOCKED", str(exc)) from exc
+
+
+@router.get(
+    "/providers/{provider_key}/manual-scope", dependencies=[Depends(require_role(Role.ADMIN))]
+)
+def provider_manual_scope(
+    provider_key: str,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    """Discover authorized choices independently of a runnable execution preview."""
+    result = manual_run(
+        session, tenant_id, site_id, provider_key, ManualRequest(request_id=uuid.uuid4())
+    )
+    return {
+        "scope_contract_version": result["scope_contract_version"],
+        "choices": result["choices"],
+    }
 
 
 def disable_partial_configuration(

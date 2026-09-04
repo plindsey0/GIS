@@ -326,9 +326,9 @@ def execution_arguments(
                 str(target.metadata_json.get("execution_query_id", target.target_reference_id)),
             ]
         )
-    elif pipeline.key == "external_search":
+    elif pipeline.key in {"external_search", "builtwith_technology"}:
         args = [
-            "keywords",
+            "keywords" if pipeline.key == "external_search" else "sync",
             "--connection",
             str(policy.data_source_connection_id),
             "--site",

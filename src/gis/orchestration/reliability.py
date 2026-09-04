@@ -113,6 +113,17 @@ def classify_failure(error: Exception) -> tuple[FailureCategory, int | None]:
 
 
 def collector_failure(message: str) -> ClassifiedFailure:
+    import json
+
+    try:
+        payload = json.loads(message)
+        if isinstance(payload, dict) and payload.get("failure_category"):
+            return ClassifiedFailure(
+                FailureCategory(payload["failure_category"]),
+                str(payload.get("error", "Collector failed")),
+            )
+    except (ValueError, TypeError):
+        pass
     normalized = message.casefold()
     if (
         "credential_unavailable" in normalized

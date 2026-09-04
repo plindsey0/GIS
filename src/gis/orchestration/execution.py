@@ -21,6 +21,7 @@ from gis.orchestration.reliability import collector_failure
 from gis.orchestration.service import PipelineHandler, PipelineResult
 
 EXECUTABLES = {
+    "builtwith_technology": "gis-builtwith",
     "gsc": "gis-gsc",
     "ga4": "gis-ga4",
     "serp": "gis-serp",
@@ -45,6 +46,18 @@ def collector_environment(
     secret_file: Path = PAGESPEED_SECRET_FILE,
 ) -> dict[str, str]:
     environment = os.environ.copy()
+    if pipeline.key == "builtwith_technology":
+        from gis.provider_control.credentials import builtwith_credentials
+
+        connection = (
+            session.get(DataSourceConnection, run.data_source_connection_id)
+            if run.data_source_connection_id
+            else None
+        )
+        key = builtwith_credentials(connection.credential_reference if connection else None)
+        assert connection is not None and connection.credential_reference is not None
+        environment[connection.credential_reference.removeprefix("env:")] = key
+        return environment
     if pipeline.key in {"serp", "external_search"}:
         import json
 
@@ -150,7 +163,24 @@ def collector_cli_handler(session: Session, run: OrchestrationRun) -> PipelineRe
     if completed.returncode:
         raise collector_failure(completed.stderr[-2000:] or completed.stdout[-2000:])
     ingestion_run = None
-    if run.data_source_connection_id:
+    if pipeline.key == "builtwith_technology":
+        import json
+        import uuid
+
+        try:
+            ingestion_run = session.get(
+                IngestionRun, uuid.UUID(json.loads(completed.stdout)["ingestion_run_id"])
+            )
+        except (ValueError, KeyError, TypeError):
+            raise ValueError("BuiltWith collector returned no ingestion linkage") from None
+        if (
+            not ingestion_run
+            or ingestion_run.data_source_connection_id != run.data_source_connection_id
+            or ingestion_run.tenant_id != run.tenant_id
+            or ingestion_run.site_id != run.site_id
+        ):
+            raise ValueError("BuiltWith ingestion linkage is outside run scope")
+    if run.data_source_connection_id and ingestion_run is None:
         ingestion_run = session.scalar(
             select(IngestionRun)
             .where(

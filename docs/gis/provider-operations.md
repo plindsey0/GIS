@@ -3,8 +3,8 @@
 ## Explicit manual execution scope
 
 Use **Preview manual run** to open a compact selector, grouped by capability.
-Only enabled, authorized provider targets are offered. Manual-only targets may
-start selected; scheduled targets never do. Selecting a scheduled target explicitly
+Only enabled, authorized provider targets are offered. All targets start unselected,
+including manual-only targets. Selecting a scheduled target explicitly
 adds a manual execution without moving, replacing, or satisfying its scheduled work.
 Review the capability, target and request totals, costs, and blockers, then confirm.
 No target outside that reviewed scope is queued. An empty scope cannot execute.
@@ -28,8 +28,8 @@ are checked again before execution. Preview does not reserve credits.
 
 `POST /api/v1/providers/{key}/run` accepts `request_id`, `target_ids` (authorized
 ProviderCollectionTarget UUIDs), `confirmed`, and `fingerprint`. Omitted/empty
-target IDs return choices with zero requests and cannot confirm. Defaults are UI
-suggestions only: the server never silently executes them. Confirmation binds the
+target IDs are rejected by the execution endpoint; use GET manual-scope for discovery.
+The server never silently selects targets. Confirmation binds the
 scope to the current configuration; changed scope requires another preview, and
 a queued request ID cannot be reused for a different scope. Repeated confirmation
 is idempotent. Targets are resolved within the requesting tenant/site/provider.
@@ -39,6 +39,26 @@ also cover the whole selected batch. Execution-time reservations remain authorit
 under concurrency. This is not a new collection-job framework. Future independently
 configured jobs can reuse explicit scope and attribution without reintroducing
 provider-wide implicit execution.
+
+## Discovery versus preview (16B.3.1)
+
+`GET /api/v1/providers/{key}/manual-scope` is the dedicated choice-discovery contract.
+It returns `scope_contract_version` and authorized choices, not an empty execution
+summary. The UI renders capability-grouped checkboxes from that response, then calls
+the POST preview only after explicit selection. Scope changes clear the prior preview.
+An incompatible discovery response displays an actionable API/UI restart error.
+Legacy POST-without-scope clients receive a clear reload/selector error instead of
+an apparently valid zero-request/$0 confirmation screen.
+
+The reported zero-request/$0 screen is consistent with a legacy summary-only UI consuming
+the empty-scope response introduced in 16B.3. Current main's source and both generated
+local bundles contained the selector; no DOMAIN/cadence exclusion was found. The earlier
+browser's exact loaded bundle was not available to establish a cache/process root cause.
+This is a verified contract ambiguity, not evidence that an authorized target disappeared.
+Discovery and executable preview are now separate contracts and are tested separately.
+
+See [BuiltWith](builtwith.md) for the shared technology-profile integration and its
+credential, rights, billing, and live-acceptance boundaries.
 
 ## Pre-change audit (Epic 16B.2)
 

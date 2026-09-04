@@ -93,7 +93,19 @@ def authentication(session: Session, connection: DataSourceConnection) -> dict[s
         .order_by(IngestionRun.completed_at.desc())
     ).all()
     success = next(
-        (i for i in successes if i.completed_at and i.source_metadata.get("provider_task_id")), None
+        (
+            i
+            for i in successes
+            if i.completed_at
+            and (
+                i.source_metadata.get("provider_task_id")
+                or (
+                    i.collector_name == "gis.integrations.builtwith"
+                    and i.source_metadata.get("provider_response_validated") is True
+                )
+            )
+        ),
+        None,
     )
     failed = session.scalar(
         select(ExecutionAttempt)

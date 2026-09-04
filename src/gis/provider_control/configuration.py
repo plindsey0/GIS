@@ -37,6 +37,7 @@ BINDINGS = {
     "FIELD_CRUX": ("experience", "URL"),
     "SERP_COLLECTION": ("serp", "QUERY"),
     "DOMAIN_SEARCH_INTELLIGENCE": ("external_search", "DOMAIN"),
+    "TECHNOLOGY_PROFILE": ("builtwith_technology", "DOMAIN"),
 }
 
 CAPABILITY_HELP = {
@@ -239,6 +240,11 @@ class ConfigurationService:
                 "allow_unknown_cost": False,
             }
         )
+        if not policy and key == "builtwith":
+            # Conservative editable defaults, not provider-imposed product ceilings.
+            policy_data.update(
+                daily_request_limit=1, monthly_request_limit=5, per_run_request_limit=1
+            )
         history = self.session.scalars(
             select(ProviderPolicyAuditEvent)
             .where(

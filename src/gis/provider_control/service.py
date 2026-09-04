@@ -251,7 +251,9 @@ class ProviderControlService:
         )
         from gis.provider_control.runtime import readiness
 
-        runtime = readiness(self.session, connection) if key == "dataforseo" else None
+        runtime = (
+            readiness(self.session, connection) if key in {"dataforseo", "builtwith"} else None
+        )
         execution_blockers: list[str] = []
         budget_warnings: list[str] = []
         if state == "ACTIVE" and policy:
@@ -266,6 +268,15 @@ class ProviderControlService:
                 != RightsStatus.ALLOWED
             ):
                 execution_blockers.append("RIGHTS_BLOCKED")
+            if (
+                connection
+                and key == "builtwith"
+                and evaluate_connection_use(
+                    self.session, connection, PermittedUse.RAW_RETENTION
+                ).status
+                != RightsStatus.ALLOWED
+            ):
+                execution_blockers.append("RAW_RETENTION_RIGHTS_BLOCKED")
             for cap in capabilities:
                 cp = capability_policies.get(cap.id)
                 if not cp or not cp.enabled:
