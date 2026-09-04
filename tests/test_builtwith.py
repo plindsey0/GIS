@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -9,14 +9,16 @@ from test_provider_control import scope
 
 from gis.api.evidence_explorer import (
     domain_evidence_detail,
+    intelligence_dimensions,
     source_options,
     technology_detection_detail,
     technology_domain_inventory,
 )
 from gis.api.system import SystemQueries
 from gis.integrations.builtwith.cli import configure
-from gis.integrations.builtwith.provider import BuiltWithProvider, parse_profile
+from gis.integrations.builtwith.provider import BuiltWithProvider, parse_profile, provider_date
 from gis.integrations.builtwith.service import BuiltWithCollector
+from gis.integrations.builtwith.temporal import backfill_temporal, evidence_temporal
 from gis.models import (
     DataRightsPolicy,
     Domain,
@@ -77,6 +79,56 @@ def payload():
         ],
         "Errors": [],
     }
+
+
+def test_provider_date_supports_v23_milliseconds_and_explicit_iso_only():
+    assert provider_date(1_700_000_000_000) == datetime(
+        2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc
+    )
+    assert provider_date("2026-09-04T12:30:00-04:00") == datetime(
+        2026, 9, 4, 16, 30, tzinfo=timezone.utc
+    )
+    for value in (1_700_000_000, True, "2026-09-04T12:30:00", "not-a-date", None, []):
+        assert provider_date(value) is None
+
+
+def test_evidence_temporal_uses_technology_dates_not_path_index_dates():
+    evidence = evidence_temporal(
+        json.dumps(
+            {
+                "path": {"FirstIndexed": 1_600_000_000_000, "LastIndexed": 1_900_000_000_000},
+                "technology": {
+                    "FirstDetected": 1_700_000_000_000,
+                    "LastDetected": 1_800_000_000_000,
+                },
+            }
+        )
+    )
+    assert evidence.first_observed == provider_date(1_700_000_000_000)
+    assert evidence.last_observed == provider_date(1_800_000_000_000)
+    assert evidence_temporal('{"path":{"FirstIndexed":1700000000000}}').first_observed is None
+    assert evidence_temporal("malformed").last_observed is None
+
+
+def test_generic_intelligence_dimensions_are_category_driven():
+    dimensions = intelligence_dimensions(
+        [
+            {"category": "analytics", "technology_name": "Example Metrics"},
+            {"category": "CDNs", "technology_name": "Example Edge"},
+            {
+                "category": "widgets",
+                "normalized_category": "TAG_MANAGEMENT",
+                "technology_name": "Example Tag Manager",
+            },
+            {"category": "unmapped provider category", "technology_name": "Example Other"},
+        ]
+    )
+    assert [(item["key"], item["count"]) for item in dimensions] == [
+        ("ANALYTICS", 1),
+        ("CDN", 1),
+        ("OTHER", 1),
+        ("TAG_MANAGEMENT", 1),
+    ]
 
 
 def configured(session):
@@ -198,6 +250,9 @@ def test_entity_centered_builtwith_evidence_is_read_only_and_rights_guarded(sess
     response = payload()
     duplicate_path = json.loads(json.dumps(response["Results"][0]["Result"]["Paths"][0]))
     duplicate_path["Url"] = "second-provider-path"
+    duplicate_path["Technologies"][0]["Id"] = 43
+    duplicate_path["Technologies"][0]["FirstDetected"] = 1_600_000_000_000
+    duplicate_path["Technologies"][0]["LastDetected"] = 1_900_000_000_000
     response["Results"][0]["Result"]["Paths"].append(duplicate_path)
 
     class Fixture:
@@ -235,6 +290,11 @@ def test_entity_centered_builtwith_evidence_is_read_only_and_rights_guarded(sess
     assert inventory["items"][0]["evidence_type"] == "TECHNOLOGY_PROFILE"
     assert detail["summary"]["canonical_subject"] == domain.hostname
     assert detail["technology_profile"]["detections"][0]["technology_name"] == "Google Analytics 4"
+    detection_summary = detail["technology_profile"]["detections"][0]
+    assert detection_summary["provider_first_observed"] == str(provider_date(1_600_000_000_000))
+    assert detection_summary["provider_last_observed"] == str(provider_date(1_900_000_000_000))
+    assert detection_summary["current_presence"] == "UNKNOWN"
+    assert detail["technology_intelligence_summary"]["dimensions"][0]["key"] == "ANALYTICS"
     assert detail["collection_accounting"]["records_received"] == 2
     assert detail["collection_accounting"]["normalized_detections_inserted"] == 1
     assert "both distinct source signatures" in detail["collection_accounting"]["explanation"]
@@ -250,6 +310,12 @@ def test_entity_centered_builtwith_evidence_is_read_only_and_rights_guarded(sess
     }
     detection_id = uuid.UUID(detail["technology_profile"]["detections"][0]["id"])
     protected = technology_detection_detail(session, detection_id, tenant.id, site.id)
+    assert protected["provider_evidence"]["provider_signatures"] == [
+        "builtwith:42",
+        "builtwith:43",
+    ]
+    assert protected["canonical_interpretation"]["current_presence"] == "UNKNOWN"
+    assert protected["provider_evidence"]["temporal_anomaly"] == ("PROVIDER_DATE_AFTER_COLLECTION")
     assert protected["raw_display"]["status"] == "WITHHELD"
     assert "raw_provider_evidence" not in protected
     rights = session.get(DataRightsPolicy, run.rights_policy_id)
@@ -265,6 +331,40 @@ def test_entity_centered_builtwith_evidence_is_read_only_and_rights_guarded(sess
         session.query(TechnologyEvidence).count(),
     )
     assert after == before
+
+
+def test_temporal_backfill_is_preview_first_and_updates_only_detection_summary(
+    session, monkeypatch
+):
+    monkeypatch.delenv("GIS_PAID_EXECUTION_DISABLED", raising=False)
+    tenant, site, connection, _ = configured(session)
+
+    class Fixture:
+        def collect(self, domain):
+            return parse_profile(payload(), domain)
+
+    BuiltWithCollector(session, Fixture()).sync(connection.id, site.id, "vahomemath.com")
+    detection = session.scalar(select(TechnologyDetection))
+    detection.provider_first_seen_at = None
+    detection.provider_last_seen_at = None
+    session.commit()
+
+    preview = backfill_temporal(session, tenant.id, site.id)
+    session.refresh(detection)
+    assert preview == {
+        "detections_examined": 1,
+        "detections_changed": 1,
+        "evidence_items_with_temporal_values": 1,
+        "applied": False,
+        "provider_calls": 0,
+    }
+    assert detection.provider_first_seen_at is None
+
+    applied = backfill_temporal(session, tenant.id, site.id, apply=True)
+    session.refresh(detection)
+    assert applied["applied"] is True and applied["detections_changed"] == 1
+    assert detection.provider_first_seen_at == provider_date(1_700_000_000_000)
+    assert detection.provider_last_seen_at == provider_date(1_800_000_000_000)
 
 
 def test_credentials_and_safe_failures(tmp_path, monkeypatch):

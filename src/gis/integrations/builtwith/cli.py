@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from gis.db import session_factory
 from gis.integrations.builtwith.provider import BuiltWithProvider
 from gis.integrations.builtwith.service import BuiltWithCollector
+from gis.integrations.builtwith.temporal import backfill_temporal
 from gis.integrations.serp.cli import _scope
 from gis.models import (
     ConnectionStatus,
@@ -75,6 +76,10 @@ def run(arguments: list[str] | None = None) -> int:
     sync.add_argument("--connection", type=uuid.UUID, required=True)
     sync.add_argument("--site", type=uuid.UUID, required=True)
     sync.add_argument("--domain", required=True)
+    backfill = commands.add_parser("backfill-temporal")
+    backfill.add_argument("--tenant", required=True)
+    backfill.add_argument("--site", required=True)
+    backfill.add_argument("--apply", action="store_true")
     args = parser.parse_args(arguments)
     try:
         with session_factory()() as session:
@@ -89,7 +94,7 @@ def run(arguments: list[str] | None = None) -> int:
                         }
                     )
                 )
-            else:
+            elif args.command == "sync":
                 selected_connection = session.get(DataSourceConnection, args.connection)
                 key = builtwith_credentials(
                     selected_connection.credential_reference if selected_connection else None
@@ -101,6 +106,9 @@ def run(arguments: list[str] | None = None) -> int:
                     json.dumps({"ingestion_run_id": str(result.id), "status": result.status.value})
                 )
                 return 0 if result.status.value == "SUCCEEDED" and not result.error_count else 1
+            else:
+                tenant, site = _scope(session, args.tenant, args.site)
+                print(json.dumps(backfill_temporal(session, tenant.id, site.id, apply=args.apply)))
         return 0
     except ClassifiedFailure as error:
         print(

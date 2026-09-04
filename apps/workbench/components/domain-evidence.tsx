@@ -1,13 +1,86 @@
 "use client";
 
 import Link from "next/link";
-import {useEffect,useState} from "react";
-import {api,siteScope} from "@/lib/api";
-import {formatDate,humanize} from "@/lib/format";
-import {ErrorState,LoadingState,PageHeader,StatusBadge} from "./ui";
+import {useEffect, useState} from "react";
+import {api, siteScope} from "@/lib/api";
+import {formatDate, humanize} from "@/lib/format";
+import {ErrorState, LoadingState, PageHeader, StatusBadge} from "./ui";
 
-type Detection={id:string;technology_name:string;provider_technology_id:string|null;category:string;first_seen:string|null;last_seen:string|null;status:string;current_presence:string;source:string;collected_at:string;href:string};
-type DomainEvidence={label:string;description:string;summary:{entity_type:string;canonical_subject:string;domain_type:string;primary_domain:boolean;sources:string[]};facets:{technology_profile:{source:string;observation_count:number;technology_count:number;collected_at:string|null;temporal_semantics:string};search_domain_intelligence:{observation_count:number;status:string}};technology_profile:{groups:{category:string;count:number}[];detections:Detection[]};collection_accounting:Record<string,unknown>;cost_and_credits:Record<string,unknown>;provenance:Record<string,unknown>;limitations:string[]};
-const value=(item:unknown)=>item===null||item===undefined?"Not reported":/^\d+$/.test(String(item))?new Intl.NumberFormat("en-US").format(Number(item)):String(item);
+type Detection = {
+  id: string; technology_name: string; provider_technology_id: string | null;
+  category: string; provider_first_observed: string | null; provider_last_observed: string | null;
+  temporal_anomaly: string | null; current_presence: string; href: string;
+};
+type Dimension = {key: string; label: string; count: number; technologies: string[]};
+type DomainEvidence = {
+  label: string; description: string;
+  summary: {entity_type: string; canonical_subject: string; sources: string[]};
+  facets: {technology_profile: {source: string; observation_count: number; technology_count: number; collected_at: string | null; temporal_semantics: string}; search_domain_intelligence: {observation_count: number; status: string}};
+  technology_intelligence_summary: {dimensions: Dimension[]; temporal_coverage: {detections_with_provider_dates: number; detections_without_provider_dates: number; anomalies: number}; interpretation: string};
+  technology_profile: {detections: Detection[]};
+  collection_accounting: Record<string, unknown>; cost_and_credits: Record<string, unknown>;
+  provenance: Record<string, unknown>; limitations: string[];
+};
 
-export function DomainEvidence({id}:{id:string}){const[data,setData]=useState<DomainEvidence>();const[error,setError]=useState<string>();useEffect(()=>{api<DomainEvidence>(`/api/v1/evidence/domains/${id}?${siteScope()}`).then(setData).catch((e:Error)=>setError(e.message))},[id]);if(error)return <ErrorState message={error}/>;if(!data)return <LoadingState/>;const grouped=Object.groupBy(data.technology_profile.detections,item=>item.category||"Other");return <><nav className="breadcrumbs"><Link href="/evidence">Evidence</Link><span>→</span><strong>{data.label}</strong></nav><PageHeader eyebrow="Domain intelligence" title={data.label} description={data.description}/><section className="entitySummary"><div><span>Canonical subject</span><strong>{data.summary.canonical_subject}</strong></div><div><span>Entity type</span><strong>{data.summary.entity_type}</strong></div><div><span>Sources represented</span><strong>{data.summary.sources.join(", ")||"None"}</strong></div></section><section className="semanticSection"><h2>Evidence facets</h2><div className="facetGrid"><article><StatusBadge>Observed</StatusBadge><h3>Technology profile</h3><p>{data.facets.technology_profile.technology_count} normalized detections from {data.facets.technology_profile.source}.</p><p>Collected {formatDate(data.facets.technology_profile.collected_at)}.</p><small>{data.facets.technology_profile.temporal_semantics}</small></article><article><StatusBadge>{humanize(data.facets.search_domain_intelligence.status)}</StatusBadge><h3>Search / domain intelligence</h3><p>{data.facets.search_domain_intelligence.observation_count} related observation(s) use this same canonical domain identity.</p></article></div></section><section className="semanticSection"><h2>BuiltWith technology profile</h2><p>Grouped by provider-reported category. Historical detection dates do not establish current installation.</p>{data.technology_profile.detections.length===0?<p>No BuiltWith technology observations are available for this domain.</p>:Object.entries(grouped).sort(([a],[b])=>a.localeCompare(b)).map(([category,items])=><section className="technologyGroup" key={category}><h3>{category} <span>{items?.length??0}</span></h3><div className="technologyGrid">{items?.map(item=><article key={item.id}><Link href={item.href}><strong>{item.technology_name}</strong></Link><p>{item.provider_technology_id?`Provider ID ${item.provider_technology_id}`:"Provider ID not reported"}</p><dl><div><dt>First seen</dt><dd>{formatDate(item.first_seen)}</dd></div><div><dt>Last seen</dt><dd>{formatDate(item.last_seen)}</dd></div><div><dt>Current presence</dt><dd>Unknown</dd></div></dl></article>)}</div></section>)}</section><section className="semanticSection"><h2>Collection accounting</h2><dl className="detailGrid">{Object.entries(data.collection_accounting).map(([key,item])=><div key={key}><dt>{humanize(key)}</dt><dd>{value(item)}</dd></div>)}</dl></section><section className="semanticSection"><h2>Credits and cost context</h2><dl className="detailGrid"><div><dt>Provider requests</dt><dd>{value(data.cost_and_credits.provider_requests)}</dd></div><div><dt>Provider-reported credits consumed</dt><dd>{value(data.cost_and_credits.provider_reported_credits_consumed)}</dd></div><div><dt>Provider-reported credits remaining</dt><dd>{value(data.cost_and_credits.provider_reported_credits_remaining)}</dd></div><div><dt>Estimated economic cost</dt><dd>{data.cost_and_credits.estimated_economic_cost?`$${data.cost_and_credits.estimated_economic_cost} estimate`:"Not configured"}</dd></div><div><dt>Actual provider USD charge</dt><dd>{data.cost_and_credits.actual_provider_usd_charge?`$${data.cost_and_credits.actual_provider_usd_charge}`:"Not reported"}</dd></div></dl></section><section className="semanticSection"><h2>Provenance</h2><dl className="detailGrid">{Object.entries(data.provenance).map(([key,item])=><div key={key}><dt>{humanize(key)}</dt><dd>{typeof item==="string"&&item.startsWith("/")?<Link href={item}>{humanize(key)}</Link>:value(item)}</dd></div>)}</dl></section><section className="notice"><strong>Interpretation limits</strong><ul>{data.limitations.map(item=><li key={item}>{item}</li>)}</ul></section></>}
+const value = (item: unknown) => item === null || item === undefined
+  ? "Not reported"
+  : /^\d+$/.test(String(item))
+    ? new Intl.NumberFormat("en-US").format(Number(item))
+    : String(item);
+
+export function DomainEvidence({id}: {id: string}) {
+  const [data, setData] = useState<DomainEvidence>();
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    api<DomainEvidence>(`/api/v1/evidence/domains/${id}?${siteScope()}`)
+      .then(setData)
+      .catch((caught: Error) => setError(caught.message));
+  }, [id]);
+  if (error) return <ErrorState message={error}/>;
+  if (!data) return <LoadingState/>;
+  const grouped = Object.groupBy(data.technology_profile.detections, item => item.category || "Other");
+  const coverage = data.technology_intelligence_summary.temporal_coverage;
+  return <>
+    <nav className="breadcrumbs"><Link href="/evidence">Evidence</Link><span>→</span><strong>{data.label}</strong></nav>
+    <PageHeader eyebrow="Domain intelligence" title={data.label} description={data.description}/>
+    <section className="entitySummary">
+      <div><span>Canonical subject</span><strong>{data.summary.canonical_subject}</strong></div>
+      <div><span>Entity type</span><strong>{data.summary.entity_type}</strong></div>
+      <div><span>Sources represented</span><strong>{data.summary.sources.join(", ") || "None"}</strong></div>
+    </section>
+    <section className="semanticSection">
+      <h2>Technology intelligence summary</h2>
+      <p>{data.technology_intelligence_summary.interpretation}</p>
+      <div className="intelligenceGrid">
+        {data.technology_intelligence_summary.dimensions.map(dimension => <article key={dimension.key}>
+          <span>{dimension.count}</span><h3>{dimension.label}</h3>
+          <p>{dimension.technologies.join(", ")}</p>
+        </article>)}
+      </div>
+      <p className="temporalCoverage">
+        Provider dates available for <strong>{coverage.detections_with_provider_dates}</strong> detections;
+        unavailable for <strong>{coverage.detections_without_provider_dates}</strong>.
+        {coverage.anomalies > 0 && <> <strong>{coverage.anomalies}</strong> provider-date anomaly requires cautious interpretation.</>}
+      </p>
+    </section>
+    <section className="semanticSection"><h2>Evidence facets</h2><div className="facetGrid">
+      <article><StatusBadge>Observed</StatusBadge><h3>Technology profile</h3><p>{data.facets.technology_profile.technology_count} normalized detections from {data.facets.technology_profile.source}.</p><p>Collected {formatDate(data.facets.technology_profile.collected_at)}.</p><small>{data.facets.technology_profile.temporal_semantics}</small></article>
+      <article><StatusBadge>{humanize(data.facets.search_domain_intelligence.status)}</StatusBadge><h3>Search / domain intelligence</h3><p>{data.facets.search_domain_intelligence.observation_count} related observation(s) use this same canonical domain identity.</p></article>
+    </div></section>
+    <section className="semanticSection"><h2>BuiltWith technology profile</h2><p>Grouped by provider-reported category. Provider detection dates do not establish current installation.</p>
+      {data.technology_profile.detections.length === 0 ? <p>No BuiltWith technology observations are available for this domain.</p> : Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([category, items]) => <section className="technologyGroup" key={category}>
+        <h3>{category} <span>{items?.length ?? 0}</span></h3><div className="technologyGrid">{items?.map(item => <article key={item.id}>
+          <Link href={item.href}><strong>{item.technology_name}</strong></Link><p>{item.provider_technology_id ? `Provider ID ${item.provider_technology_id}` : "Provider ID available in evidence signatures"}</p>
+          <dl><div><dt>Provider first observed</dt><dd>{formatDate(item.provider_first_observed)}</dd></div><div><dt>Provider last observed</dt><dd>{formatDate(item.provider_last_observed)}</dd></div><div><dt>Current presence</dt><dd>Unknown</dd></div></dl>
+          {item.temporal_anomaly && <p className="anomaly">Provider date is later than collection; preserved without current-state inference.</p>}
+        </article>)}</div>
+      </section>)}
+    </section>
+    <section className="semanticSection"><h2>Collection accounting</h2><dl className="detailGrid">{Object.entries(data.collection_accounting).map(([key, item]) => <div key={key}><dt>{humanize(key)}</dt><dd>{value(item)}</dd></div>)}</dl></section>
+    <section className="semanticSection"><h2>Credits and cost context</h2><dl className="detailGrid">
+      <div><dt>Provider requests</dt><dd>{value(data.cost_and_credits.provider_requests)}</dd></div><div><dt>Provider-reported credits consumed</dt><dd>{value(data.cost_and_credits.provider_reported_credits_consumed)}</dd></div><div><dt>Provider-reported credits remaining</dt><dd>{value(data.cost_and_credits.provider_reported_credits_remaining)}</dd></div><div><dt>Estimated economic cost</dt><dd>{data.cost_and_credits.estimated_economic_cost ? `$${data.cost_and_credits.estimated_economic_cost} estimate` : "Not configured"}</dd></div><div><dt>Actual provider USD charge</dt><dd>{data.cost_and_credits.actual_provider_usd_charge ? `$${data.cost_and_credits.actual_provider_usd_charge}` : "Not reported"}</dd></div>
+    </dl></section>
+    <section className="semanticSection"><h2>Provenance</h2><dl className="detailGrid">{Object.entries(data.provenance).map(([key, item]) => <div key={key}><dt>{humanize(key)}</dt><dd>{typeof item === "string" && item.startsWith("/") ? <Link href={item}>{humanize(key)}</Link> : value(item)}</dd></div>)}</dl></section>
+    <section className="notice"><strong>Interpretation limits</strong><ul>{data.limitations.map(item => <li key={item}>{item}</li>)}</ul></section>
+  </>;
+}

@@ -121,12 +121,13 @@ def test_real_cli_contract_through_worker(session, monkeypatch, http_status):
     assert str(ingestion.id) in json.dumps(detail, default=str)
 
 
-@pytest.mark.parametrize("value", [None, 1700000000000, "invalid", "2026-09-03T12:00:00"])
+@pytest.mark.parametrize("value", [None, 1700000000, "invalid", "2026-09-03T12:00:00"])
 def test_unknown_provider_dates_are_not_invented(value):
     assert provider_date(value) is None
 
 
 def test_documented_provider_dates_normalize_to_utc():
+    assert provider_date(1700000000000).isoformat() == "2023-11-14T22:13:20+00:00"
     assert provider_date("2026-09-03T08:00:00-04:00").isoformat() == "2026-09-03T12:00:00+00:00"
 
 

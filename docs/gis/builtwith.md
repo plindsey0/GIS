@@ -180,4 +180,6 @@ confirmation. For provider rejection inspect the classified cause and linked ing
 do not repeatedly click confirm. Rate-limit/transient failures may enter bounded retries:
 inspect queued work and daily request controls before authorizing further attempts.
 An empty technology profile can be a valid provider result; it does not justify synthetic
-evidence or lowering detector thresholds.
+evidence or lowering detector thresholds. See
+[BuiltWith temporal intelligence](epic-16b44-builtwith-temporal-intelligence.md) for v23
+detection-date semantics and the retained-evidence backfill.

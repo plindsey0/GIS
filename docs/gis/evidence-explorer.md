@@ -1,5 +1,8 @@
 # Entity-centered Evidence Explorer
 
+BuiltWith domain evidence follows the conservative date and summary semantics documented
+in [BuiltWith temporal intelligence](epic-16b44-builtwith-temporal-intelligence.md).
+
 The Workbench Evidence area answers “what does GIS know about this subject?” rather
 than exposing a flat list of provider records. Filters cover subject text, canonical
 entity type, registered source, evidence type, evidence status, and page size. Source

@@ -3,6 +3,12 @@
 .entitySummary span { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; }
 .entitySummary strong { display:block; margin-top:6px; overflow-wrap:anywhere; }
 .facetGrid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.intelligenceGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+.intelligenceGrid article { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; }
+.intelligenceGrid article>span { float:right; background:#e8eeea; border-radius:999px; padding:3px 9px; font-weight:800; }
+.intelligenceGrid h3 { margin:0 0 8px; }
+.intelligenceGrid p,.temporalCoverage { color:var(--muted); }
+.anomaly { color:#8a5714!important; font-weight:650; }
 .facetGrid article h3 { margin:12px 0 4px; }
 .facetGrid article small { color:var(--muted); }
 .technologyGroup { margin:22px 0; }
@@ -17,7 +23,7 @@
 .detailGrid dd { overflow-wrap:anywhere; }
 @media(max-width:800px) { .technologyGrid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:650px) {
-  .entitySummary,.facetGrid,.technologyGrid { grid-template-columns:1fr; }
+  .entitySummary,.facetGrid,.technologyGrid,.intelligenceGrid { grid-template-columns:1fr; }
   .technologyGrid article { min-width:0; }
   .tableWrap table { min-width:0; }
   .tableWrap thead { display:none; }

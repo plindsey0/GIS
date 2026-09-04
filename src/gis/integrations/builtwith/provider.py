@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import requests
@@ -15,7 +16,17 @@ ENDPOINT = "https://api.builtwith.com/v23/api.json"
 
 
 def provider_date(value: Any) -> datetime | None:
-    """Normalize documented offset-bearing timestamps; never invent an unknown timezone."""
+    """Normalize v23 epoch milliseconds or offset-bearing timestamps to UTC."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        # The retained v23 response uses Unix epoch milliseconds. Do not guess seconds.
+        if not 100_000_000_000 <= value <= 253_402_300_799_000:
+            return None
+        try:
+            return datetime.fromtimestamp(float(value) / 1000, timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
     if not isinstance(value, str):
         return None
     try:

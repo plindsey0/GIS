@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from gis.api.errors import ApiError
 from gis.api.workbench import encoded
+from gis.integrations.builtwith.temporal import detection_temporal, temporal_anomaly
 from gis.models import (
     DataRightsPolicy,
     DataSource,
@@ -28,6 +29,41 @@ from gis.models import (
     TechnologyEvidence,
     TechnologyObservation,
 )
+
+DIMENSIONS = {
+    "framework": ("APPLICATION_FRAMEWORK", "Application / framework"),
+    "javascript": ("APPLICATION_FRAMEWORK", "Application / framework"),
+    "hosting": ("CLOUD_HOSTING", "Cloud / hosting"),
+    "cdns": ("CDN", "CDN"),
+    "ns": ("DNS", "DNS"),
+    "analytics": ("ANALYTICS", "Analytics / measurement"),
+    "tag_management": ("TAG_MANAGEMENT", "Tag management"),
+    "ads": ("ADVERTISING", "Advertising / conversion"),
+    "ssl": ("SSL_SECURITY", "SSL / security"),
+    "registrar": ("REGISTRAR", "Registrar"),
+    "mobile": ("MOBILE", "Mobile"),
+}
+
+
+def intelligence_dimensions(detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for detection in detections:
+        normalized = str(detection.get("normalized_category") or "").casefold()
+        provider = str(detection["category"]).casefold()
+        key, label = DIMENSIONS.get(
+            normalized,
+            DIMENSIONS.get(provider, ("OTHER", "Other")),
+        )
+        dimension = grouped.setdefault(key, {"key": key, "label": label, "technologies": []})
+        dimension["technologies"].append(detection["technology_name"])
+    return [
+        {
+            **dimension,
+            "technologies": sorted(set(dimension["technologies"])),
+            "count": len(set(dimension["technologies"])),
+        }
+        for _, dimension in sorted(grouped.items(), key=lambda item: item[1]["label"])
+    ]
 
 
 def source_options(session: Session) -> list[dict[str, str]]:
@@ -183,6 +219,11 @@ def domain_evidence_detail(
             )
         }
         for detection, technology in rows:
+            first_observed, last_observed, evidence_temporals = detection_temporal(
+                session, detection
+            )
+            first_observed = detection.provider_first_seen_at or first_observed
+            last_observed = detection.provider_last_seen_at or last_observed
             category = detection.provider_category or technology.category or "Unknown"
             categories[category] += 1
             detections.append(
@@ -191,8 +232,17 @@ def domain_evidence_detail(
                     "technology_name": technology.name,
                     "provider_technology_id": identifiers.get(technology.id),
                     "category": category,
-                    "first_seen": encoded(detection.provider_first_seen_at),
-                    "last_seen": encoded(detection.provider_last_seen_at),
+                    "normalized_category": technology.category,
+                    "provider_first_observed": encoded(first_observed),
+                    "provider_last_observed": encoded(last_observed),
+                    "first_seen": encoded(first_observed),
+                    "last_seen": encoded(last_observed),
+                    "temporal_evidence_count": sum(
+                        1
+                        for item in evidence_temporals
+                        if item.first_observed or item.last_observed
+                    ),
+                    "temporal_anomaly": temporal_anomaly(last_observed, latest.collected_at),
                     "status": "PROVIDER_REPORTED_HISTORY",
                     "current_presence": "UNKNOWN",
                     "source": "BuiltWith",
@@ -264,6 +314,27 @@ def domain_evidence_detail(
                 {"category": key, "count": value} for key, value in sorted(categories.items())
             ],
             "detections": detections,
+        },
+        "technology_intelligence_summary": {
+            "dimensions": intelligence_dimensions(detections),
+            "temporal_coverage": {
+                "detections_with_provider_dates": sum(
+                    1
+                    for detection in detections
+                    if detection["provider_first_observed"] or detection["provider_last_observed"]
+                ),
+                "detections_without_provider_dates": sum(
+                    1
+                    for detection in detections
+                    if not detection["provider_first_observed"]
+                    and not detection["provider_last_observed"]
+                ),
+                "anomalies": sum(1 for detection in detections if detection["temporal_anomaly"]),
+            },
+            "interpretation": (
+                "Deterministic summary of normalized provider evidence. Categories describe evidence "
+                "coverage, not verified current deployment."
+            ),
         },
         "collection_accounting": {
             "records_received": ingestion.records_received if ingestion else None,
@@ -342,9 +413,14 @@ def technology_detection_detail(
     raw_allowed = bool(policy and policy.raw_display_allowed is RightsDecision.ALLOWED)
     evidence = list(
         session.scalars(
-            select(TechnologyEvidence).where(TechnologyEvidence.detection_id == detection.id)
+            select(TechnologyEvidence)
+            .where(TechnologyEvidence.detection_id == detection.id)
+            .order_by(TechnologyEvidence.id)
         )
     )
+    first_observed, last_observed, evidence_temporals = detection_temporal(session, detection)
+    first_observed = detection.provider_first_seen_at or first_observed
+    last_observed = detection.provider_last_seen_at or last_observed
     orchestration = _orchestration_run(session, ingestion.id)
     alias = session.scalar(
         select(TechnologyAlias).where(
@@ -355,13 +431,32 @@ def technology_detection_detail(
         "id": str(detection.id),
         "label": technology.name,
         "description": "A normalized technology detection backed by provider-reported historical evidence.",
+        "provider_evidence": {
+            "provider_technology_name": detection.provider_technology_name,
+            "provider_category": detection.provider_category,
+            "provider_signatures": sorted(item.signature_key for item in evidence),
+            "provider_first_observed": encoded(first_observed),
+            "provider_last_observed": encoded(last_observed),
+            "temporal_anomaly": temporal_anomaly(last_observed, observation.collected_at),
+        },
+        "canonical_interpretation": {
+            "name": technology.name,
+            "provider_technology_id": alias.provider_identifier if alias else None,
+            "normalized_category": technology.category,
+            "canonical_first_observed": encoded(first_observed),
+            "canonical_last_observed": encoded(last_observed),
+            "detection_semantics": detection.semantic_class,
+            "current_presence": "UNKNOWN",
+            "evidence_count": len(evidence),
+            "source_count": 1,
+        },
         "technology": {
             "name": technology.name,
             "provider_technology_id": alias.provider_identifier if alias else None,
             "normalized_category": technology.category,
             "provider_category": detection.provider_category,
-            "first_seen": encoded(detection.provider_first_seen_at),
-            "last_seen": encoded(detection.provider_last_seen_at),
+            "first_seen": encoded(first_observed),
+            "last_seen": encoded(last_observed),
             "detection_semantics": detection.semantic_class,
             "current_presence": "UNKNOWN",
         },
@@ -379,8 +474,13 @@ def technology_detection_detail(
                 "signature": item.signature_key,
                 "schema_version": item.signature_version,
                 "payload_hash": item.evidence_hash,
+                "provider_first_observed": encoded(evidence_temporals[index].first_observed),
+                "provider_last_observed": encoded(evidence_temporals[index].last_observed),
+                "temporal_anomaly": temporal_anomaly(
+                    evidence_temporals[index].last_observed, observation.collected_at
+                ),
             }
-            for item in evidence
+            for index, item in enumerate(evidence)
         ],
         "provenance": {
             "domain": next(
@@ -397,6 +497,8 @@ def technology_detection_detail(
                 None,
             ),
             "ingestion_run_id": str(ingestion.id),
+            "observation_id": str(observation.id),
+            "collection_timestamp": encoded(observation.collected_at),
             "orchestration_run": f"/system/runs/{orchestration.id}" if orchestration else None,
             "source": f"/system/sources/{source.key}",
             "rights_policy_id": str(observation.rights_policy_id),
