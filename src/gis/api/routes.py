@@ -6,6 +6,7 @@ from dataclasses import asdict
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -87,6 +88,12 @@ from gis.models import (
 )
 from gis.opportunities.service import OpportunityService
 from gis.orchestration.service import Orchestrator
+from gis.provenance.review import (
+    RightsReviewInput,
+    review_context,
+    review_policy,
+    scoped_connection,
+)
 from gis.provider_control.binding import reconcile_schedules, schedules_for
 from gis.provider_control.configuration import CollectionConfiguration, ConfigurationService
 from gis.provider_control.manual import ManualRequest, manual_run
@@ -103,6 +110,71 @@ def database() -> Session:  # type: ignore[misc]
 
 
 router = APIRouter(prefix="/api/v1")
+
+
+@router.get("/connections/{connection_id}/rights", dependencies=[Depends(require_role(Role.READ))])
+def connection_rights(
+    connection_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, object]:
+    try:
+        return review_context(
+            session, scoped_connection(session, connection_id, tenant_id, site_id)
+        )
+    except ValueError as error:
+        raise ApiError(404, "CONNECTION_NOT_FOUND", str(error)) from error
+
+
+@router.post(
+    "/connections/{connection_id}/rights/reviews", dependencies=[Depends(require_role(Role.ADMIN))]
+)
+def review_connection_rights(
+    connection_id: uuid.UUID,
+    payload: RightsReviewInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, object]:
+    try:
+        connection = scoped_connection(session, connection_id, tenant_id, site_id, lock=True)
+        review_policy(session, connection, payload)
+        session.commit()
+        return review_context(session, connection)
+    except ValueError as error:
+        session.rollback()
+        raise ApiError(409, "RIGHTS_REVIEW_REJECTED", str(error)) from error
+
+
+class AccountRefreshInput(BaseModel):
+    actor: str = Field(min_length=1, max_length=255)
+    confirmed: bool = False
+
+
+@router.post(
+    "/connections/{connection_id}/account-telemetry/refresh",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+def refresh_connection_account(
+    connection_id: uuid.UUID,
+    payload: AccountRefreshInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    from gis.integrations.builtwith.telemetry import refresh, telemetry_status
+
+    try:
+        if not payload.confirmed:
+            raise ValueError("Explicit account telemetry confirmation required")
+        connection = scoped_connection(session, connection_id, tenant_id, site_id, lock=True)
+        refresh(session, connection, payload.actor)
+        session.commit()
+        return telemetry_status(session, connection)
+    except ValueError as error:
+        session.rollback()
+        raise ApiError(409, "ACCOUNT_REFRESH_BLOCKED", str(error)) from error
 
 
 @router.get(

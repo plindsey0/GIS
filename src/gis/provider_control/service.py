@@ -303,6 +303,7 @@ class ProviderControlService:
                 )
                 execution_blockers.extend(preflight.blocking_reasons)
                 budget_warnings.extend(preflight.warnings)
+        from gis.provenance.review import required_rights
         from gis.provider_control.operations import provider_operations
 
         operations = provider_operations(
@@ -346,6 +347,7 @@ class ProviderControlService:
         ).one()
         return {
             "operations": operations,
+            "required_rights": required_rights(self.session, connection) if connection else [],
             "execution_blockers": list(dict.fromkeys(execution_blockers)),
             "budget_warnings": list(dict.fromkeys(budget_warnings)),
             "operational_health": health,

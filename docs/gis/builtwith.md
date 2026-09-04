@@ -2,6 +2,16 @@
 
 ## Contract and conservative defaults
 
+See [rights evidence and review](builtwith-rights-review.md) and
+[WhoAmI account telemetry](builtwith-account-telemetry.md). The source page now supports
+connection-scoped versioned human review and explicit, credit-free account refresh.
+Neither operation queues a technology lookup. Rights recommendations are not approvals.
+
+Dependency discovery follows both direct source links and site-scoped schedule connection
+links. Provider-created pipelines previously omitted the direct source link, producing
+a misleading unmapped boolean despite their connection binding. Missing registered asset
+lineage is now explained separately; no historical schedule is rewritten to correct the display.
+
 BuiltWith uses the normal provider → capability → authorized DOMAIN target → explicit
 manual scope → confirmation → orchestration contract. `TECHNOLOGY_PROFILE` binds to
 the `builtwith_technology` pipeline and `gis-builtwith sync` collector. The adapter

@@ -1214,6 +1214,30 @@ class DataRightsGrant(Base, TimestampMixin):
     reason: Mapped[Optional[str]] = mapped_column(Text)
 
 
+class ProviderAccountTelemetry(Base):
+    """Minimal control-plane snapshots, never intelligence collection or billing evidence."""
+
+    __tablename__ = "provider_account_telemetry"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "connection_id"],
+            [f"{SCHEMA}.data_source_connection.tenant_id", f"{SCHEMA}.data_source_connection.id"],
+            name="fk_account_telemetry_connection_scope",
+        ),
+        Index("ix_account_telemetry_latest", "connection_id", "checked_at"),
+        CheckConstraint("status IN ('CURRENT', 'UNAVAILABLE')", name="ck_account_telemetry_status"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    connection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    failure_category: Mapped[Optional[str]] = mapped_column(String(100))
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    normalized: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
 class DataSource(Base, TimestampMixin):
     __tablename__ = "data_source"
     __table_args__ = ({"schema": SCHEMA},)

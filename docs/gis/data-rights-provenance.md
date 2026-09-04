@@ -152,6 +152,19 @@ Every future external-data epic must:
 
 ## Human review and limitations
 
+The Workbench source page now provides administrator-only, site-connection-scoped
+rights review. It creates new policies and explicit per-use grants, captures the human
+authority/basis/version with server review time, and changes only that connection's
+current policy pointer. It preserves all old policy/grant snapshots and acquisition
+history. Source defaults, other connections, schedules and provider authorization are
+not changed. A stale submitted policy ID is rejected; reviews are effective now rather
+than scheduled for future activation. Per-use grants take precedence over compatibility
+fields. Policy history exposes previous per-use decisions as well as review metadata.
+
+Endpoints: `GET /api/v1/connections/{id}/rights` and administrator-only
+`POST /api/v1/connections/{id}/rights/reviews`, with tenant/site scope. This workflow
+does not invoke the older bulk activation/bootstrap command or rewrite historical data.
+
 Seeded source permissions remain intentionally `UNKNOWN`, including Google Search Console, GA4,
 first-party telemetry, VA, Census, FHFA, Google Ads/Trends, DataForSEO, Ahrefs, Semrush, BuiltWith,
 Scrapy, Playwright, Git, and manual imports. Acquisition method is not permission. A qualified human

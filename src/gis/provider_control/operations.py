@@ -120,6 +120,29 @@ def authentication(session: Session, connection: DataSourceConnection) -> dict[s
     )
     succeeded_at = success.completed_at if success else None
     failed_at = (failed.completed_at or failed.started_at) if failed else None
+    source = session.get(DataSource, connection.data_source_id)
+    if source and source.key == "builtwith":
+        from gis.models import ProviderAccountTelemetry
+
+        telemetry = session.scalars(
+            select(ProviderAccountTelemetry).where(
+                ProviderAccountTelemetry.connection_id == connection.id,
+                ProviderAccountTelemetry.tenant_id == connection.tenant_id,
+            )
+        ).all()
+        account_success = max(
+            (row.checked_at for row in telemetry if row.status == "CURRENT"), default=None
+        )
+        account_failure = max(
+            (
+                row.checked_at
+                for row in telemetry
+                if row.failure_category == "AUTHENTICATION_FAILED"
+            ),
+            default=None,
+        )
+        succeeded_at = max(filter(None, [succeeded_at, account_success]), default=None)
+        failed_at = max(filter(None, [failed_at, account_failure]), default=None)
     state = (
         "AUTHENTICATION_FAILED"
         if failed_at and (not succeeded_at or failed_at >= succeeded_at)
@@ -131,8 +154,8 @@ def authentication(session: Session, connection: DataSourceConnection) -> dict[s
         "authentication_state": state,
         "last_authentication_success_at": succeeded_at,
         "last_authentication_failure_at": failed_at,
-        "authentication_explanation": "Historical endpoint acceptance for this connection; not proof that a rotated credential remains valid. No extra authentication request was made."
-        if success
+        "authentication_explanation": "Historical endpoint acceptance for this connection; not proof that a rotated credential remains valid. Account telemetry is not technology collection acceptance."
+        if succeeded_at
         else "No successful provider-task evidence is available; secret resolution alone is insufficient.",
     }
 

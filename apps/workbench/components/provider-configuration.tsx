@@ -19,7 +19,7 @@ type Capability = {
   pricing_provenance:string; last_verified:string|null;
 };
 export type Configuration = {
-  detail:{budget_warnings?:string[];execution_blockers?:string[];operations?:{activity:Activity[];current_incidents:number;reliability:{expected:number;on_time:number;recovered_late:number;missed:number}};operational_health?:string;credential_readiness?:CredentialReadiness|null;execution_readiness?:string;known_actual_cost_month?:string|null;known_reserved_cost_month?:string|null;cost_state?:string;request_count?:number;unknown_cost_requests?:number;name:string;description:string;implementation_status:string;connection_state:string;collection_state:string;blocking_reason:string|null;is_commercial:boolean;last_collection:string|null;next_collection:string|null;budget:{spent_day:string;spent_month:string};usage:Array<{id:string;status:string;requests:number;actual_cost:string|null;estimated_cost:string|null;occurred_at:string}>};
+  detail:{required_rights?:{label:string;status:string;blocking:boolean}[];budget_warnings?:string[];execution_blockers?:string[];operations?:{activity:Activity[];current_incidents:number;reliability:{expected:number;on_time:number;recovered_late:number;missed:number}};operational_health?:string;credential_readiness?:CredentialReadiness|null;execution_readiness?:string;known_actual_cost_month?:string|null;known_reserved_cost_month?:string|null;cost_state?:string;request_count?:number;unknown_cost_requests?:number;name:string;description:string;implementation_status:string;connection_state:string;collection_state:string;blocking_reason:string|null;is_commercial:boolean;last_collection:string|null;next_collection:string|null;budget:{spent_day:string;spent_month:string};usage:Array<{id:string;status:string;requests:number;actual_cost:string|null;estimated_cost:string|null;occurred_at:string}>};
   policy:Policy; capabilities:Capability[];
   current_obligations?:Obligation[];latest_failed_attempt?:{at:string;category:string;reason:string;run_id:string}|null;
   connections:Array<{id:string;label:string;status:string}>;
@@ -76,6 +76,8 @@ export function ProviderConfigurationPage({providerKey}:{providerKey:string}) {
     <PageHeader eyebrow="Data provider" title={d.name} description={d.description}/>
     <div className="providerToolbar"><Link href="/providers">All providers</Link>
       {providerKey==="builtwith"&&<Link href="/docs/builtwith-acceptance">First collection guide</Link>}
+      {providerKey==="builtwith"&&<Link href="/system/sources/builtwith">Rights review and account telemetry</Link>}
+      {d.required_rights?.some(r=>r.blocking)&&<p role="status">Governance: {d.required_rights.filter(r=>r.blocking).map(r=>`${r.label}: ${r.status==="DENIED"?"PROHIBITED":r.status} → ALLOWED required`).join("; ")}</p>}
       {implemented&&step===null&&<button onClick={()=>{setStep(0);setMessage(undefined)}}>Configure collection</button>}
       {implemented&&d.collection_state==="ACTIVE"&&<><button className="secondaryButton" disabled={busy} onClick={()=>void action("PAUSE")}>Pause</button><button className="secondaryButton" disabled={busy} onClick={()=>setConfirmDisable(true)}>Disable collection</button></>}
       {implemented&&d.collection_state==="PAUSED"&&<button disabled={busy} onClick={()=>void action("RESUME")}>Resume existing policy</button>}

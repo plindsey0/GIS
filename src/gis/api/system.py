@@ -790,7 +790,24 @@ class SystemQueries:
         )
         pipelines = list(
             self.session.scalars(
-                select(PipelineDefinition).where(PipelineDefinition.data_source_id == source.id)
+                select(PipelineDefinition).where(
+                    or_(
+                        PipelineDefinition.data_source_id == source.id,
+                        PipelineDefinition.id.in_(
+                            select(ScheduleDefinition.pipeline_id)
+                            .join(
+                                DataSourceConnection,
+                                DataSourceConnection.id
+                                == ScheduleDefinition.data_source_connection_id,
+                            )
+                            .where(
+                                DataSourceConnection.data_source_id == source.id,
+                                ScheduleDefinition.tenant_id == tenant_id,
+                                ScheduleDefinition.site_id == site_id,
+                            )
+                        ),
+                    )
+                )
             )
         )
         runs = list(
@@ -924,6 +941,9 @@ class SystemQueries:
             )
             for connection in connections
         ]
+        from gis.integrations.builtwith.telemetry import telemetry_status
+        from gis.provenance.review import required_rights
+
         return {
             **summary,
             "description": source.description
@@ -935,8 +955,12 @@ class SystemQueries:
                     **row_data(item, exclude={"credential_reference", "configuration_json"}),
                     "configuration_present": bool(item.configuration_json),
                     "credential_configured": bool(item.credential_reference),
+                    "required_rights": required_rights(self.session, item),
+                    "account_telemetry": telemetry_status(self.session, item)
+                    if source.key == "builtwith"
+                    else None,
                     "credential_readiness": provider_readiness(self.session, item)
-                    if source.key == "dataforseo"
+                    if source.key in {"dataforseo", "builtwith"}
                     else None,
                 }
                 for item in connections
@@ -947,8 +971,19 @@ class SystemQueries:
             "impact": {
                 "affected_pipelines": summary.get("powering", []),
                 "unmapped_dependencies": not assets and not summary.get("powering"),
+                "explanation": "Pipeline dependencies are resolved from explicit source links and site-scoped schedule connections. No materialized asset lineage has been registered yet."
+                if not assets and summary.get("powering")
+                else "No pipeline source/connection binding or asset lineage is registered; downstream impact cannot be determined."
+                if not assets
+                else "Registered asset lineage and pipeline source/connection bindings identify downstream impact.",
+                "pipeline_links": [
+                    {"pipeline": pipeline, "href": f"/system/pipelines/{pipeline}"}
+                    for pipeline in summary.get("powering", [])
+                ],
             },
-            "quota": "Quota telemetry not available",
+            "quota": "Inspect connection account telemetry; no automatic refresh"
+            if source.key == "builtwith"
+            else "Quota telemetry not available",
         }
 
     def data_flow(self, tenant_id: uuid.UUID, site_id: uuid.UUID) -> dict[str, Any]:
