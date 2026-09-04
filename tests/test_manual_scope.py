@@ -41,6 +41,8 @@ def configured(session):
             enabled=True,
             target_ids=[domain.id],
             cadence="MANUAL_ONLY",
+            location_code=2840,
+            language_code="en",
         )
     )
     config.policy.allow_unknown_cost = True
@@ -81,7 +83,7 @@ def test_explicit_scope_excludes_scheduled_target_and_preserves_schedule(session
     from gis.models import PipelineDefinition
 
     assert (
-        execution_arguments(session, run, session.get(PipelineDefinition, run.pipeline_id))[-1]
+        execution_arguments(session, run, session.get(PipelineDefinition, run.pipeline_id))[6]
         == "vahomemath.com"
     )
     for status in ["PENDING", "RUNNING", "SUCCEEDED", "FAILED"]:

@@ -160,10 +160,10 @@ def collector_cli_handler(session: Session, run: OrchestrationRun) -> PipelineRe
         timeout=int(run.configuration_json.get("timeout_seconds", 3600)),
         env=collector_environment(session, run, pipeline),
     )
-    if completed.returncode:
+    if completed.returncode and pipeline.key != "external_search":
         raise collector_failure(completed.stderr[-2000:] or completed.stdout[-2000:])
     ingestion_run = None
-    if pipeline.key == "builtwith_technology":
+    if pipeline.key in {"builtwith_technology", "external_search"}:
         import json
         import uuid
 
@@ -172,14 +172,24 @@ def collector_cli_handler(session: Session, run: OrchestrationRun) -> PipelineRe
                 IngestionRun, uuid.UUID(json.loads(completed.stdout)["ingestion_run_id"])
             )
         except (ValueError, KeyError, TypeError):
-            raise ValueError("BuiltWith collector returned no ingestion linkage") from None
+            if completed.returncode:
+                raise collector_failure(
+                    completed.stdout[-2000:] or completed.stderr[-2000:]
+                ) from None
+            raise ValueError("Collector returned no exact ingestion linkage") from None
         if (
             not ingestion_run
             or ingestion_run.data_source_connection_id != run.data_source_connection_id
             or ingestion_run.tenant_id != run.tenant_id
             or ingestion_run.site_id != run.site_id
         ):
-            raise ValueError("BuiltWith ingestion linkage is outside run scope")
+            raise ValueError("Collector ingestion linkage is outside run scope")
+        if (
+            completed.returncode
+            and ingestion_run.status.value == "SUCCEEDED"
+            and not ingestion_run.error_count
+        ):
+            raise collector_failure(completed.stdout[-2000:] or completed.stderr[-2000:])
     if run.data_source_connection_id and ingestion_run is None:
         ingestion_run = session.scalar(
             select(IngestionRun)

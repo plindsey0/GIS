@@ -24,6 +24,7 @@ from gis.models import (
     ExecutorRole,
     FailureCategory,
     FreshnessState,
+    IngestionRun,
     ObligationStatus,
     OperationalAlert,
     OrchestrationObligation,
@@ -432,11 +433,30 @@ class Worker:
             obligation.attempt_count = attempt_count + 1
         self.session.add(attempt)
         self.session.commit()
+        result = None
         try:
             handler = self.handlers[pipeline.handler_key]
             result = handler(self.session, run)
             if result.actual_cost is not None and result.actual_cost < 0:
+                result = None
                 raise ValueError("actual cost cannot be negative")
+            if result.ingestion_run_id:
+                from gis.orchestration.ingestion import ingestion_failure
+
+                ingestion = self.session.get(IngestionRun, result.ingestion_run_id)
+                if (
+                    not ingestion
+                    or ingestion.tenant_id != run.tenant_id
+                    or ingestion.site_id != run.site_id
+                    or ingestion.data_source_connection_id != run.data_source_connection_id
+                ):
+                    result = None
+                    raise ValueError(
+                        "Required ingestion linkage is missing or outside execution scope"
+                    )
+                failure = ingestion_failure(ingestion)
+                if failure:
+                    raise failure
             completed = now or utcnow()
             attempt.status = OrchestrationStatus.SUCCEEDED
             attempt.completed_at = completed
@@ -494,6 +514,13 @@ class Worker:
             refreshed_attempt = self.session.get(ExecutionAttempt, attempt.id)
             assert run and refreshed_attempt
             attempt = refreshed_attempt
+            if result is not None:
+                attempt.ingestion_run_id = result.ingestion_run_id
+                run.ingestion_run_id = result.ingestion_run_id
+                attempt.actual_provider_cost = result.actual_cost
+                run.actual_provider_cost = result.actual_cost
+                if obligation:
+                    obligation.ingestion_run_id = result.ingestion_run_id
             completed = now or utcnow()
             attempt.status = OrchestrationStatus.FAILED
             attempt.completed_at = completed

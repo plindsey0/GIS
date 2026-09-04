@@ -122,6 +122,12 @@ def manual_run(
                         "target": target.target_value,
                         "cadence": cp.cadence,
                         "default_selected": False,
+                        "search_market": {
+                            "location_code": cp.schedule_configuration_json.get("location_code"),
+                            "language_code": cp.schedule_configuration_json.get("language_code"),
+                        }
+                        if cap.capability_key == "DOMAIN_SEARCH_INTELLIGENCE"
+                        else None,
                     }
                 )
                 if target.id not in selected:

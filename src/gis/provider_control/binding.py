@@ -338,6 +338,19 @@ def execution_arguments(
         ]
     elif pipeline.key == "experience":
         args.extend(["--target", str(target.target_value)])
+    if pipeline.key == "external_search":
+        from gis.models import FailureCategory
+        from gis.orchestration.reliability import ClassifiedFailure
+
+        spec = CapabilityConfiguration(
+            key=capability.capability_key, **cp.schedule_configuration_json
+        )
+        if spec.location_code is None or not spec.language_code:
+            raise ClassifiedFailure(
+                FailureCategory.CONFIGURATION_ERROR,
+                "Domain Search request is missing required GIS location/language context. Configure the capability search market.",
+            )
+        args.extend(["--location-code", str(spec.location_code), "--language", spec.language_code])
     return args
 
 

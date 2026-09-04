@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gis.integrations.external_search.dataforseo import (
+    DataForSEOExternalSearchProvider,
     ProviderCollection,
     SearchRequest,
     normalize_domain,
@@ -24,10 +26,12 @@ from gis.models import (
     ExternalCompetitorObservation,
     ExternalKeywordRanking,
     ExternalSearchObservation,
+    FailureCategory,
     IngestionRun,
     IngestionStatus,
     Site,
 )
+from gis.orchestration.reliability import ClassifiedFailure
 from gis.provider_control.service import ProviderControlService
 
 
@@ -65,6 +69,8 @@ class ExternalSearchCollector:
         *,
         estimated_cost: Decimal | None = None,
     ) -> IngestionRun:
+        if os.environ.get("GIS_PAID_EXECUTION_DISABLED") == "1":
+            raise ClassifiedFailure(FailureCategory.CONFIGURATION_ERROR, "Paid execution is held")
         connection = self.session.get(DataSourceConnection, connection_id)
         site = self.session.get(Site, site_id)
         if not connection or not site or connection.tenant_id != site.tenant_id:
@@ -116,6 +122,9 @@ class ExternalSearchCollector:
                 "observation_type": request.observation_type,
                 "target_domain": normalize_domain(request.target_domain),
                 "limit": request.limit,
+                "location_code": request.location_code,
+                "location_name": request.location_name,
+                "language_code": request.language_code,
             },
         )
         self.session.add(run)
@@ -123,7 +132,11 @@ class ExternalSearchCollector:
         # Keep the usage reservation durable before an external charge can occur.
         self.session.commit()
         savepoint = self.session.begin_nested()
+        collection = None
+        request_validated = False
         try:
+            DataForSEOExternalSearchProvider.request_body(request)
+            request_validated = True
             collection = self.provider.collect(request)
             content_hash = hashlib.sha256(
                 json.dumps(collection.items, sort_keys=True, default=str).encode()
@@ -219,10 +232,23 @@ class ExternalSearchCollector:
             run.error_count = 1
             run.error_summary = f"{type(error).__name__}: {error}"[:1000]
             run.completed_at = datetime.now(timezone.utc)
+            category = (
+                error.category
+                if isinstance(error, ClassifiedFailure)
+                else FailureCategory.CONFIGURATION_ERROR
+                if not request_validated
+                else FailureCategory.INTERNAL_PROCESSING_ERROR
+            )
+            run.source_metadata = {
+                **run.source_metadata,
+                "failure_category": category.value,
+                "request_validated": request_validated,
+            }
+            failed_cost = collection.cost if collection else getattr(error, "cost", None)
             control.reconcile(
                 reservation_id,
-                actual_cost=None,
-                semantics="UNKNOWN",
+                actual_cost=failed_cost,
+                semantics="PROVIDER_REPORTED" if failed_cost is not None else "UNKNOWN",
                 status="FAILED",
                 ingestion_run_id=run.id,
             )

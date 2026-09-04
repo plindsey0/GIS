@@ -59,6 +59,8 @@ class CapabilityConfiguration(BaseModel):
     per_run_limit: int = Field(default=100, ge=1, le=100)
     unit_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=20, decimal_places=8)
     pricing_notes: str = Field(default="", max_length=2000)
+    location_code: Optional[int] = Field(default=None, gt=0)
+    language_code: Optional[str] = Field(default=None, pattern="^[a-z]{2}$")
 
 
 class CollectionConfiguration(BaseModel):
@@ -213,6 +215,8 @@ class ConfigurationService:
                         str(t.target_reference_id) for t in targets if t.target_reference_id
                     ],
                     "hour": schedule_spec.get("hour", 8),
+                    "location_code": schedule_spec.get("location_code"),
+                    "language_code": schedule_spec.get("language_code"),
                     "minute": schedule_spec.get("minute", 0),
                     "weekday": schedule_spec.get("weekday", 1),
                     "month_day": schedule_spec.get("month_day", 1),
@@ -398,6 +402,12 @@ class ConfigurationService:
                 raise ValueError("Duplicate targets are not allowed.")
             if not cap.enabled:
                 continue
+            if cap.key == "DOMAIN_SEARCH_INTELLIGENCE" and (
+                cap.location_code is None or not cap.language_code
+            ):
+                blockers.append(
+                    "Domain Search requires an explicit GIS search market: location code and language code."
+                )
             count = len(cap.target_ids)
             if not count:
                 blockers.append(
@@ -517,6 +527,8 @@ class ConfigurationService:
                 tenant_id, site_id, key, cap.key, cap.enabled, cap.cadence, config.policy.actor
             )
             cp.schedule_configuration_json = {
+                "location_code": cap.location_code,
+                "language_code": cap.language_code,
                 "hour": cap.hour,
                 "minute": cap.minute,
                 "weekday": cap.weekday,

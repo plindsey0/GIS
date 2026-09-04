@@ -605,6 +605,25 @@ class SystemQueries:
             else "NOT_YET_DUE"
         )
 
+    @staticmethod
+    def _effective_status_filter(status: str) -> Any:
+        invalid_ingestion = (
+            select(IngestionRun.id)
+            .where(
+                IngestionRun.id == OrchestrationRun.ingestion_run_id,
+                or_(IngestionRun.status != "SUCCEEDED", IngestionRun.error_count > 0),
+            )
+            .exists()
+        )
+        if status == "FAILED":
+            return or_(
+                OrchestrationRun.status == "FAILED",
+                (OrchestrationRun.status == "SUCCEEDED") & invalid_ingestion,
+            )
+        if status == "SUCCEEDED":
+            return (OrchestrationRun.status == "SUCCEEDED") & ~invalid_ingestion
+        return OrchestrationRun.status == status
+
     def runs(
         self,
         tenant_id: uuid.UUID,
@@ -625,7 +644,7 @@ class SystemQueries:
             or_(OrchestrationRun.site_id == site_id, OrchestrationRun.site_id.is_(None)),
         ]
         if status:
-            filters.append(OrchestrationRun.status == status)
+            filters.append(self._effective_status_filter(status))
         if trigger:
             filters.append(OrchestrationRun.trigger_type == trigger)
         if provider_key:
@@ -655,6 +674,7 @@ class SystemQueries:
             filters.extend(
                 [
                     OrchestrationRun.status == "SUCCEEDED",
+                    self._effective_status_filter("SUCCEEDED"),
                     OrchestrationRun.id.in_(
                         select(ExecutionAttempt.orchestration_run_id).where(
                             ExecutionAttempt.status == "FAILED"
@@ -663,7 +683,7 @@ class SystemQueries:
                 ]
             )
         elif outcome:
-            filters.append(OrchestrationRun.status == outcome)
+            filters.append(self._effective_status_filter(outcome))
         query = select(OrchestrationRun, PipelineDefinition).join(PipelineDefinition)
         if pipeline_key:
             filters.append(PipelineDefinition.key == pipeline_key)
