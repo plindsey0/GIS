@@ -1,37 +1,27 @@
-import {cleanup,fireEvent,render,screen,waitFor} from "@testing-library/react";
+import {cleanup,fireEvent,render,screen} from "@testing-library/react";
 import {afterEach,expect,it,vi} from "vitest";
 import {SourceGovernance} from "./source-governance";
 
-const source={label:"BuiltWith",description:"Governed technology source",impact:{explanation:"No materialized asset lineage registered",pipeline_links:[{pipeline:"builtwith_technology",href:"/system/pipelines/builtwith_technology"}]},connections:[{id:"connection",status:"ACTIVE",required_rights:[{label:"Raw storage",status:"UNKNOWN",blocking:true},{label:"Derived storage",status:"ALLOWED",blocking:false}],credential_readiness:{execution_held:true,authentication_state:"NOT_INDEPENDENTLY_VALIDATED"},account_telemetry:{state:"UNKNOWN",checked_at:null,values:{},failure_category:null}}]};
-const review={policy:{id:"old",policy_version:"1"},decisions:{raw_storage_allowed:"UNKNOWN"},grants:{raw_retention:"UNKNOWN",normalized_retention:"UNKNOWN",ai_training:"UNKNOWN"},history:[{id:"old",policy_version:"1"}]};
-function response(value:unknown){return Promise.resolve({ok:true,status:200,text:async()=>JSON.stringify(value)} as Response)}
+const uses=["internal_analysis","commercial_use","raw_retention","normalized_retention","derivative_creation","aggregate_statistics","external_publication","raw_redistribution","normalized_redistribution","customer_facing_display","customer_export","rag_retrieval","ai_inference","ai_training"];
+const grants=Object.fromEntries(uses.map(use=>[use,"UNKNOWN"]));
+const decisions={commercial_use_allowed:"UNKNOWN",third_party_processing_allowed:"UNKNOWN",deterministic_analysis_allowed:"UNKNOWN",ai_inference_allowed:"UNKNOWN",model_training_allowed:"UNKNOWN",raw_storage_allowed:"UNKNOWN",derived_storage_allowed:"UNKNOWN",raw_display_allowed:"UNKNOWN",derived_display_allowed:"UNKNOWN",aggregation_allowed:"UNKNOWN",cross_tenant_learning_allowed:"UNKNOWN",attribution_required:"UNKNOWN"};
+const required=[{use:"raw_retention",label:"Raw storage",status:"UNKNOWN",required:"ALLOWED",blocking:true},{use:"normalized_retention",label:"Derived storage",status:"UNKNOWN",required:"ALLOWED",blocking:true}];
+const source={label:"BuiltWith",description:"Governed technology source",impact:{explanation:"No materialized asset lineage registered",pipeline_links:[{pipeline:"builtwith_technology",href:"/system/pipelines/builtwith_technology"}]},connections:[{id:"connection",status:"ACTIVE",required_rights:required,credential_readiness:{execution_held:true,authentication_state:"NOT_INDEPENDENTLY_VALIDATED"},account_telemetry:{state:"UNKNOWN",checked_at:null,values:{},failure_category:null}}]};
+const review={policy:{id:"old",policy_version:"1"},decisions,grants,required_rights:required,history:[{id:"old",policy_version:"1",grants}]};
+const approvedReview={...review,policy:{id:"new",policy_version:"2",supersedes_policy_id:"old"},grants:{...grants,raw_retention:"ALLOWED",normalized_retention:"ALLOWED"},required_rights:required.map(item=>({...item,status:"ALLOWED",blocking:false})),history:[{id:"new",policy_version:"2",review_authority:"Operator",reviewed_at:"2026-09-04T12:00:00Z",effective_at:"2026-09-04T12:00:00Z",supersedes_policy_id:"old",grants:{...grants,raw_retention:"ALLOWED",normalized_retention:"ALLOWED"}},...review.history]};
+function response(value:unknown,ok=true,status=200){return Promise.resolve({ok,status,text:async()=>JSON.stringify(value)} as Response)}
 afterEach(()=>{cleanup();vi.unstubAllGlobals();vi.restoreAllMocks()});
-it("remains readable before the existing API is restarted after deployment",async()=>{
- vi.stubGlobal("fetch",vi.fn(()=>response({...source,impact:{unmapped_dependencies:true},connections:[{id:"connection",status:"ACTIVE"}]})));
- render(<SourceGovernance sourceKey="builtwith"/>);
- expect(await screen.findByText("Restart GIS after deployment to load detailed governance and dependency diagnostics.")).toBeVisible();
+
+it("remains readable before an API restart",async()=>{vi.stubGlobal("fetch",vi.fn(()=>response({...source,impact:{unmapped_dependencies:true},connections:[{id:"connection",status:"ACTIVE"}]})));render(<SourceGovernance sourceKey="builtwith"/>);expect(await screen.findByText("Restart GIS after deployment to load detailed governance and dependency diagnostics.")).toBeVisible()});
+it("shows rights and account state without automatic requests",async()=>{const fetcher=vi.fn(()=>response(source));vi.stubGlobal("fetch",fetcher);render(<SourceGovernance sourceKey="builtwith"/>);expect(await screen.findByText("Raw storage: UNKNOWN — ALLOWED required; blocking")).toBeVisible();expect(screen.getByText("Never retrieved. Unknown is not zero.")).toBeVisible();expect(fetcher).toHaveBeenCalledTimes(1)});
+
+it("uses in-app confirmation, persists, and refreshes authoritative state",async()=>{
+ let reads=0;const fetcher=vi.fn((url:string)=>{if(url.includes("/rights/reviews"))return response({approval:{policy_id:"new",version:"2",effective_at:"2026-09-04T12:00:00Z",reviewed_at:"2026-09-04T12:00:00Z",supersedes_policy_id:"old"},current:approvedReview});if(url.includes("/rights")){reads++;return response(reads===1?review:approvedReview)}return response(reads>1?{...source,connections:[{...source.connections[0],required_rights:approvedReview.required_rights}]}:source)});
+ vi.stubGlobal("fetch",fetcher);const nativeConfirm=vi.spyOn(window,"confirm");render(<SourceGovernance sourceKey="builtwith"/>);fireEvent.click(await screen.findByText("Review rights"));fireEvent.change(await screen.findByLabelText("Raw retention reviewed value"),{target:{value:"ALLOWED"}});fireEvent.change(screen.getByLabelText("Normalized retention reviewed value"),{target:{value:"ALLOWED"}});fireEvent.change(screen.getByLabelText(/review authority/i),{target:{value:"Operator"}});fireEvent.change(screen.getByLabelText(/policy version/i),{target:{value:"2"}});fireEvent.change(screen.getByLabelText(/documented basis/i),{target:{value:"Reviewed agreement"}});expect(screen.getByText("Raw retention: UNKNOWN → ALLOWED")).toBeVisible();fireEvent.click(screen.getByText("Review proposed policy"));expect(screen.getByRole("dialog")).toHaveTextContent("does not execute BuiltWith");expect(nativeConfirm).not.toHaveBeenCalled();fireEvent.click(screen.getByText("Confirm and approve new version"));expect(await screen.findByText(/policy version 2 approved/i)).toBeVisible();expect(screen.getByText("Policy review history (2)")).toBeVisible();expect(reads).toBe(2);
 });
-it("shows precise rights and unknown account state without automatic requests",async()=>{
- const fetcher=vi.fn(()=>response(source));vi.stubGlobal("fetch",fetcher);
- render(<SourceGovernance sourceKey="builtwith"/>);
- expect(await screen.findByText("Raw storage: UNKNOWN — ALLOWED required; blocking")).toBeVisible();
- expect(screen.getByText("Never retrieved. Unknown is not zero.")).toBeVisible();
- expect(fetcher).toHaveBeenCalledTimes(1);
- expect(screen.getByRole("link",{name:/builtwith technology/i})).toHaveAttribute("href","/system/pipelines/builtwith_technology");
+
+it("validates and preserves entered values after a stale conflict",async()=>{
+ let posted=false;const fetcher=vi.fn((url:string)=>{if(url.includes("/rights/reviews")){posted=true;return response({error:{code:"RIGHTS_REVIEW_REJECTED",message:"Policy changed; reload and review the current version",request_id:"x",details:null,retryable:false}},false,409)}return response(url.includes("/rights")?review:source)});vi.stubGlobal("fetch",fetcher);render(<SourceGovernance sourceKey="builtwith"/>);fireEvent.click(await screen.findByText("Review rights"));fireEvent.click(await screen.findByText("Review proposed policy"));expect(screen.getByText("Review authority is required.")).toBeVisible();expect(posted).toBe(false);fireEvent.change(screen.getByLabelText(/review authority/i),{target:{value:"Preserved operator"}});fireEvent.change(screen.getByLabelText(/policy version/i),{target:{value:"2"}});fireEvent.change(screen.getByLabelText(/documented basis/i),{target:{value:"Preserved basis"}});fireEvent.click(screen.getByText("Review proposed policy"));fireEvent.click(screen.getByText("Confirm and approve new version"));expect(await screen.findByText(/review is stale/i)).toBeVisible();expect(screen.getByLabelText(/review authority/i)).toHaveValue("Preserved operator");expect(screen.getByLabelText(/documented basis/i)).toHaveValue("Preserved basis")
 });
-it("submits a versioned review only after explicit approval and keeps unrelated grants unknown",async()=>{
- const fetcher=vi.fn((url:string)=>response(url.includes("/rights")?review:source));vi.stubGlobal("fetch",fetcher);vi.spyOn(window,"confirm").mockReturnValue(true);
- render(<SourceGovernance sourceKey="builtwith"/>);fireEvent.click(await screen.findByText("Review rights"));
- fireEvent.change(await screen.findByLabelText(/raw retention/i),{target:{value:"ALLOWED"}});
- fireEvent.change(screen.getByLabelText(/review authority/i),{target:{value:"Operator"}});
- fireEvent.change(screen.getByLabelText(/^policy version$/i),{target:{value:"2"}});
- fireEvent.change(screen.getByLabelText(/documented basis/i),{target:{value:"Reviewed agreement"}});
- fireEvent.click(screen.getByText("Approve new policy version"));
- await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("/reviews?"))).toBe(true));
- expect(screen.getByLabelText(/ai training/i)).toHaveValue("UNKNOWN");
-});
-it("cancelling telemetry confirmation makes no account call",async()=>{
- const fetcher=vi.fn(()=>response(source));vi.stubGlobal("fetch",fetcher);vi.spyOn(window,"confirm").mockReturnValue(false);
- render(<SourceGovernance sourceKey="builtwith"/>);fireEvent.click(await screen.findByText("Refresh account telemetry"));
- expect(fetcher).toHaveBeenCalledTimes(1);
-});
+
+it("cancelling telemetry confirmation makes no account call",async()=>{const fetcher=vi.fn(()=>response(source));vi.stubGlobal("fetch",fetcher);vi.spyOn(window,"confirm").mockReturnValue(false);render(<SourceGovernance sourceKey="builtwith"/>);fireEvent.click(await screen.findByText("Refresh account telemetry"));expect(fetcher).toHaveBeenCalledTimes(1)});

@@ -112,6 +112,14 @@ Policy version/effective creation date and documentation basis are recorded; rev
 and authority remain unset until an actual operator review. API entitlement grants no
 inferred downstream uses. No live authentication was performed during implementation.
 
+Rights review is an immutable two-step workflow. The operator edits explicit grants and
+compatibility decisions, reviews proposed changes and collection impact, then confirms a
+successor policy. The Workbench reloads authoritative policy, history, and source blockers
+after commit. A stale policy ID, reused version label, invalid evidence field, or persistence
+failure is explicit and preserves the draft. Close and reopen after a stale conflict to
+compare the new effective version. Approval never triggers WhoAmI, domain collection,
+scheduling, authorization, or credit spend.
+
 ## Failure semantics and tests
 
 Missing/unsafe credentials → CONFIGURATION_ERROR / CredentialUnavailable.
