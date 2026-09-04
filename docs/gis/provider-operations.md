@@ -1,5 +1,9 @@
 # Provider operations semantics
 
+See [Domain Search execution](domain-search-execution.md) for explicit location/language
+configuration, ingestion-aware terminal outcomes, recorded versus effective failure,
+and unknown-cost diagnosis. No historical records are rewritten by that interpretation.
+
 ## Explicit manual execution scope
 
 Use **Preview manual run** to open a compact selector, grouped by capability.

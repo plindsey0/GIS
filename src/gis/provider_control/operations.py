@@ -230,8 +230,23 @@ def run_evidence(session: Session, run: OrchestrationRun) -> dict[str, Any]:
     )
     rights_id = run.rights_policy_id or (ingestion.rights_policy_id if ingestion else None)
     rights = session.get(DataRightsPolicy, rights_id) if rights_id else None
+    from gis.orchestration.ingestion import ingestion_failure
+
+    failure = ingestion_failure(ingestion) if ingestion else None
+    inconsistent = run.status.value == "SUCCEEDED" and failure is not None
+    if failure:
+        cause = str(failure)
+    if inconsistent:
+        times["successful_attempt_duration"] = None
+        times["recovered"] = False
     return {
         **times,
+        "recorded_status": run.status.value,
+        "status": "FAILED" if inconsistent else run.status.value,
+        "effective_failure_category": failure.category.value if failure else None,
+        "state_interpretation": "Derived failure: the recorded run says SUCCEEDED, but required ingestion failed or contains errors. Historical records are unchanged."
+        if inconsistent
+        else None,
         "provider_key": key if provider else None,
         "provider_name": provider.display_name if provider else None,
         "provider_href": f"/providers/{key}" if provider else None,
@@ -246,7 +261,9 @@ def run_evidence(session: Session, run: OrchestrationRun) -> dict[str, Any]:
         "attempt_count": len(attempts),
         "obligation_id": str(run.obligation_id) if run.obligation_id else None,
         "due_at": obligation.due_at if obligation else None,
-        "outcome": "RECOVERED"
+        "outcome": "FAILED"
+        if inconsistent
+        else "RECOVERED"
         if times["recovered"] and obligation and obligation.status.value == "SATISFIED"
         else run.status.value,
         "provider_cost_exact": str(cost) if cost is not None else None,
@@ -263,6 +280,11 @@ def run_evidence(session: Session, run: OrchestrationRun) -> dict[str, Any]:
             {
                 "number": a.attempt_number,
                 "status": a.status.value,
+                "effective_status": "FAILED"
+                if a.ingestion_run_id
+                and (child := session.get(IngestionRun, a.ingestion_run_id))
+                and ingestion_failure(child)
+                else a.status.value,
                 "trigger": a.trigger_type.value,
                 "started_at": a.started_at,
                 "completed_at": a.completed_at,

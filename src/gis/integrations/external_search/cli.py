@@ -63,7 +63,10 @@ def parser() -> argparse.ArgumentParser:
 
 
 def run(arguments: list[str] | None = None) -> int:
+    from gis.orchestration.reliability import ClassifiedFailure
+
     args = parser().parse_args(arguments)
+    exit_code = 0
     try:
         with session_factory()() as session:
             if args.command == "configure":
@@ -140,14 +143,27 @@ def run(arguments: list[str] | None = None) -> int:
                         session, DataForSEOExternalSearchProvider(login, password)
                     ).sync(connection.id, site.id, request, estimated_cost=estimated)
                     output = {
+                        "ingestion_run_id": str(run_row.id),
                         "run_id": str(run_row.id),
                         "status": run_row.status.value,
                         **({"error": run_row.error_summary} if run_row.error_summary else {}),
                     }
+                    exit_code = 1 if run_row.status.value == "FAILED" else 0
         print(json.dumps(output))
-        return 0
+        return exit_code
+    except ClassifiedFailure as error:
+        print(
+            json.dumps(
+                {
+                    "failure_category": error.category.value,
+                    "error_class": type(error).__name__,
+                    "error": str(error),
+                }
+            )
+        )
+        return 2
     except (ValueError, KeyError, json.JSONDecodeError) as error:
-        print(json.dumps({"error": str(error)}))
+        print(json.dumps({"failure_category": "CONFIGURATION_ERROR", "error": str(error)}))
         return 2
 
 
