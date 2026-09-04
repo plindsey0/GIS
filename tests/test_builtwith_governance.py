@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 import requests
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from test_builtwith import configured
 from test_workbench_api import client as api_client  # noqa: F401
@@ -69,16 +70,63 @@ def test_review_versions_and_least_privilege(session, state, blocked):
         decisions=context["decisions"],
         grants=grants,
     )
+    old_snapshot = {
+        "id": old.id,
+        "name": old.name,
+        "reviewed_at": old.reviewed_at,
+        "policy_version": old.policy_version,
+        "supersedes_policy_id": old.supersedes_policy_id,
+    }
     new = review_policy(session, connection, payload)
     assert new.supersedes_policy_id == old.id and old.reviewed_at is None
     assert new.review_authority == "Fixture operator" and new.reviewed_at
     assert all(item["blocking"] is blocked for item in required_rights(session, connection))
     assert len(review_context(session, connection)["history"]) == 2
+    assert review_context(session, connection)["policy"]["id"] == str(new.id)
+    assert {
+        "id": old.id,
+        "name": old.name,
+        "reviewed_at": old.reviewed_at,
+        "policy_version": old.policy_version,
+        "supersedes_policy_id": old.supersedes_policy_id,
+    } == old_snapshot
     assert session.scalar(
         select(func.count()).select_from(DataRightsGrant).where(DataRightsGrant.policy_id == new.id)
     ) == len(PermittedUse)
     with pytest.raises(ValueError, match="Policy changed"):
         review_policy(session, connection, payload)
+
+
+def test_review_requires_auditable_evidence_and_rolls_back_atomically(session):
+    tenant, site, connection, _ = configured(session)
+    context = review_context(session, connection)
+    old_id = connection.rights_policy_id
+    count = session.scalar(select(func.count()).select_from(DataRightsPolicy))
+    with pytest.raises(ValidationError):
+        RightsReviewInput(
+            expected_policy_id=old_id,
+            review_authority="",
+            documented_basis="",
+            policy_version="2",
+            effective_at=datetime.now(timezone.utc),
+            decisions=context["decisions"],
+            grants=context["grants"],
+        )
+    payload = RightsReviewInput(
+        expected_policy_id=old_id,
+        review_authority="Synthetic reviewer",
+        documented_basis="Synthetic rollback evidence",
+        policy_version="rollback-2",
+        effective_at=datetime.now(timezone.utc),
+        decisions=context["decisions"],
+        grants=context["grants"],
+    )
+    savepoint = session.begin_nested()
+    review_policy(session, connection, payload)
+    savepoint.rollback()
+    assert session.scalar(select(func.count()).select_from(DataRightsPolicy)) == count
+    refreshed = scoped_connection(session, connection.id, tenant.id, site.id)
+    assert refreshed.rights_policy_id == old_id
 
 
 def test_review_scope_rejects_other_site(session):
@@ -101,6 +149,27 @@ def test_review_api_permissions_and_confirmation(api_client, session, monkeypatc
         ).status_code
         == 403
     )
+    context = review_context(session, connection)
+    approval = api_client.post(
+        path + "/rights/reviews",
+        params=params,
+        headers=headers("ADMIN"),
+        json=RightsReviewInput(
+            expected_policy_id=connection.rights_policy_id,
+            review_authority="API fixture reviewer",
+            documented_basis="Synthetic API persistence basis",
+            policy_version="api-review-2",
+            effective_at=datetime.now(timezone.utc),
+            decisions=context["decisions"],
+            grants=context["grants"],
+        ).model_dump(mode="json"),
+    )
+    assert approval.status_code == 200
+    result = approval.json()
+    assert result["approval"]["version"] == "api-review-2"
+    assert result["approval"]["policy_id"] == result["current"]["policy"]["id"]
+    assert result["approval"]["supersedes_policy_id"] is not None
+    assert result["approval"]["effective_at"] and result["approval"]["reviewed_at"]
     assert (
         api_client.post(
             path + "/account-telemetry/refresh",

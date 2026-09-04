@@ -8,6 +8,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from gis.api.auth import Role, require_role
@@ -139,12 +140,32 @@ def review_connection_rights(
 ) -> dict[str, object]:
     try:
         connection = scoped_connection(session, connection_id, tenant_id, site_id, lock=True)
-        review_policy(session, connection, payload)
+        policy = review_policy(session, connection, payload)
         session.commit()
-        return review_context(session, connection)
+        context = review_context(session, connection)
+        return {
+            "approval": {
+                "policy_id": str(policy.id),
+                "version": policy.policy_version,
+                "effective_at": policy.effective_at.isoformat() if policy.effective_at else None,
+                "reviewed_at": policy.reviewed_at.isoformat() if policy.reviewed_at else None,
+                "supersedes_policy_id": (
+                    str(policy.supersedes_policy_id) if policy.supersedes_policy_id else None
+                ),
+            },
+            "current": context,
+        }
     except ValueError as error:
         session.rollback()
         raise ApiError(409, "RIGHTS_REVIEW_REJECTED", str(error)) from error
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise ApiError(
+            500,
+            "RIGHTS_REVIEW_FAILED",
+            "Rights review could not be persisted; no policy was activated.",
+            retryable=True,
+        ) from error
 
 
 class AccountRefreshInput(BaseModel):

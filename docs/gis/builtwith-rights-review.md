@@ -51,5 +51,24 @@ Historical observations, ingestion, schedules and policies are not rewritten. Sh
 source defaults and other connections are untouched. Reviews are effective immediately;
 future-dated activation is not supported. This does not activate or queue collection.
 
+The Workbench separates the effective policy from proposed edits, highlights the two
+collection-critical grants, summarizes every changed grant and shows which rights blockers
+would resolve. Its final confirmation is an in-application governance step. After commit,
+the Workbench reads the policy and source state back from the API; it does not treat an
+optimistic browser update as proof of persistence. History preserves effective, superseded,
+and initial unreviewed versions as the canonical audit trail.
+
+Approvals are guarded by the effective policy ID captured when the form opens. If another
+review wins first, the stale form is rejected and its entries remain available for comparison.
+Validation and database failures are explicit and never activate a partial policy. Correct a
+highlighted field, or for a stale review close and reopen the form before submitting again.
+Reusing any earlier version label is rejected.
+
+Only raw and normalized retention determine BuiltWith rights readiness. Clearing those
+blockers does not establish credential acceptance or Domain API entitlement, activate a
+capability, authorize a target, change limits, release the process hold, or execute a request.
+Account telemetry is never refreshed by opening or approving this form. Policy changes
+themselves consume zero BuiltWith credits.
+
 Do not approve disputed uses simply to clear a blocker. Obtain BuiltWith clarification
 for GIS's intended deployment boundary where necessary.

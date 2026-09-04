@@ -137,6 +137,7 @@ def review_context(session: Session, connection: DataSourceConnection) -> dict[s
             for use in PermittedUse
         },
         "history": history,
+        "required_rights": required_rights(session, connection),
     }
 
 
@@ -151,8 +152,19 @@ def review_policy(
         raise ValueError("Review every supported right and permitted use independently")
     if payload.effective_at.tzinfo is None or payload.effective_at > now:
         raise ValueError("Effective date must be timezone-aware and not in the future")
-    if old and old.policy_version == payload.policy_version:
-        raise ValueError("A new review requires a new policy version")
+    cursor = old
+    seen: set[uuid.UUID] = set()
+    while cursor and cursor.id not in seen:
+        seen.add(cursor.id)
+        if cursor.policy_version.casefold() == payload.policy_version.casefold():
+            raise ValueError(
+                "A new review requires a version label not used in this policy history"
+            )
+        cursor = (
+            session.get(DataRightsPolicy, cursor.supersedes_policy_id)
+            if cursor.supersedes_policy_id
+            else None
+        )
     if payload.license_url:
         from urllib.parse import urlsplit
 
