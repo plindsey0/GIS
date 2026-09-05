@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import os
-
 from alembic import command
-from alembic.config import Config
 from sqlalchemy import create_engine, delete
 from sqlalchemy.orm import Session
 
+from gis.database_safety import destructive_alembic_config, safe_identity
 from gis.models import (
     ConnectionStatus,
     ConnectionType,
@@ -20,19 +18,21 @@ from gis.models import (
 )
 from gis.provider_control.service import ProviderControlService
 
-TEST_DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql+psycopg://gis:gis@localhost:5432/gis_test"
-)
-
 
 def test_realistic_pre_0029_state_migrates_to_provider_inventory(
-    migrated_database: None,
+    migration_database_url: str,
 ) -> None:
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
+    identity = safe_identity(migration_database_url, "test", "")
+    run_id = identity.database.removeprefix("gis_migration_test_")
+    config = destructive_alembic_config(
+        migration_database_url,
+        environment="test",
+        test_run_id=run_id,
+        authorization_token=f"gis-destructive-test:{run_id}",
+    )
     command.downgrade(config, "20260902_0028")
 
-    engine = create_engine(TEST_DATABASE_URL)
+    engine = create_engine(migration_database_url)
     try:
         with Session(engine) as session:
             tenant = Tenant(name="Migration Regression", slug="provider-migration")

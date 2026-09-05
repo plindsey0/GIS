@@ -9,6 +9,9 @@ without forcing cross-source totals to reconcile.
 
 See [local development](docs/gis/local-development.md) for setup commands and
 [the architecture](docs/gis/architecture.md) for design context.
+Before any persistent local migration, use `scripts/dev-migrate.sh`; destructive migration
+tests are restricted to run-owned disposable databases. See
+[database safety](docs/gis/database-safety.md).
 
 After database setup, `scripts/bootstrap-local.sh` installs editable GIS and Workbench dependencies;
 `scripts/dev-workbench.sh` supervises the loopback-only API on port 8001, Workbench on port 3001,

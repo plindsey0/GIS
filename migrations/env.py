@@ -12,7 +12,8 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-database_url = os.environ.get("DATABASE_URL")
+explicit_database_url = config.attributes.get("explicit_database_url")
+database_url = explicit_database_url or os.environ.get("DATABASE_URL")
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 

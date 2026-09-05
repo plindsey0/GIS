@@ -5,22 +5,36 @@ from collections.abc import Iterator
 
 import pytest
 from alembic import command
-from alembic.config import Config
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-TEST_DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql+psycopg://gis:gis@localhost:5432/gis_test"
-)
+from gis.database_safety import ephemeral_migration_database, explicit_alembic_config
+
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+if not TEST_DATABASE_URL:
+    raise RuntimeError(
+        "TEST_DATABASE_URL is required. Tests fail closed and never fall back to DATABASE_URL."
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)
 def migrated_database() -> Iterator[None]:
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
+    config = explicit_alembic_config(TEST_DATABASE_URL)
     command.upgrade(config, "head")
     yield
-    command.downgrade(config, "base")
+
+
+@pytest.fixture(scope="session")
+def migration_database_url() -> Iterator[str]:
+    with ephemeral_migration_database(TEST_DATABASE_URL) as (url, identity):
+        print(
+            "MIGRATION TEST DATABASE: "
+            f"environment={identity.environment} host={identity.host} port={identity.port} "
+            f"database={identity.database} disposable={identity.disposable} "
+            f"test_run_id={identity.test_run_id}"
+        )
+        command.upgrade(explicit_alembic_config(url), "head")
+        yield url
 
 
 @pytest.fixture()

@@ -163,14 +163,13 @@ OAuth credentials, URL-prefix properties, optional dimensions, and backfills.
 ## Migrations
 
 ```bash
-alembic upgrade head
-alembic downgrade -1
-alembic current
-alembic check
+scripts/dev-migrate.sh
 ```
 
-Migrations are deterministic, checked into `migrations/versions`, and reversible. Set
-`DATABASE_URL` to target a database other than the Compose default.
+Migrations are deterministic, checked into `migrations/versions`, and reversible. Persistent
+development upgrades must use the verified-backup workflow. Never use a development database
+to test downgrade behavior; rollback validation belongs only in the run-owned disposable
+migration database described below.
 
 ## Tests and checks
 
@@ -191,8 +190,10 @@ pytest
 python -m build
 ```
 
-Tests migrate `gis_test` from empty to head and downgrade it after the suite. Override its URL
-with `TEST_DATABASE_URL`. Never point `TEST_DATABASE_URL` at a database containing useful data.
+Tests require an explicit `TEST_DATABASE_URL`; missing configuration fails closed. Ordinary
+tests migrate that isolated database forward without destructive teardown. Migration rollback
+tests provision a unique `gis_migration_test_<run-id>` database, prove its identity, and remove
+it afterward. Never point `TEST_DATABASE_URL` at a database containing useful data.
 
 ## Provider credential readiness
 
@@ -217,10 +218,13 @@ scheduler and worker use the same resolver; child collectors receive the resolve
 credential only in their environment. Restart after changing environment variables.
 Health checks never make external provider calls or display secret values.
 
-For tests, set **both** database variables to the disposable database if DATABASE_URL
-is already exported (the Alembic environment honors it):
+For tests, keep the normal development URL distinct and provide the isolated test URL:
 
 ```sh
-DATABASE_URL=postgresql+psycopg://gis:gis@localhost:5433/gis_test \
 TEST_DATABASE_URL=postgresql+psycopg://gis:gis@localhost:5433/gis_test .venv/bin/pytest
 ```
+
+Alembic now honors the test harness's explicit URL rather than replacing it with inherited
+`DATABASE_URL`. Destructive migration tests additionally require a run-owned ephemeral database.
+Use `scripts/dev-migrate.sh` for persistent development migrations; it creates and verifies a
+backup before upgrading. See [database safety](database-safety.md).
