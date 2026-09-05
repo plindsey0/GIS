@@ -26,7 +26,7 @@ from gis.models import (
 )
 from gis.provenance.lineage import register_asset, register_lineage
 
-VERSION = "OPPORTUNITY_DETECTOR_V1"
+VERSION = "OPPORTUNITY_DETECTOR_V2"
 
 DETECTORS: dict[str, dict[str, Any]] = {
     "EMERGING_DEMAND_VISIBILITY_GAP": {
@@ -39,6 +39,8 @@ DETECTORS: dict[str, dict[str, Any]] = {
         "watch_sufficiency": ["LIMITED"],
         "requires_metadata": {"owned_visibility": "LOW"},
         "materiality_components": ["demand_strength", "visibility_gap", "evidence_strength"],
+        "claim_type": "LONGITUDINAL",
+        "temporal_requirement": "MULTIPLE_OBSERVATIONS",
     },
     "DEMAND_ACCELERATION_GAP": {
         "name": "Accelerating demand with low owned visibility",
@@ -55,6 +57,8 @@ DETECTORS: dict[str, dict[str, Any]] = {
             "persistence",
             "evidence_strength",
         ],
+        "claim_type": "LONGITUDINAL",
+        "temporal_requirement": "MULTIPLE_OBSERVATIONS",
     },
     "HIGH_VALUE_EVIDENCE_GAP": {
         "name": "Material condition awaiting trustworthy evidence",
@@ -66,6 +70,47 @@ DETECTORS: dict[str, dict[str, Any]] = {
         "watch_sufficiency": ["LIMITED", "INSUFFICIENT"],
         "requires_metadata": {},
         "materiality_components": ["evidence_strength", "market_relevance"],
+        "claim_type": "LONGITUDINAL",
+        "temporal_requirement": "MULTIPLE_OBSERVATIONS",
+    },
+    "COVERAGE_GAP": {
+        "name": "Meaningful current demand with deterministically absent coverage",
+        "family": OpportunityFamily.CONTENT,
+        "contract": "DEMAND_CURRENT_STATE",
+        "classifications": ["FIRST_OBSERVED", "STABLE", "EMERGING", "ACCELERATING"],
+        "enabled": True,
+        "activation_sufficiency": ["SUPPORTED", "STRONGLY_SUPPORTED"],
+        "watch_sufficiency": ["LIMITED"],
+        "requires_metadata": {"coverage_state": "NO_COVERAGE"},
+        "materiality_components": ["demand_strength", "coverage_gap", "evidence_strength"],
+        "claim_type": "CROSS_SECTIONAL",
+        "temporal_requirement": "CURRENT_OBSERVATION",
+    },
+    "DEMAND_GAP": {
+        "name": "Meaningful current demand not adequately captured",
+        "family": OpportunityFamily.DEMAND,
+        "contract": "DEMAND_CURRENT_STATE",
+        "classifications": ["FIRST_OBSERVED", "STABLE", "EMERGING", "ACCELERATING"],
+        "enabled": True,
+        "activation_sufficiency": ["SUPPORTED", "STRONGLY_SUPPORTED"],
+        "watch_sufficiency": ["LIMITED"],
+        "requires_metadata": {"owned_visibility": "LOW", "coverage_state": "NO_COVERAGE"},
+        "materiality_components": ["demand_strength", "visibility_gap", "coverage_gap"],
+        "claim_type": "CROSS_SECTIONAL",
+        "temporal_requirement": "CURRENT_OBSERVATION",
+    },
+    "COMPETITIVE_GAP": {
+        "name": "Meaningful current demand with favorable competitive conditions",
+        "family": OpportunityFamily.COMPETITIVE,
+        "contract": "COMPETITIVE_CURRENT_STATE",
+        "classifications": ["FIRST_OBSERVED", "STABLE", "EMERGING", "ACCELERATING"],
+        "enabled": False,
+        "activation_sufficiency": ["SUPPORTED", "STRONGLY_SUPPORTED"],
+        "watch_sufficiency": ["LIMITED"],
+        "requires_metadata": {"competition_state": "FAVORABLE", "coverage_state": "NO_COVERAGE"},
+        "materiality_components": ["demand_strength", "competitive_feasibility"],
+        "claim_type": "COMPOSITE",
+        "temporal_requirement": "CURRENT_OBSERVATION",
     },
 }
 

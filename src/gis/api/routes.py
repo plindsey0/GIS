@@ -93,15 +93,17 @@ from gis.models import (
     TargetDirection,
     TargetFamily,
 )
+from gis.opportunities.market_resolution import resolve_portfolio as resolve_market_portfolio
 from gis.opportunities.service import OpportunityService
+from gis.opportunities.sufficiency import (
+    bootstrap_readiness,
+    detector_inventory,
+)
 from gis.opportunities.sufficiency import (
     candidate as opportunity_candidate,
 )
 from gis.opportunities.sufficiency import (
     collection_plan as opportunity_collection_plan,
-)
-from gis.opportunities.sufficiency import (
-    detector_inventory,
 )
 from gis.opportunities.sufficiency import (
     portfolio as opportunity_portfolio,
@@ -1880,6 +1882,22 @@ def opportunity_target_portfolio(
 ) -> dict[str, Any]:
     WorkbenchQueries(session).site(tenant_id, site_id)
     return opportunity_portfolio(session, tenant_id, site_id)
+
+
+@router.get(
+    "/opportunity-sufficiency/market-resolution", dependencies=[Depends(require_role(Role.READ))]
+)
+def opportunity_market_resolution(
+    tenant_id: uuid.UUID, site_id: uuid.UUID, session: Session = Depends(database)
+) -> dict[str, Any]:
+    return resolve_market_portfolio(session, tenant_id, site_id)
+
+
+@router.get("/opportunity-sufficiency/bootstrap", dependencies=[Depends(require_role(Role.READ))])
+def opportunity_bootstrap_readiness(
+    tenant_id: uuid.UUID, site_id: uuid.UUID, session: Session = Depends(database)
+) -> dict[str, Any]:
+    return bootstrap_readiness(session, tenant_id, site_id)
 
 
 @router.get("/experiments", dependencies=[Depends(require_role(Role.READ))])

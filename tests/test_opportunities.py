@@ -44,6 +44,7 @@ def package(
     rights: RightsUsability = RightsUsability.USABLE,
     conflicts: int = 0,
     visibility: str = "LOW",
+    coverage: str | None = None,
 ) -> tuple[Tenant, Site, EvidencePackage]:
     seed(session, hostname="vahomemath.test")
     tenant = session.scalar(select(Tenant).where(Tenant.slug == "vahomemath"))
@@ -55,7 +56,7 @@ def package(
         site.id,
         AnalyticalEntityType.QUERY,
         "va loan trend",
-        metadata={"owned_visibility": visibility},
+        metadata={"owned_visibility": visibility, "coverage_state": coverage},
     )
     contract = EvidenceContract(
         contract_key=f"TEST_{uuid.uuid4().hex}",
@@ -109,11 +110,14 @@ def test_registry_version_and_sparse_behavior(session: Session) -> None:
     tenant = session.scalar(select(Tenant).where(Tenant.slug == "vahomemath"))
     site = session.scalar(select(Site).where(Site.slug == "vahomemath"))
     assert tenant and site
-    assert VERSION == "OPPORTUNITY_DETECTOR_V1"
+    assert VERSION == "OPPORTUNITY_DETECTOR_V2"
     assert set(DETECTORS) == {
         "EMERGING_DEMAND_VISIBILITY_GAP",
         "DEMAND_ACCELERATION_GAP",
         "HIGH_VALUE_EVIDENCE_GAP",
+        "COVERAGE_GAP",
+        "DEMAND_GAP",
+        "COMPETITIVE_GAP",
     }
     assert OpportunityService(session).detect(tenant.id, site.id, now=NOW) == []
 
@@ -197,3 +201,22 @@ def test_sufficiency_candidate_plan_portfolio_are_read_only(session: Session) ->
     target_portfolio = portfolio(session, tenant.id, site.id)
     assert "semantics" in target_portfolio
     assert session.scalar(select(func.count()).select_from(Opportunity)) == 0
+
+
+def test_cross_sectional_coverage_claim_does_not_require_velocity(session: Session) -> None:
+    tenant, site, evidence = package(
+        session, DemandEvidenceStrength.SUPPORTED, coverage="NO_COVERAGE"
+    )
+    evidence.classification = "FIRST_OBSERVED"
+    report = diagnose(session, tenant.id, site.id)
+    coverage = next(
+        row for row in report["items"][0]["detectors"] if row["detector_key"] == "COVERAGE_GAP"
+    )
+    emerging = next(
+        row
+        for row in report["items"][0]["detectors"]
+        if row["detector_key"] == "EMERGING_DEMAND_VISIBILITY_GAP"
+    )
+    assert coverage["qualifies"] is True
+    assert emerging["qualifies"] is False
+    assert emerging["readiness"] == "WAITING_FOR_HISTORY"

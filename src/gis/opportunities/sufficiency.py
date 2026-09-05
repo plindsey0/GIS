@@ -21,6 +21,7 @@ from gis.models import (
     Opportunity,
     RightsUsability,
 )
+from gis.opportunities.market_resolution import resolve_portfolio, resolve_query
 from gis.opportunities.service import DETECTORS, VERSION
 
 METHOD_VERSION = "OPPORTUNITY_SUFFICIENCY_V1"
@@ -68,8 +69,12 @@ def detector_inventory() -> dict[str, Any]:
                 "output_lifecycle": (
                     "WATCHING_ONLY" if not spec["activation_sufficiency"] else "ACTIVE_OR_WATCHING"
                 ),
+                "claim_type": spec["claim_type"],
+                "temporal_requirement": spec["temporal_requirement"],
                 "history_requirement": (
-                    "A derived EMERGING or ACCELERATING classification; FIRST_OBSERVED is not enough."
+                    "Multiple temporally separated observations are required."
+                    if spec["claim_type"] == "LONGITUDINAL"
+                    else "A trustworthy current observation is sufficient; velocity is not claimed."
                 ),
                 "prohibited_shortcuts": [
                     "No synthetic evidence",
@@ -161,8 +166,16 @@ def diagnose(session: Session, tenant_id: uuid.UUID, site_id: uuid.UUID) -> dict
                     ),
                     spec["requires_metadata"],
                     {name: entity.metadata_json.get(name) for name in spec["requires_metadata"]},
-                    "DERIVE",
-                    "Run the existing deterministic context derivation after its inputs are available.",
+                    (
+                        "RESOLVE_COVERAGE"
+                        if "coverage_state" in spec["requires_metadata"]
+                        else "RESOLVE_METADATA"
+                    ),
+                    (
+                        "Establish a governed asset-to-concept coverage assertion; waiting alone cannot resolve this."
+                        if "coverage_state" in spec["requires_metadata"]
+                        else "Resolve the required deterministic entity metadata; waiting alone cannot resolve this."
+                    ),
                 ),
                 _condition(
                     "sufficiency",
@@ -213,6 +226,7 @@ def diagnose(session: Session, tenant_id: uuid.UUID, site_id: uuid.UUID) -> dict
                 "rights": package.rights_usability.value,
                 "conflict_count": package.conflict_count,
                 "source_count": package.independent_source_count,
+                "market_concept": resolve_query(entity.display_name),
                 "period_start": package.period_start.isoformat(),
                 "period_end": package.period_end.isoformat(),
                 "qualifies": any(row["qualifies"] for row in detector_results),
@@ -333,6 +347,48 @@ def candidate(
                 if not condition["passed"]
             ],
         },
+        "opportunity_package": {
+            "opportunity_id": None,
+            "opportunity_class": detector["detector_key"],
+            "market_concept": item["market_concept"],
+            "deterministic_claim": detector["detector_name"],
+            "detector": {"key": detector["detector_key"], "version": VERSION},
+            "supporting_evidence": [row.evidence_key for row in evidence],
+            "evidence_provenance": [
+                {
+                    "source": row.root_source_key,
+                    "reference_id": str(row.evidence_reference_id)
+                    if row.evidence_reference_id
+                    else None,
+                    "rights": row.rights_usability.value,
+                }
+                for row in evidence
+            ],
+            "market_state": {
+                "demand": {
+                    "classification": item["classification"],
+                    "sufficiency": item["sufficiency"],
+                },
+                "coverage": item["market_concept"].get("coverage_state", "UNKNOWN"),
+                "competition": "UNKNOWN",
+                "temporal": detector["detector_key"]
+                in {
+                    "EMERGING_DEMAND_VISIBILITY_GAP",
+                    "DEMAND_ACCELERATION_GAP",
+                    "HIGH_VALUE_EVIDENCE_GAP",
+                },
+            },
+            "important_unknowns": [
+                condition["label"]
+                for condition in detector["conditions"]
+                if not condition["passed"]
+            ],
+            "rights_constraints": item["rights"],
+            "permitted_downstream_uses": ["GOVERNED_RECOMMENDATION_CONTEXT"]
+            if item["rights"] == "USABLE"
+            else [],
+            "external_dispatch_allowed": False,
+        },
     }
 
 
@@ -444,6 +500,13 @@ def collection_plan(session: Session, tenant_id: uuid.UUID, site_id: uuid.UUID) 
                     "provider_call": False,
                     "estimated_cost": None,
                     "time_to_sufficiency": None,
+                    "waiting_can_help": condition["remediation"] == "WAIT",
+                    "opportunity_classes_helped": [item["closest"]["detector_key"]],
+                    "evidence_gap_addressed": condition["key"],
+                    "incremental_requests": 0 if condition["remediation"] == "WAIT" else None,
+                    "expected_information_gain": "ONE_BLOCKING_GATE"
+                    if len(failed) == 1
+                    else "PARTIAL",
                 }
             )
     leverage = Counter((row["remediation"], row["action"]) for row in actions)
@@ -478,7 +541,57 @@ def baseline(session: Session, tenant_id: uuid.UUID, site_id: uuid.UUID) -> dict
         "detectors": detector_inventory(),
         "diagnostics": diagnostics,
         "portfolio": portfolio(session, tenant_id, site_id),
+        "market_resolution": resolve_portfolio(session, tenant_id, site_id),
+        "bootstrap_readiness": bootstrap_readiness(session, tenant_id, site_id),
         "collection_plan": plan,
         "provider_calls": 0,
         "state_mutations": 0,
+    }
+
+
+def bootstrap_readiness(
+    session: Session, tenant_id: uuid.UUID, site_id: uuid.UUID
+) -> dict[str, Any]:
+    diagnostics = diagnose(session, tenant_id, site_id)
+    resolution = resolve_portfolio(session, tenant_id, site_id)
+    by_class: Counter[str] = Counter()
+    blockers: Counter[str] = Counter()
+    waiting = 0
+    waiting_never_helps = 0
+    for item in diagnostics["items"]:
+        by_class[item["closest"]["detector_key"]] += 1
+        failed = [c for c in item["closest"]["conditions"] if not c["passed"]]
+        for condition in failed:
+            blockers[condition["remediation"]] += 1
+        if failed and all(c["remediation"] == "WAIT" for c in failed):
+            waiting += 1
+        elif failed:
+            waiting_never_helps += 1
+    unsupported = [
+        {"class": name, "state": "DEFINED_UNSUPPORTED"}
+        for name in (
+            "DECLINING_DEMAND",
+            "POSITION_LOSS",
+            "POSITION_GAIN",
+            "COMPETITOR_CHANGE",
+            "TECHNOLOGY_CHANGE",
+        )
+    ]
+    return {
+        "method_version": METHOD_VERSION,
+        "qualified": diagnostics["qualified"],
+        "near_qualified_by_class": dict(by_class),
+        "canonical_market_concepts_evaluated": resolution["canonical_market_concepts"],
+        "concepts_requiring_longitudinal_evidence": sum(
+            1 for item in diagnostics["items"] if item["classification"] == "FIRST_OBSERVED"
+        ),
+        "waiting_for_history": waiting,
+        "waiting_will_not_fix": waiting_never_helps,
+        "blockers": dict(blockers),
+        "unsupported_opportunity_classes": unsupported,
+        "highest_leverage_actions": collection_plan(session, tenant_id, site_id)[
+            "collection_leverage"
+        ][:5],
+        "llm_ready": diagnostics["qualified"] > 0,
+        "semantics": "Bootstrap readiness is deterministic. WAIT is used only when existing future observations can satisfy the sole blocker.",
     }

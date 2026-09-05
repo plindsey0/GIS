@@ -77,14 +77,16 @@ describe("GIS Workbench", () => {
   it("renders gate-aware sufficiency without authorizing collection", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url=String(input);
-      if(url.includes("/diagnose")) return answer({evaluated:1,qualified:0,not_qualified:1,reason_counts:[{reason:"Classification",count:1}],semantics:"Hard gates remain authoritative.",near_misses:[{evidence_package_id:"p1",label:"va loan calculator",classification:"FIRST_OBSERVED",sufficiency:"LIMITED",rights:"USABLE",source_count:1,href:"/opportunities/candidates/p1?detector=DEMAND",evidence_href:"/evidence/p1",closest:{detector_key:"DEMAND",detector_name:"Emerging demand",readiness:"WAITING_FOR_HISTORY",qualifies:false,conditions_passed:5,conditions_total:6,conditions:[{key:"classification",label:"Eligible history",passed:false,required:["EMERGING"],observed:"FIRST_OBSERVED",remediation:"WAIT",next_action:"Allow additional real observations."}]}}]});
+      if(url.includes("/diagnose")) return answer({evaluated:1,qualified:0,not_qualified:1,reason_counts:[{reason:"Classification",count:1}],semantics:"Hard gates remain authoritative.",near_misses:[{evidence_package_id:"p1",label:"va loan calculator",market_concept:{concept:"Calculate VA loan payment",topic:"VA Loan Calculators"},href:"/opportunities/candidates/p1?detector=DEMAND",closest:{detector_key:"DEMAND",readiness:"WAITING_FOR_HISTORY",conditions_passed:5,conditions_total:6,conditions:[{key:"classification",passed:false,remediation:"WAIT",next_action:"Allow additional real observations."}]}}]});
+      if(url.includes("/market-resolution")) return answer({raw_targets:563,raw_query_targets:355,canonical_market_concepts:8,topic_clusters:6,classification_counts:{SOURCE_ARTIFACT:1},semantics:"Raw evidence is preserved.",concepts:[{key:"VA_LOAN_PAYMENT",name:"Calculate VA loan payment",topic:"VA Loan Calculators",raw_query_count:10,variants:{CALCULATION:10},sources:["GSC"]}]});
+      if(url.includes("/bootstrap")) return answer({qualified:0,waiting_for_history:1,waiting_will_not_fix:0,unsupported_opportunity_classes:[{class:"POSITION_LOSS"}],semantics:"WAIT is claim-specific."});
       if(url.includes("/portfolio")) return answer({total:1,tier_counts:{DISCOVERY:1},semantics:"Read only.",items:[{id:"t1",label:"va loan calculator",target_type:"QUERY",lifecycle:"CANDIDATE",portfolio_tier:"DISCOVERY",priority_tier:null,cadence:null,blocker:"NO_PLAN",href:"/collection/t1"}]});
       return answer({semantics:"No execution.",collection_leverage:[{remediation:"WAIT",action:"Allow additional real observations.",candidates_helped:1}],budget_scenarios:[{name:"NO_NEW_SPEND",description:"Wait for authorized collection.",cost:0}]});
     }));
     render(<OpportunityEvaluationSummary/>);
-    expect(await screen.findByRole("heading", {name:"Detector sufficiency"})).toBeInTheDocument();
-    expect(screen.getByText("Waiting for history")).toBeInTheDocument();
-    expect(screen.getByText(/Estimated new spend: \$0/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", {name:"Bootstrap readiness"})).toBeInTheDocument();
+    expect(screen.getAllByText("Waiting for history")).toHaveLength(2);
+    expect(screen.getAllByText("Calculate VA loan payment")).toHaveLength(2);
   });
 
   it("renders API failures instead of failing silently", async () => {

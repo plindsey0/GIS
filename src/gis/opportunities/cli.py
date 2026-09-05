@@ -10,9 +10,11 @@ from enum import Enum
 from typing import Any
 
 from gis.db import session_factory
+from gis.opportunities.market_resolution import resolve_portfolio as resolve_market_portfolio
 from gis.opportunities.service import DETECTORS, VERSION, OpportunityService
 from gis.opportunities.sufficiency import (
     baseline,
+    bootstrap_readiness,
     candidate,
     collection_plan,
     detector_inventory,
@@ -44,6 +46,8 @@ def parser() -> argparse.ArgumentParser:
         "collection-plan",
         "portfolio",
         "baseline",
+        "bootstrap",
+        "resolve-market",
     ):
         item = commands.add_parser(name)
         item.add_argument("--tenant-id", type=uuid.UUID, required=True)
@@ -86,6 +90,10 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
             return portfolio(session, args.tenant_id, args.site_id)
         if args.command == "baseline":
             return baseline(session, args.tenant_id, args.site_id)
+        if args.command == "bootstrap":
+            return bootstrap_readiness(session, args.tenant_id, args.site_id)
+        if args.command == "resolve-market":
+            return resolve_market_portfolio(session, args.tenant_id, args.site_id)
         if args.command in {"detect", "reprocess"}:
             rows = service.detect(args.tenant_id, args.site_id)
             payload = {
