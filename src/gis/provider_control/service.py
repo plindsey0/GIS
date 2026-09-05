@@ -18,6 +18,7 @@ from gis.models import (
     ProviderCapabilityPolicy,
     ProviderCollectionPolicy,
     ProviderCollectionTarget,
+    ProviderControlRecoveryIncident,
     ProviderDefinition,
     ProviderPolicyAuditEvent,
     ProviderPricingConfiguration,
@@ -309,6 +310,12 @@ class ProviderControlService:
         operations = provider_operations(
             self.session, connection.id if connection else None, tenant_id, site_id
         )
+        recovery_incident = self.session.scalar(
+            select(ProviderControlRecoveryIncident)
+            .where(ProviderControlRecoveryIncident.status == "COMPLETED")
+            .order_by(ProviderControlRecoveryIncident.recovery_completed_at.desc())
+            .limit(1)
+        )
         health = (
             "UNAVAILABLE"
             if state == "UNAVAILABLE"
@@ -427,6 +434,14 @@ class ProviderControlService:
                 for cap in capabilities
             ],
             "usage": [self._usage_data(x) for x in usages],
+            "history_completeness": (
+                recovery_incident.history_completeness if recovery_incident else None
+            ),
+            "history_warning": (
+                "Provider-control history before Sep 4, 2026 is incomplete after a local development database recovery. Current configuration is valid from the recovery point forward."
+                if recovery_incident
+                else None
+            ),
             "last_collection": last_run,
             "next_collection": min(
                 (x.next_scheduled_at for x in schedules if x.next_scheduled_at), default=None

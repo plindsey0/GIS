@@ -29,6 +29,16 @@ it("puts decision information first and keeps the audit history collapsed",async
   expect(screen.getByText("Targets and purpose: SERP collection").closest("details")).not.toHaveAttribute("open");
 });
 
+it("qualifies reset usage and audit history after local recovery",async()=>{
+  const warning="Provider-control history before Sep 4, 2026 is incomplete after a local development database recovery. Current configuration is valid from the recovery point forward.";
+  vi.stubGlobal("fetch",vi.fn(()=>response({...configuration,detail:{...configuration.detail,history_warning:warning,history_completeness:{provider_usage:"PARTIAL"}}})));
+  render(<ProviderConfigurationPage providerKey="dataforseo"/>);
+  expect(await screen.findByText(warning)).toBeVisible();
+  fireEvent.click(screen.getByText("Configuration, governance and audit history"));
+  expect(screen.getByText(/reset ledger is not lifetime usage/)).toBeVisible();
+  expect(screen.getByText(/Pre-recovery audit history is incomplete/)).toBeVisible();
+});
+
 it("selects canonical targets, previews, and saves disabled without queuing collection",async()=>{
   const fetcher=vi.fn((url:string,options?:RequestInit)=>response(url.includes("/preview")?{can_activate:false,blockers:["Configure pricing"],plans:[],estimated_requests_month:"4.345",estimated_cost_month:null,timezone:"America/New_York",semantics:"Estimated"}:options?.method==="PUT"?{}:configuration));
   vi.stubGlobal("fetch",fetcher);

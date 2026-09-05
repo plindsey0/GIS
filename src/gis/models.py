@@ -6025,6 +6025,38 @@ class ProviderUsageEvent(Base):
     )
 
 
+class ProviderControlRecoveryIncident(Base):
+    """Append-only local incident marker; never a substitute for lost history."""
+
+    __tablename__ = "provider_control_recovery_incident"
+    __table_args__ = ({"schema": SCHEMA},)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    incident_key: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
+    classification: Mapped[str] = mapped_column(String(160), nullable=False)
+    environment: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recovery_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recovery_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    affected_tables: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    row_counts: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    history_completeness: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    exact_restoration_available: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    historical_rows_recreated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    backup_path: Mapped[str] = mapped_column(Text, nullable=False)
+    documentation_reference: Mapped[str] = mapped_column(Text, nullable=False)
+    git_branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    git_sha: Mapped[str] = mapped_column(String(40), nullable=False)
+    notes: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ProviderPolicyAuditEvent(Base):
     __tablename__ = "provider_policy_audit_event"
     __table_args__ = (
@@ -6036,6 +6068,10 @@ class ProviderPolicyAuditEvent(Base):
     site_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
     provider_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     collection_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    recovery_incident_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.provider_control_recovery_incident.id"),
+    )
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     actor: Mapped[str] = mapped_column(String(255), nullable=False)
     reason: Mapped[Optional[str]] = mapped_column(Text)

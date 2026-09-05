@@ -57,6 +57,7 @@ gis-interventions = "gis.interventions.cli:main"
 gis-recommendations = "gis.recommendations.cli:main"
 gis-goals = "gis.goals.cli:main"
 gis-api = "gis.api.app:main"
+gis-provider-recovery = "gis.provider_control.incident_recovery:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gis"]
