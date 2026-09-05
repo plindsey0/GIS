@@ -1,5 +1,7 @@
 # GIS Application API and Intelligence Workbench
 
+Opportunity and Collection product changes must keep Learn GIS aligned with detector gates, lifecycle language, governance boundaries, and empty-state semantics. Future epics adding detectors, evidence requirements, collection capabilities, or target states must update user-facing documentation in the same change.
+
 Data Providers now includes the [guided collection configuration workflow](provider-configuration.md).
 Future provider, target, pricing or execution changes must update both this operator
 guide and Learn GIS; runtime status belongs in live System/provider views.

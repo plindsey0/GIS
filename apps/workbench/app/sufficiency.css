@@ -1,0 +1,14 @@
+.sectionNav,.detailActions{display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;margin:0 0 24px}
+.sectionNav a{color:#17675d;background:#fff;border:1px solid var(--line);border-radius:999px;padding:8px 12px}
+.sectionNav a:hover,.sectionNav a:focus-visible{color:#0e554c;background:#edf4f0}
+.detailActions{margin-top:-16px}
+@media(max-width:560px){.sectionNav a,.detailActions a{width:100%}.sectionNav,.detailActions{display:grid}}
+@media(max-width:560px){
+  .candidateConditions{overflow:visible}
+  .candidateConditions table,.candidateConditions tbody,.candidateConditions tr,.candidateConditions td{display:block;width:100%;min-width:0}
+  .candidateConditions thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+  .candidateConditions tr{padding:12px 16px;border-bottom:1px solid var(--line)}
+  .candidateConditions tr:last-child{border-bottom:0}
+  .candidateConditions td{display:grid;grid-template-columns:100px minmax(0,1fr);gap:12px;padding:7px 0;border:0;overflow-wrap:anywhere}
+  .candidateConditions td::before{content:attr(data-label);color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+}

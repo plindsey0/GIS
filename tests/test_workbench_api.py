@@ -438,6 +438,23 @@ def test_semantic_evidence_inventory_detail_and_diagnostics(
     ).json()
     assert diagnostics["evaluated"] >= 1
     assert diagnostics["items"][0]["closest"]["conditions"]
+    assert diagnostics["diagnostics_materialization"] == "DERIVED_READ_MODEL"
+    for path in (
+        "/api/v1/opportunity-sufficiency/detectors",
+        "/api/v1/opportunity-sufficiency/diagnose",
+        "/api/v1/opportunity-sufficiency/collection-plan",
+        "/api/v1/opportunity-sufficiency/portfolio",
+    ):
+        scoped = {} if path.endswith("detectors") else params(tenant.id, site.id)
+        response = client.get(path, params=scoped, headers=headers())
+        assert response.status_code == 200
+    candidate_response = client.get(
+        f"/api/v1/opportunity-sufficiency/candidates/{item['id']}",
+        params=params(tenant.id, site.id),
+        headers=headers(),
+    )
+    assert candidate_response.status_code == 200
+    assert candidate_response.json()["recommendation_context"]["llm_invoked"] is False
 
 
 def test_collection_pagination_filter_search_detail_and_isolation(

@@ -11,6 +11,14 @@ from typing import Any
 
 from gis.db import session_factory
 from gis.opportunities.service import DETECTORS, VERSION, OpportunityService
+from gis.opportunities.sufficiency import (
+    baseline,
+    candidate,
+    collection_plan,
+    detector_inventory,
+    diagnose,
+    portfolio,
+)
 
 
 def _default(value: Any) -> Any:
@@ -24,13 +32,31 @@ def _default(value: Any) -> Any:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="gis-opportunities")
     commands = root.add_subparsers(dest="command", required=True)
-    for name in ("detect", "list", "explain", "history", "evidence", "gaps", "reprocess"):
+    for name in (
+        "detect",
+        "list",
+        "explain",
+        "history",
+        "evidence",
+        "gaps",
+        "reprocess",
+        "diagnose",
+        "collection-plan",
+        "portfolio",
+        "baseline",
+    ):
         item = commands.add_parser(name)
         item.add_argument("--tenant-id", type=uuid.UUID, required=True)
         item.add_argument("--site-id", type=uuid.UUID, required=True)
         item.add_argument("--dry-run", action="store_true")
     for name in ("types", "policies"):
         commands.add_parser(name)
+    candidate_parser = commands.add_parser("candidate")
+    candidate_parser.add_argument("--tenant-id", type=uuid.UUID, required=True)
+    candidate_parser.add_argument("--site-id", type=uuid.UUID, required=True)
+    candidate_parser.add_argument("--package-id", type=uuid.UUID, required=True)
+    candidate_parser.add_argument("--detector")
+    commands.add_parser("detectors")
     for name in ("dismiss", "restore"):
         item = commands.add_parser(name)
         item.add_argument("--opportunity-id", type=uuid.UUID, required=True)
@@ -41,21 +67,61 @@ def parser() -> argparse.ArgumentParser:
 
 def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     args = parser().parse_args(argv)
+    if args.command == "detectors":
+        return detector_inventory()
     if args.command in {"types", "policies"}:
-        return {"detector_version": VERSION, "detectors": [{"key": key, **spec} for key, spec in DETECTORS.items()]}
+        return {
+            "detector_version": VERSION,
+            "detectors": [{"key": key, **spec} for key, spec in DETECTORS.items()],
+        }
     with session_factory()() as session:
         service = OpportunityService(session)
+        if args.command == "diagnose":
+            return diagnose(session, args.tenant_id, args.site_id)
+        if args.command == "candidate":
+            return candidate(session, args.tenant_id, args.site_id, args.package_id, args.detector)
+        if args.command == "collection-plan":
+            return collection_plan(session, args.tenant_id, args.site_id)
+        if args.command == "portfolio":
+            return portfolio(session, args.tenant_id, args.site_id)
+        if args.command == "baseline":
+            return baseline(session, args.tenant_id, args.site_id)
         if args.command in {"detect", "reprocess"}:
             rows = service.detect(args.tenant_id, args.site_id)
-            payload = {"opportunities_evaluated": len(rows), "provider_calls": 0, "provider_cost": 0, "schedules_mutated": 0, "dry_run": args.dry_run}
+            payload = {
+                "opportunities_evaluated": len(rows),
+                "provider_calls": 0,
+                "provider_cost": 0,
+                "schedules_mutated": 0,
+                "dry_run": args.dry_run,
+            }
             session.rollback() if args.dry_run else session.commit()
             return payload
         if args.command in {"dismiss", "restore"}:
-            row = service.dismiss(args.opportunity_id, args.reason, args.actor) if args.command == "dismiss" else service.restore(args.opportunity_id, args.actor)
+            row = (
+                service.dismiss(args.opportunity_id, args.reason, args.actor)
+                if args.command == "dismiss"
+                else service.restore(args.opportunity_id, args.actor)
+            )
             session.commit()
             return {"id": row.id, "status": row.status}
         rows = service.list(args.tenant_id, args.site_id)
-        return {"opportunities": [{"id": row.id, "family": row.family, "type": row.opportunity_type, "status": row.status, "priority": row.priority, "title": row.title, "evidence_sufficiency": row.evidence_sufficiency, "limitations": row.limitations_json, "recommendation": None} for row in rows]}
+        return {
+            "opportunities": [
+                {
+                    "id": row.id,
+                    "family": row.family,
+                    "type": row.opportunity_type,
+                    "status": row.status,
+                    "priority": row.priority,
+                    "title": row.title,
+                    "evidence_sufficiency": row.evidence_sufficiency,
+                    "limitations": row.limitations_json,
+                    "recommendation": None,
+                }
+                for row in rows
+            ]
+        }
 
 
 def main() -> None:

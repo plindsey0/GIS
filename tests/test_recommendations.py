@@ -51,7 +51,9 @@ def test_fixture_generation_is_structured_and_idempotent(session: Session) -> No
     second = service.generate(opportunity.id)
     assert first["status"] == "READY_FOR_REVIEW"
     assert first["candidate_count"] >= 1 and provider.calls == 1
-    assert second["status"] == "REUSED" and second["recommendation_id"] == first["recommendation_id"]
+    assert (
+        second["status"] == "REUSED" and second["recommendation_id"] == first["recommendation_id"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -69,7 +71,9 @@ def test_invalid_output_repair_is_bounded_and_persisted(
     valid_provider = FixtureRecommendationProvider()
     context_service = RecommendationService(session, valid_provider)
     packages = context_service._packages(opportunity)
-    valid = valid_provider.generate_structured_recommendation(context_service.context(opportunity, packages))
+    valid = valid_provider.generate_structured_recommendation(
+        context_service.context(opportunity, packages)
+    )
     valid["candidates"][0].update(candidate_change)
     provider = FixtureRecommendationProvider(valid)
     result = RecommendationService(session, provider).generate(opportunity.id)
@@ -91,9 +95,18 @@ def test_acceptance_creates_draft_intervention_never_approval(session: Session) 
     _, _, opportunity = supported_opportunity(session)
     service = RecommendationService(session, FixtureRecommendationProvider())
     result = service.generate(opportunity.id)
-    candidate = session.scalar(select(RecommendationCandidate).where(RecommendationCandidate.recommendation_id == result["recommendation_id"]))
+    candidate = session.scalar(
+        select(RecommendationCandidate).where(
+            RecommendationCandidate.recommendation_id == result["recommendation_id"]
+        )
+    )
     assert candidate
-    recommendation = service.review(result["recommendation_id"], RecommendationReviewDecision.ACCEPT, "human-reviewer", [candidate.id])
+    recommendation = service.review(
+        result["recommendation_id"],
+        RecommendationReviewDecision.ACCEPT,
+        "human-reviewer",
+        [candidate.id],
+    )
     intervention = session.get(Intervention, candidate.accepted_intervention_id)
     assert recommendation.status.value == "ACCEPTED"
     assert intervention and intervention.status is InterventionStatus.DRAFT
@@ -106,5 +119,10 @@ def test_candidate_and_tenant_isolation(session: Session) -> None:
     assert len(service.list(tenant.id, site.id)) == 1
     assert service.list(uuid.uuid4(), site.id) == []
     with pytest.raises(ValueError, match="candidate does not belong"):
-        service.review(result["recommendation_id"], RecommendationReviewDecision.ACCEPT, "reviewer", [uuid.uuid4()])
+        service.review(
+            result["recommendation_id"],
+            RecommendationReviewDecision.ACCEPT,
+            "reviewer",
+            [uuid.uuid4()],
+        )
     assert session.scalar(select(func.count()).select_from(Recommendation)) == 1

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from collections import Counter
 from typing import Any, Optional
 
 from sqlalchemy import asc, desc, func, or_, select
@@ -27,10 +26,8 @@ from gis.models import (
     MarketMetricObservation,
     MarketObservation,
     MarketParticipantObservation,
-    Opportunity,
-    RightsUsability,
 )
-from gis.opportunities.service import DETECTORS, VERSION
+from gis.opportunities.sufficiency import diagnose
 
 COLLECTION_STATUS_HELP = {
     "CANDIDATE": "Discovered and evaluated, but not promoted into an applied collection plan.",
@@ -161,109 +158,7 @@ def evidence_inventory(
 def opportunity_diagnostics(
     session: Session, tenant_id: uuid.UUID, site_id: uuid.UUID
 ) -> dict[str, Any]:
-    rows = session.execute(
-        select(EvidencePackage, AnalyticalEntity)
-        .join(AnalyticalEntity)
-        .where(EvidencePackage.tenant_id == tenant_id, EvidencePackage.site_id == site_id)
-        .order_by(EvidencePackage.created_at.desc())
-    ).all()
-    evaluations: list[dict[str, Any]] = []
-    reason_counts: Counter[str] = Counter()
-    for package, entity in rows:
-        candidates: list[dict[str, Any]] = []
-        for key, spec in DETECTORS.items():
-            conditions = [
-                {
-                    "key": "classification",
-                    "label": "Observed classification is eligible",
-                    "passed": package.classification in spec["classifications"],
-                    "required": spec["classifications"],
-                    "observed": package.classification,
-                },
-                {
-                    "key": "rights",
-                    "label": "Evidence rights are usable",
-                    "passed": package.rights_usability is RightsUsability.USABLE,
-                    "required": "USABLE",
-                    "observed": package.rights_usability.value,
-                },
-                {
-                    "key": "conflicts",
-                    "label": "No unresolved evidence conflicts",
-                    "passed": package.conflict_count == 0,
-                    "required": 0,
-                    "observed": package.conflict_count,
-                },
-                {
-                    "key": "metadata",
-                    "label": "Required entity context is present",
-                    "passed": all(
-                        entity.metadata_json.get(name) == expected
-                        for name, expected in spec["requires_metadata"].items()
-                    ),
-                    "required": spec["requires_metadata"],
-                    "observed": {
-                        name: entity.metadata_json.get(name) for name in spec["requires_metadata"]
-                    },
-                },
-                {
-                    "key": "sufficiency",
-                    "label": "Evidence sufficiency reaches an activation or watch state",
-                    "passed": package.sufficiency.value
-                    in [*spec["activation_sufficiency"], *spec["watch_sufficiency"]],
-                    "required": [*spec["activation_sufficiency"], *spec["watch_sufficiency"]],
-                    "observed": package.sufficiency.value,
-                },
-            ]
-            passed = sum(condition["passed"] for condition in conditions)
-            qualifies = all(condition["passed"] for condition in conditions)
-            for condition in conditions:
-                if not condition["passed"]:
-                    reason_counts[condition["label"]] += 1
-            candidates.append(
-                {
-                    "detector_key": key,
-                    "detector_name": spec["name"],
-                    "conditions": conditions,
-                    "conditions_passed": passed,
-                    "conditions_total": len(conditions),
-                    "qualifies": qualifies,
-                }
-            )
-        closest = max(candidates, key=lambda item: item["conditions_passed"])
-        evaluations.append(
-            {
-                "evidence_package_id": str(package.id),
-                "label": entity.display_name,
-                "entity_type": entity.entity_type.value,
-                "classification": package.classification,
-                "sufficiency": package.sufficiency.value,
-                "qualifies": any(candidate["qualifies"] for candidate in candidates),
-                "closest": closest,
-                "detectors": candidates,
-                "href": f"/evidence/{package.id}",
-            }
-        )
-    qualified = sum(item["qualifies"] for item in evaluations)
-    return {
-        "detector_version": VERSION,
-        "evaluated": len(evaluations),
-        "qualified": qualified,
-        "not_qualified": len(evaluations) - qualified,
-        "persisted_evaluation_count": session.scalar(select(func.count()).select_from(Opportunity))
-        or 0,
-        "diagnostics_persisted_for_nonqualifiers": False,
-        "reason_counts": [
-            {"reason": reason, "count": count} for reason, count in reason_counts.most_common()
-        ],
-        "near_misses": sorted(
-            evaluations,
-            key=lambda item: item["closest"]["conditions_passed"],
-            reverse=True,
-        )[:10],
-        "items": evaluations,
-        "semantics": "Read-only diagnostics execute the published detector conditions without changing thresholds or creating opportunities.",
-    }
+    return diagnose(session, tenant_id, site_id)
 
 
 def evidence_detail(

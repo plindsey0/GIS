@@ -94,6 +94,18 @@ from gis.models import (
     TargetFamily,
 )
 from gis.opportunities.service import OpportunityService
+from gis.opportunities.sufficiency import (
+    candidate as opportunity_candidate,
+)
+from gis.opportunities.sufficiency import (
+    collection_plan as opportunity_collection_plan,
+)
+from gis.opportunities.sufficiency import (
+    detector_inventory,
+)
+from gis.opportunities.sufficiency import (
+    portfolio as opportunity_portfolio,
+)
 from gis.orchestration.service import Orchestrator
 from gis.provenance.review import (
     RightsReviewInput,
@@ -1813,6 +1825,61 @@ def opportunity_evaluation_summary(
 ) -> dict[str, Any]:
     WorkbenchQueries(session).site(tenant_id, site_id)
     return opportunity_diagnostics(session, tenant_id, site_id)
+
+
+@router.get("/opportunity-sufficiency/detectors", dependencies=[Depends(require_role(Role.READ))])
+def opportunity_detectors() -> dict[str, Any]:
+    return detector_inventory()
+
+
+@router.get("/opportunity-sufficiency/diagnose", dependencies=[Depends(require_role(Role.READ))])
+def opportunity_sufficiency_diagnose(
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    return opportunity_diagnostics(session, tenant_id, site_id)
+
+
+@router.get(
+    "/opportunity-sufficiency/candidates/{package_id}",
+    dependencies=[Depends(require_role(Role.READ))],
+)
+def opportunity_candidate_detail(
+    package_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    detector: Optional[str] = None,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    try:
+        return opportunity_candidate(session, tenant_id, site_id, package_id, detector)
+    except ValueError as exc:
+        raise ApiError(404, "OPPORTUNITY_CANDIDATE_NOT_FOUND", str(exc)) from exc
+
+
+@router.get(
+    "/opportunity-sufficiency/collection-plan", dependencies=[Depends(require_role(Role.READ))]
+)
+def opportunity_sufficiency_collection_plan(
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    return opportunity_collection_plan(session, tenant_id, site_id)
+
+
+@router.get("/opportunity-sufficiency/portfolio", dependencies=[Depends(require_role(Role.READ))])
+def opportunity_target_portfolio(
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    return opportunity_portfolio(session, tenant_id, site_id)
 
 
 @router.get("/experiments", dependencies=[Depends(require_role(Role.READ))])

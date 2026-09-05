@@ -2,6 +2,7 @@ import {cleanup, fireEvent, render, screen, waitFor} from "@testing-library/reac
 import {afterEach, describe, expect, it, vi} from "vitest";
 import {InterventionApproval, RecommendationReview} from "./decision-workflow";
 import {OpportunityInbox} from "./opportunity-inbox";
+import {OpportunityEvaluationSummary} from "./opportunity-evaluation";
 import {OverviewPage} from "./overview";
 import {SystemPage} from "./system";
 import {GoalCreate, GoalMap, GoalsExplorer} from "./goals";
@@ -71,6 +72,19 @@ describe("GIS Workbench", () => {
     render(<OpportunityInbox/>);
     expect(await screen.findByText(/No evidence package currently satisfies/)).toBeInTheDocument();
     expect(screen.getByText(/exact conditions passed or failed/i)).toBeInTheDocument();
+  });
+
+  it("renders gate-aware sufficiency without authorizing collection", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url=String(input);
+      if(url.includes("/diagnose")) return answer({evaluated:1,qualified:0,not_qualified:1,reason_counts:[{reason:"Classification",count:1}],semantics:"Hard gates remain authoritative.",near_misses:[{evidence_package_id:"p1",label:"va loan calculator",classification:"FIRST_OBSERVED",sufficiency:"LIMITED",rights:"USABLE",source_count:1,href:"/opportunities/candidates/p1?detector=DEMAND",evidence_href:"/evidence/p1",closest:{detector_key:"DEMAND",detector_name:"Emerging demand",readiness:"WAITING_FOR_HISTORY",qualifies:false,conditions_passed:5,conditions_total:6,conditions:[{key:"classification",label:"Eligible history",passed:false,required:["EMERGING"],observed:"FIRST_OBSERVED",remediation:"WAIT",next_action:"Allow additional real observations."}]}}]});
+      if(url.includes("/portfolio")) return answer({total:1,tier_counts:{DISCOVERY:1},semantics:"Read only.",items:[{id:"t1",label:"va loan calculator",target_type:"QUERY",lifecycle:"CANDIDATE",portfolio_tier:"DISCOVERY",priority_tier:null,cadence:null,blocker:"NO_PLAN",href:"/collection/t1"}]});
+      return answer({semantics:"No execution.",collection_leverage:[{remediation:"WAIT",action:"Allow additional real observations.",candidates_helped:1}],budget_scenarios:[{name:"NO_NEW_SPEND",description:"Wait for authorized collection.",cost:0}]});
+    }));
+    render(<OpportunityEvaluationSummary/>);
+    expect(await screen.findByRole("heading", {name:"Detector sufficiency"})).toBeInTheDocument();
+    expect(screen.getByText("Waiting for history")).toBeInTheDocument();
+    expect(screen.getByText(/Estimated new spend: \$0/)).toBeInTheDocument();
   });
 
   it("renders API failures instead of failing silently", async () => {

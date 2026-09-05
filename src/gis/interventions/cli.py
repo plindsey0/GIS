@@ -45,20 +45,57 @@ def parser() -> argparse.ArgumentParser:
 def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     args = parser().parse_args(argv)
     if args.command == "types":
-        return {"version": VERSION, "types": [{"key": key, **spec} for key, spec in TYPES.items()], "human_approval_required": True}
+        return {
+            "version": VERSION,
+            "types": [{"key": key, **spec} for key, spec in TYPES.items()],
+            "human_approval_required": True,
+        }
     if args.command == "metrics":
-        return {"version": VERSION, "metrics": [{"key": key, "name": value[0], "source": value[1], "unit": value[2]} for key, value in METRICS.items()]}
+        return {
+            "version": VERSION,
+            "metrics": [
+                {"key": key, "name": value[0], "source": value[1], "unit": value[2]}
+                for key, value in METRICS.items()
+            ],
+        }
     with session_factory()() as session:
         service = InterventionService(session)
         if args.command == "baseline":
             return service.baseline(args.intervention_id)
         if args.command in {"propose", "approve", "reject", "cancel", "start", "complete"}:
-            targets = {"propose": InterventionStatus.PROPOSED, "approve": InterventionStatus.APPROVED, "reject": InterventionStatus.REJECTED, "cancel": InterventionStatus.CANCELLED, "start": InterventionStatus.IN_PROGRESS, "complete": InterventionStatus.COMPLETED}
-            row = service.transition(args.intervention_id, targets[args.command], actor=args.actor, reason=args.reason)
+            targets = {
+                "propose": InterventionStatus.PROPOSED,
+                "approve": InterventionStatus.APPROVED,
+                "reject": InterventionStatus.REJECTED,
+                "cancel": InterventionStatus.CANCELLED,
+                "start": InterventionStatus.IN_PROGRESS,
+                "complete": InterventionStatus.COMPLETED,
+            }
+            row = service.transition(
+                args.intervention_id, targets[args.command], actor=args.actor, reason=args.reason
+            )
             session.rollback() if args.dry_run else session.commit()
-            return {"id": row.id, "status": row.status, "dry_run": args.dry_run, "autonomous_execution": False}
+            return {
+                "id": row.id,
+                "status": row.status,
+                "dry_run": args.dry_run,
+                "autonomous_execution": False,
+            }
         rows = service.list(args.tenant_id, args.site_id)
-        return {"interventions": [{"id": row.id, "title": row.title, "status": row.status, "feasibility": row.feasibility, "measurement_readiness": row.measurement_readiness, "opportunity_id": row.primary_opportunity_id, "causal_attribution": False} for row in rows]}
+        return {
+            "interventions": [
+                {
+                    "id": row.id,
+                    "title": row.title,
+                    "status": row.status,
+                    "feasibility": row.feasibility,
+                    "measurement_readiness": row.measurement_readiness,
+                    "opportunity_id": row.primary_opportunity_id,
+                    "causal_attribution": False,
+                }
+                for row in rows
+            ]
+        }
 
 
 def main() -> None:

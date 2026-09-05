@@ -48,7 +48,9 @@ def parser() -> argparse.ArgumentParser:
     inspect.add_argument("--recommendation-id", type=uuid.UUID, required=True)
     review = commands.add_parser("review")
     review.add_argument("--recommendation-id", type=uuid.UUID, required=True)
-    review.add_argument("--decision", choices=[item.value for item in RecommendationReviewDecision], required=True)
+    review.add_argument(
+        "--decision", choices=[item.value for item in RecommendationReviewDecision], required=True
+    )
     review.add_argument("--reviewer", required=True)
     review.add_argument("--candidate-id", type=uuid.UUID, action="append", default=[])
     review.add_argument("--reason")
@@ -65,22 +67,70 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
             session.rollback() if args.dry_run else session.commit()
             return result
         if args.command == "generate-all":
-            ids = list(session.scalars(select(Opportunity.id).where(Opportunity.tenant_id == args.tenant_id, Opportunity.site_id == args.site_id)))
+            ids = list(
+                session.scalars(
+                    select(Opportunity.id).where(
+                        Opportunity.tenant_id == args.tenant_id, Opportunity.site_id == args.site_id
+                    )
+                )
+            )
             results = [service.generate(item, dry_run=args.dry_run) for item in ids]
             session.rollback() if args.dry_run else session.commit()
             return {"opportunity_count": len(ids), "results": results, "ai_calls": provider.calls}
         if args.command == "list":
             rows = service.list(args.tenant_id, args.site_id)
-            return {"recommendations": [{"id": row.id, "opportunity_id": row.opportunity_id, "status": row.status, "summary": row.summary} for row in rows]}
+            return {
+                "recommendations": [
+                    {
+                        "id": row.id,
+                        "opportunity_id": row.opportunity_id,
+                        "status": row.status,
+                        "summary": row.summary,
+                    }
+                    for row in rows
+                ]
+            }
         if args.command == "inspect":
             row = session.get(Recommendation, args.recommendation_id)
             if not row:
                 raise ValueError("recommendation not found")
-            candidates = list(session.scalars(select(RecommendationCandidate).where(RecommendationCandidate.recommendation_id == row.id).order_by(RecommendationCandidate.rank)))
-            return {"id": row.id, "opportunity_id": row.opportunity_id, "status": row.status, "summary": row.summary, "candidates": [{"id": item.id, "rank": item.rank, "target_metric": item.target_metric_key, "rationale": item.rationale, "accepted_intervention_id": item.accepted_intervention_id} for item in candidates]}
-        row = service.review(args.recommendation_id, RecommendationReviewDecision(args.decision), args.reviewer, args.candidate_id, reason=args.reason)
+            candidates = list(
+                session.scalars(
+                    select(RecommendationCandidate)
+                    .where(RecommendationCandidate.recommendation_id == row.id)
+                    .order_by(RecommendationCandidate.rank)
+                )
+            )
+            return {
+                "id": row.id,
+                "opportunity_id": row.opportunity_id,
+                "status": row.status,
+                "summary": row.summary,
+                "candidates": [
+                    {
+                        "id": item.id,
+                        "rank": item.rank,
+                        "target_metric": item.target_metric_key,
+                        "rationale": item.rationale,
+                        "accepted_intervention_id": item.accepted_intervention_id,
+                    }
+                    for item in candidates
+                ],
+            }
+        row = service.review(
+            args.recommendation_id,
+            RecommendationReviewDecision(args.decision),
+            args.reviewer,
+            args.candidate_id,
+            reason=args.reason,
+        )
         session.commit()
-        return {"id": row.id, "status": row.status, "human_review_recorded": True, "intervention_approval_granted": False}
+        return {
+            "id": row.id,
+            "status": row.status,
+            "human_review_recorded": True,
+            "intervention_approval_granted": False,
+        }
 
 
 def main() -> None:

@@ -426,8 +426,14 @@ def run(arguments: list[str] | None = None) -> int:
                 )
             elif args.command == "retry":
                 execution = session.get(OrchestrationRun, args.execution)
-                if execution and execution.configuration_json.get("provider_capability_policy_id") and not args.confirm_provider_recovery:
-                    raise ValueError("Provider recovery can consume credits; review in Workbench or explicitly pass --confirm-provider-recovery")
+                if (
+                    execution
+                    and execution.configuration_json.get("provider_capability_policy_id")
+                    and not args.confirm_provider_recovery
+                ):
+                    raise ValueError(
+                        "Provider recovery can consume credits; review in Workbench or explicitly pass --confirm-provider-recovery"
+                    )
                 emit(_run_json(orchestrator.retry(tenant.id, args.execution)))
             elif args.command == "budget":
                 _assert_site_scope(session, tenant, args.site)

@@ -30,7 +30,10 @@ class FixtureRecommendationProvider:
             return self.output
         valid = context["applicable_intervention_types"]
         if not valid:
-            return {"summary": "No valid recommendation under configured contracts.", "candidates": []}
+            return {
+                "summary": "No valid recommendation under configured contracts.",
+                "candidates": [],
+            }
         selected = valid[0]
         parameters: dict[str, str] = {}
         for key in selected["required_parameters"]:
@@ -42,17 +45,23 @@ class FixtureRecommendationProvider:
                 parameters[key] = "BOUNDED_SCOPE"
         return {
             "summary": "A structured intervention may be considered under the supplied opportunity and evidence constraints.",
-            "candidates": [{
-                "intervention_type": selected["key"],
-                "intervention_type_version": selected["version"],
-                "parameters": parameters,
-                "target_metric": selected["supported_metrics"][0],
-                "expected_direction": "INCREASE" if "CLS" not in selected["supported_metrics"][0] else "DECREASE",
-                "rationale": "The registered intervention applies to the resolved entity and would test the linked opportunity using a registered metric.",
-                "assumptions": ["The proposed change may affect the registered metric; this is an AI inference, not evidence or a causal claim."],
-                "limitations": list(context["limitations"]),
-                "fit": "SUPPORTED_FIT",
-            }],
+            "candidates": [
+                {
+                    "intervention_type": selected["key"],
+                    "intervention_type_version": selected["version"],
+                    "parameters": parameters,
+                    "target_metric": selected["supported_metrics"][0],
+                    "expected_direction": "INCREASE"
+                    if "CLS" not in selected["supported_metrics"][0]
+                    else "DECREASE",
+                    "rationale": "The registered intervention applies to the resolved entity and would test the linked opportunity using a registered metric.",
+                    "assumptions": [
+                        "The proposed change may affect the registered metric; this is an AI inference, not evidence or a causal claim."
+                    ],
+                    "limitations": list(context["limitations"]),
+                    "fit": "SUPPORTED_FIT",
+                }
+            ],
         }
 
     def repair_structured_recommendation(
