@@ -59,11 +59,15 @@ from gis.api.system import SystemQueries
 from gis.api.workbench import WorkbenchQueries, row_data
 from gis.db import session_factory
 from gis.goals.service import GoalService
+from gis.intelligence.provider import ReplayLLMProvider
+from gis.intelligence.replay import replay_responses
+from gis.intelligence.service import GovernedIntelligenceService, IntelligenceValidationError
 from gis.interventions.service import InterventionService
 from gis.models import (
     DecompositionPlan,
     EvidencePackage,
     Experiment,
+    ExperimentProposal,
     Intervention,
     InterventionHypothesis,
     InterventionLifecycleEvent,
@@ -191,6 +195,17 @@ def review_connection_rights(
 class AccountRefreshInput(BaseModel):
     actor: str = Field(min_length=1, max_length=255)
     confirmed: bool = False
+
+
+class IntelligenceDecisionInput(BaseModel):
+    actor: str = Field(min_length=1, max_length=255)
+    decision: str = Field(min_length=1, max_length=50)
+    comment: Optional[str] = Field(default=None, max_length=2000)
+
+
+def _replay_service(session: Session, responses: dict[str, dict[str, Any]]) -> GovernedIntelligenceService:
+    """Construct the only provider permitted from browser actions: deterministic replay."""
+    return GovernedIntelligenceService(session, ReplayLLMProvider(responses))
 
 
 @router.post(
@@ -1349,7 +1364,48 @@ def opportunity_detail(
             select(Intervention).where(Intervention.primary_opportunity_id == resource_id)
         )
     ]
+    detail.data.update(WorkbenchQueries(session).intelligence_opportunity(
+        scoped(Opportunity, resource_id, tenant_id, site_id, session)
+    ))
     return detail
+
+
+@router.post("/opportunities/{resource_id}/intelligence-review",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def review_intelligence_opportunity(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, body: IntelligenceDecisionInput,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    scoped(Opportunity, resource_id, tenant_id, site_id, session)
+    try:
+        review = _replay_service(session, {}).review_opportunity(
+            resource_id, body.decision, body.actor, body.comment)
+        session.commit()
+        return row_data(review)
+    except IntelligenceValidationError as error:
+        session.rollback()
+        raise ApiError(422, "INTELLIGENCE_REVIEW_INVALID", str(error)) from error
+
+
+@router.post("/opportunities/{resource_id}/replay-recommendations",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def generate_replay_recommendations(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    opportunity = scoped(Opportunity, resource_id, tenant_id, site_id, session)
+    evidence_id = session.scalar(select(OpportunityEvidence.evidence_package_id).join(
+        OpportunityEvaluation, OpportunityEvaluation.id == OpportunityEvidence.opportunity_evaluation_id
+    ).where(OpportunityEvaluation.opportunity_id == resource_id))
+    if not evidence_id:
+        raise ApiError(422, "INTELLIGENCE_LINEAGE_MISSING", "Opportunity has no governed evidence lineage.")
+    try:
+        service = _replay_service(session, replay_responses(evidence_id,
+            opportunity_id=resource_id, target=opportunity.title))
+        rows = service.generate_recommendations([resource_id])
+        session.commit()
+        return {"items": [row_data(row) for row in rows], "provider": "replay",
+                "paid_provider_calls": 0}
+    except IntelligenceValidationError as error:
+        session.rollback()
+        raise ApiError(422, "INTELLIGENCE_GENERATION_INVALID", str(error)) from error
 
 
 @router.post(
@@ -1417,7 +1473,9 @@ def recommendations(
     limit: int = Query(25, ge=1, le=100),
     session: Session = Depends(database),
 ) -> dict[str, Any]:
-    return WorkbenchQueries(session).simple_page(Recommendation, tenant_id, site_id, page, limit)
+    return WorkbenchQueries(session).intelligence_recommendations(
+        tenant_id, site_id, page, limit
+    )
 
 
 @router.get(
@@ -1462,7 +1520,79 @@ def recommendation_detail(
         )
     ]
     detail.data["acceptance_is_approval"] = False
+    rich = WorkbenchQueries(session).intelligence_recommendation(
+        scoped(Recommendation, resource_id, tenant_id, site_id, session)
+    )
+    if rich.get("governed_intelligence"):
+        detail.data = rich
     return detail
+
+
+@router.post("/recommendations/{resource_id}/select",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def select_intelligence_recommendation(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, body: DecisionInput, session: Session = Depends(database)) -> dict[str, Any]:
+    scoped(Recommendation, resource_id, tenant_id, site_id, session)
+    try:
+        row = _replay_service(session, {}).select_recommendation(
+            resource_id, body.actor, body.reason)
+        session.commit()
+        return {"id": row.id, "status": row.status.value, "intervention_created": False}
+    except IntelligenceValidationError as error:
+        session.rollback()
+        raise ApiError(422, "RECOMMENDATION_SELECTION_INVALID", str(error)) from error
+
+
+@router.post("/recommendations/{resource_id}/replay-experiment-proposal",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def generate_replay_experiment_proposal(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    recommendation = scoped(Recommendation, resource_id, tenant_id, site_id, session)
+    evidence_id = session.scalar(select(RecommendationEvidence.evidence_package_id).where(
+        RecommendationEvidence.recommendation_id == resource_id))
+    if not evidence_id:
+        raise ApiError(422, "INTELLIGENCE_LINEAGE_MISSING", "Recommendation has no governed evidence lineage.")
+    try:
+        service = _replay_service(session, replay_responses(evidence_id,
+            recommendation_id=resource_id, target=recommendation.summary))
+        proposal = service.generate_experiment_proposal(resource_id)
+        session.commit()
+        return {"id": proposal.id, "status": proposal.status, "provider": "replay",
+                "paid_provider_calls": 0, "intervention_created": False}
+    except IntelligenceValidationError as error:
+        session.rollback()
+        raise ApiError(422, "EXPERIMENT_PROPOSAL_INVALID", str(error)) from error
+
+
+@router.get("/experiment-proposals", dependencies=[Depends(require_role(Role.READ))])
+def experiment_proposals(tenant_id: uuid.UUID, site_id: uuid.UUID,
+    page: int = Query(1, ge=1), limit: int = Query(25, ge=1, le=100),
+    session: Session = Depends(database)) -> dict[str, Any]:
+    return WorkbenchQueries(session).experiment_proposals(tenant_id, site_id, page, limit)
+
+
+@router.get("/experiment-proposals/{resource_id}", dependencies=[Depends(require_role(Role.READ))])
+def experiment_proposal_detail(resource_id: uuid.UUID, tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    proposal = scoped(ExperimentProposal, resource_id, tenant_id, site_id, session)
+    return {"id": proposal.id, "tenant_id": tenant_id, "site_id": site_id,
+            "resource_type": "experiment_proposal",
+            "data": WorkbenchQueries(session).experiment_proposal(proposal)}
+
+
+@router.post("/experiment-proposals/{resource_id}/review",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def review_experiment_proposal(resource_id: uuid.UUID, tenant_id: uuid.UUID, site_id: uuid.UUID,
+    body: IntelligenceDecisionInput, session: Session = Depends(database)) -> dict[str, Any]:
+    scoped(ExperimentProposal, resource_id, tenant_id, site_id, session)
+    try:
+        row = _replay_service(session, {}).review_experiment_proposal(
+            resource_id, body.decision, body.actor, body.comment)
+        session.commit()
+        return {"id": row.id, "status": row.status, "intervention_created": False}
+    except IntelligenceValidationError as error:
+        session.rollback()
+        raise ApiError(422, "EXPERIMENT_PROPOSAL_REVIEW_INVALID", str(error)) from error
 
 
 def review_recommendation(

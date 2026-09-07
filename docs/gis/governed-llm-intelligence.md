@@ -1,5 +1,9 @@
 # Governed LLM intelligence v1
 
+The human-facing workflow over these records is documented in
+[`epic-27c-intelligence-workbench.md`](epic-27c-intelligence-workbench.md). Its browser generation
+actions are replay-only and cannot select a live provider.
+
 Epic 27 adds the provider-independent, human-governed path from authoritative GIS evidence to
 an implementable experiment proposal:
 

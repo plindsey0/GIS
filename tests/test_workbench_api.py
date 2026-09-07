@@ -13,6 +13,9 @@ from test_opportunities import NOW, package
 from gis.api.app import app
 from gis.api.routes import database
 from gis.collection_planning.service import CollectionPlanningService
+from gis.intelligence.provider import ReplayLLMProvider
+from gis.intelligence.replay import replay_responses
+from gis.intelligence.service import EvidencePacketService, GovernedIntelligenceService
 from gis.models import (
     DemandEvidenceStrength,
     Intervention,
@@ -52,6 +55,57 @@ def scope(session: Session):
     tenant, site, _ = package(session, DemandEvidenceStrength.SUPPORTED)
     opportunity = OpportunityService(session).detect(tenant.id, site.id, now=NOW)[0]
     return tenant, site, opportunity
+
+
+def test_governed_intelligence_workbench_is_human_gated_and_replay_only(
+    client: TestClient, session: Session
+) -> None:
+    tenant, site, evidence = package(session, DemandEvidenceStrength.SUPPORTED)
+    packet = EvidencePacketService(session).build(tenant.id, site.id, evidence_ids=[evidence.id])
+    provider = ReplayLLMProvider(replay_responses(evidence.id, target="VAHomeMath"))
+    opportunity = GovernedIntelligenceService(session, provider).generate_opportunities(packet)[0]
+    session.commit()
+    query = params(tenant.id, site.id)
+
+    detail = client.get(
+        f"/api/v1/opportunities/{opportunity.id}", params=query, headers=headers()
+    ).json()["data"]
+    assert detail["governed_intelligence"] is True
+    assert detail["model_inference"]["summary"]
+    assert detail["authoritative_evidence"][0]["id"] == str(evidence.id)
+    assert detail["actions"]["paid_provider_calls"] == 0
+    assert len(provider.calls) == 1  # the preceding setup call; GET made no provider call
+
+    review = client.post(
+        f"/api/v1/opportunities/{opportunity.id}/intelligence-review",
+        params=query, headers=headers("REVIEW"),
+        json={"actor": "operator", "decision": "ACCEPTED", "comment": "bounded"},
+    )
+    assert review.status_code == 200
+    generated = client.post(
+        f"/api/v1/opportunities/{opportunity.id}/replay-recommendations",
+        params=query, headers=headers("REVIEW"),
+    )
+    assert generated.status_code == 200
+    assert generated.json()["provider"] == "replay"
+    recommendation_id = generated.json()["items"][0]["id"]
+    assert client.post(
+        f"/api/v1/recommendations/{recommendation_id}/select", params=query,
+        headers=headers("REVIEW"), json={"actor": "operator", "reason": "test it"},
+    ).json()["intervention_created"] is False
+    proposal = client.post(
+        f"/api/v1/recommendations/{recommendation_id}/replay-experiment-proposal",
+        params=query, headers=headers("REVIEW"),
+    )
+    assert proposal.status_code == 200
+    assert proposal.json()["paid_provider_calls"] == 0
+    proposal_id = proposal.json()["id"]
+    proposal_detail = client.get(
+        f"/api/v1/experiment-proposals/{proposal_id}", params=query, headers=headers()
+    ).json()["data"]
+    assert proposal_detail["lineage"]["evidence_ids"] == [str(evidence.id)]
+    assert proposal_detail["lineage"]["opportunity_ids"] == [str(opportunity.id)]
+    assert proposal_detail["status"] == "READY_FOR_REVIEW"
 
 
 def params(tenant_id: uuid.UUID, site_id: uuid.UUID) -> dict[str, str]:

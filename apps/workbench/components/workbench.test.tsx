@@ -7,6 +7,7 @@ import {OverviewPage} from "./overview";
 import {SystemPage} from "./system";
 import {GoalCreate, GoalMap, GoalsExplorer} from "./goals";
 import {ProviderDetail, ProvidersPage} from "./providers";
+import {InterventionInbox, OpportunityDecisionDetail, RecommendationDecisionDetail} from "./intelligence-workbench";
 
 vi.mock("next/navigation", () => ({useRouter: () => ({push: vi.fn()})}));
 
@@ -71,7 +72,29 @@ describe("GIS Workbench", () => {
     vi.stubGlobal("fetch", vi.fn(() => answer({items: [], page: 1, limit: 25, total: 0})));
     render(<OpportunityInbox/>);
     expect(await screen.findByText(/No evidence package currently satisfies/)).toBeInTheDocument();
-    expect(screen.getByText(/exact conditions passed or failed/i)).toBeInTheDocument();
+    expect(screen.getByText(/No threshold or trust boundary/i)).toBeInTheDocument();
+  });
+
+  it("separates authoritative evidence, model inference, and human judgment", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => answer({id:"o1",resource_type:"opportunity",data:{id:"o1",title:"Evaluate focused coverage",limitations_json:["Lift unknown"],governed_intelligence:true,authoritative_evidence:[{id:"e1",condition_key:"query-demand",classification:"SUPPORTED",sufficiency:"SUFFICIENT",period_start:"2026-08-01",period_end:"2026-08-31",independent_source_count:1,items:[]}],model_inference:{summary:"A bounded interpretation",problem_or_signal:"Demand",reasoning:"Evidence supports a test",expected_value:"Unknown magnitude",confidence:"0.64",suggested_action:"Inventory first",assumptions_json:["Editable"]},human_decision:null,decision_history:[],recommendations:[],actions:{can_generate_recommendation:false,generation_provider:"replay",paid_provider_calls:0},llm_run:{provider_key:"replay"}}})));
+    render(<OpportunityDecisionDetail id="o1"/>);
+    expect(await screen.findByText("Authoritative GIS data")).toBeInTheDocument();
+    expect(screen.getAllByText(/Model inference/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button",{name:"Accept for recommendation"})).toBeDisabled();
+    expect(screen.getByText(/Live providers are never available/)).toBeInTheDocument();
+  });
+
+  it("makes recommendation selection distinct from execution", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => answer({id:"r1",resource_type:"recommendation",data:{id:"r1",status:"READY_FOR_REVIEW",summary:"Try one bounded change",governed_intelligence:true,model_recommendation:{title:"Focused resource",recommended_action:"Inventory then test",rationale:"Reversible",expected_impact:"Unknown magnitude",confidence:"0.67",priority:"MEDIUM",estimated_effort:"SMALL",success_signals_json:["CTR improves"],risks_json:["Seasonality"],dependencies_json:["Telemetry"]},human_decisions:[],opportunity_ids:["o1"],evidence_ids:["e1"],experiment_proposals:[],actions:{can_select:true,can_generate_proposal:false},llm_run:{provider_key:"replay"}}})));
+    render(<RecommendationDecisionDetail id="r1"/>);
+    expect(await screen.findByText("Focused resource")).toBeInTheDocument();
+    expect(screen.getByText(/Selection does not approve or create an intervention/)).toBeInTheDocument();
+  });
+
+  it("explains why intelligence artifacts do not populate interventions", () => {
+    render(<InterventionInbox/>);
+    expect(screen.getByText(/No intervention was created by Epic 27 intelligence/)).toBeInTheDocument();
+    expect(screen.getByText(/does not automatically become an intervention/)).toBeInTheDocument();
   });
 
   it("renders gate-aware sufficiency without authorizing collection", async () => {

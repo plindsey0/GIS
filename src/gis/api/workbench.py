@@ -30,6 +30,9 @@ from gis.models import (
     ExperienceMeasurementType,
     ExperienceObservation,
     Experiment,
+    ExperimentProposal,
+    ExperimentProposalEvidence,
+    ExperimentProposalReview,
     ExternalKeywordRanking,
     ExternalSearchObservation,
     FreshnessState,
@@ -38,17 +41,26 @@ from gis.models import (
     GSCSearchObservation,
     Intervention,
     InterventionOutcome,
+    LLMOpportunityDetail,
+    LLMRecommendationDetail,
+    LLMRun,
     MarketDefinition,
     MarketDefinitionMember,
     MarketObservation,
     MarketParticipantObservation,
     ObligationStatus,
     Opportunity,
+    OpportunityEvaluation,
+    OpportunityEvidence,
+    OpportunityReview,
     OrchestrationObligation,
     OrchestrationRun,
     PermittedUse,
     PipelineDefinition,
     Recommendation,
+    RecommendationEvidence,
+    RecommendationOpportunity,
+    RecommendationReview,
     ScheduleDefinition,
     SerpObservation,
     SerpResult,
@@ -135,10 +147,23 @@ class WorkbenchQueries:
         for opportunity, entity in rows:
             recommendation = self.session.scalar(
                 select(Recommendation.status)
-                .where(Recommendation.opportunity_id == opportunity.id)
+                .outerjoin(RecommendationOpportunity,
+                           RecommendationOpportunity.recommendation_id == Recommendation.id)
+                .where(or_(Recommendation.opportunity_id == opportunity.id,
+                           RecommendationOpportunity.opportunity_id == opportunity.id))
                 .order_by(Recommendation.created_at.desc())
                 .limit(1)
             )
+            review = self.session.scalar(select(OpportunityReview.decision).where(
+                OpportunityReview.opportunity_id == opportunity.id
+            ).order_by(OpportunityReview.reviewed_at.desc()).limit(1))
+            governed = self.session.scalar(select(LLMOpportunityDetail.id).where(
+                LLMOpportunityDetail.opportunity_id == opportunity.id)) is not None
+            proposal_status = self.session.scalar(select(ExperimentProposal.status)
+                .join(RecommendationOpportunity,
+                      RecommendationOpportunity.recommendation_id == ExperimentProposal.recommendation_id)
+                .where(RecommendationOpportunity.opportunity_id == opportunity.id)
+                .order_by(ExperimentProposal.created_at.desc()).limit(1))
             intervention = self.session.scalar(
                 select(Intervention.status)
                 .where(Intervention.primary_opportunity_id == opportunity.id)
@@ -165,6 +190,10 @@ class WorkbenchQueries:
                     limitations=opportunity.limitations_json,
                     recommendation_status=recommendation.value if recommendation else None,
                     intervention_status=intervention.value if intervention else None,
+                    review_state=review,
+                    recommendation_state=recommendation.value if recommendation else None,
+                    experiment_state=proposal_status,
+                    governed_intelligence=governed,
                 )
             )
         return Page(items=items, page=page, limit=limit, total=total)
@@ -244,6 +273,134 @@ class WorkbenchQueries:
             "limit": limit,
             "total": total,
         }
+
+    def intelligence_opportunity(self, opportunity: Opportunity) -> dict[str, Any]:
+        inference = self.session.scalar(select(LLMOpportunityDetail).where(
+            LLMOpportunityDetail.opportunity_id == opportunity.id
+        ))
+        if not inference:
+            return {}
+        run = self.session.get(LLMRun, inference.llm_run_id)
+        reviews = list(self.session.scalars(select(OpportunityReview).where(
+            OpportunityReview.opportunity_id == opportunity.id
+        ).order_by(OpportunityReview.reviewed_at)))
+        evidence = list(self.session.scalars(select(EvidencePackage).join(
+            OpportunityEvidence, OpportunityEvidence.evidence_package_id == EvidencePackage.id
+        ).join(OpportunityEvaluation, OpportunityEvaluation.id == OpportunityEvidence.opportunity_evaluation_id)
+            .where(OpportunityEvaluation.opportunity_id == opportunity.id).distinct()))
+        recommendation_ids = list(self.session.scalars(select(RecommendationOpportunity.recommendation_id)
+            .where(RecommendationOpportunity.opportunity_id == opportunity.id)))
+        recommendations = [self._intelligence_recommendation(row) for row in self.session.scalars(
+            select(Recommendation).where(Recommendation.id.in_(recommendation_ids))
+        )] if recommendation_ids else []
+        evidence_cards = []
+        for package in evidence:
+            items = list(self.session.scalars(select(EvidencePackageItem).where(
+                EvidencePackageItem.evidence_package_id == package.id)))
+            rendered_items = []
+            for item in items:
+                rendered = row_data(item)
+                if item.evidence_type == "DEMAND_OBSERVATION" and item.evidence_reference_id:
+                    observation = self.session.get(DemandObservation, item.evidence_reference_id)
+                    if observation:
+                        rendered["authoritative_record"] = {
+                            "subject": observation.entity_key,
+                            "metric": observation.source_metric,
+                            "value": observation.value,
+                            "unit": observation.unit,
+                            "source": observation.source_system,
+                            "observed_date": observation.observed_date,
+                            "coverage_state": observation.coverage_state.value,
+                        }
+                rendered_items.append(rendered)
+            evidence_cards.append({**row_data(package), "items": rendered_items})
+        latest = reviews[-1] if reviews else None
+        return {
+            "governed_intelligence": True,
+            "authoritative_evidence": evidence_cards,
+            "model_inference": row_data(inference),
+            "human_decision": row_data(latest) if latest else None,
+            "decision_history": [row_data(item) for item in reviews],
+            "recommendations": recommendations,
+            "actions": {
+                "can_review": True,
+                "can_generate_recommendation": bool(latest and latest.decision == "ACCEPTED" and not recommendations),
+                "generation_provider": "replay",
+                "paid_provider_calls": 0,
+            },
+            "llm_run": row_data(run, exclude={"response_snapshot_json", "request_fingerprint"}) if run else None,
+        }
+
+    def _intelligence_recommendation(self, recommendation: Recommendation) -> dict[str, Any]:
+        detail = self.session.scalar(select(LLMRecommendationDetail).where(
+            LLMRecommendationDetail.recommendation_id == recommendation.id
+        ))
+        if not detail:
+            return row_data(recommendation)
+        reviews = list(self.session.scalars(select(RecommendationReview).where(
+            RecommendationReview.recommendation_id == recommendation.id
+        ).order_by(RecommendationReview.reviewed_at)))
+        proposals = list(self.session.scalars(select(ExperimentProposal).where(
+            ExperimentProposal.recommendation_id == recommendation.id
+        ).order_by(ExperimentProposal.created_at.desc())))
+        opportunities = list(self.session.scalars(select(RecommendationOpportunity.opportunity_id)
+            .where(RecommendationOpportunity.recommendation_id == recommendation.id)))
+        evidence = list(self.session.scalars(select(RecommendationEvidence.evidence_package_id)
+            .where(RecommendationEvidence.recommendation_id == recommendation.id)))
+        opportunity_rows = [self.session.get(Opportunity, item) for item in opportunities]
+        evidence_rows = [self.session.get(EvidencePackage, item) for item in evidence]
+        run = self.session.get(LLMRun, detail.llm_run_id)
+        return {**row_data(recommendation), "governed_intelligence": True,
+            "model_recommendation": row_data(detail),
+            "human_decisions": [row_data(item) for item in reviews],
+            "opportunity_ids": opportunities, "evidence_ids": evidence,
+            "supporting_opportunities": [{"id": item.id, "title": item.title}
+                                         for item in opportunity_rows if item],
+            "supporting_evidence": [{"id": item.id, "condition_key": item.condition_key,
+                                     "classification": item.classification,
+                                     "sufficiency": item.sufficiency.value,
+                                     "period_start": item.period_start,
+                                     "period_end": item.period_end}
+                                    for item in evidence_rows if item],
+            "experiment_proposals": [row_data(item) for item in proposals],
+            "actions": {"can_select": recommendation.status.value == "READY_FOR_REVIEW",
+                        "can_generate_proposal": recommendation.status.value == "ACCEPTED" and not proposals,
+                        "generation_provider": "replay", "paid_provider_calls": 0},
+            "llm_run": row_data(run, exclude={"response_snapshot_json", "request_fingerprint"}) if run else None}
+
+    def intelligence_recommendations(self, tenant_id: uuid.UUID, site_id: uuid.UUID,
+                                     page: int, limit: int) -> dict[str, Any]:
+        self.site(tenant_id, site_id)
+        query = select(Recommendation).join(LLMRecommendationDetail).where(
+            Recommendation.tenant_id == tenant_id, Recommendation.site_id == site_id)
+        total = self.session.scalar(select(func.count()).select_from(query.subquery())) or 0
+        rows = list(self.session.scalars(query.order_by(Recommendation.created_at.desc())
+                                         .offset((page - 1) * limit).limit(limit)))
+        return {"items": [self._intelligence_recommendation(row) for row in rows],
+                "page": page, "limit": limit, "total": total}
+
+    def intelligence_recommendation(self, recommendation: Recommendation) -> dict[str, Any]:
+        return self._intelligence_recommendation(recommendation)
+
+    def experiment_proposals(self, tenant_id: uuid.UUID, site_id: uuid.UUID,
+                             page: int, limit: int) -> dict[str, Any]:
+        return self.simple_page(ExperimentProposal, tenant_id, site_id, page, limit)
+
+    def experiment_proposal(self, proposal: ExperimentProposal) -> dict[str, Any]:
+        reviews = list(self.session.scalars(select(ExperimentProposalReview).where(
+            ExperimentProposalReview.experiment_proposal_id == proposal.id)
+            .order_by(ExperimentProposalReview.reviewed_at)))
+        evidence = list(self.session.scalars(select(ExperimentProposalEvidence.evidence_package_id)
+            .where(ExperimentProposalEvidence.experiment_proposal_id == proposal.id)))
+        recommendation = self.session.get(Recommendation, proposal.recommendation_id)
+        linked = self._intelligence_recommendation(recommendation) if recommendation else None
+        return {**row_data(proposal), "human_decisions": [row_data(item) for item in reviews],
+                "evidence_ids": evidence, "recommendation": linked,
+                "actions": {"can_review": proposal.status in {"READY_FOR_REVIEW", "NEEDS_REVIEW"}},
+                "lineage": {"evidence_ids": evidence,
+                            "opportunity_ids": linked.get("opportunity_ids", []) if linked else [],
+                            "recommendation_id": proposal.recommendation_id,
+                            "experiment_proposal_id": proposal.id}}
 
     def overview(self, tenant_id: uuid.UUID, site_id: uuid.UUID) -> dict[str, Any]:
         self.site(tenant_id, site_id)
