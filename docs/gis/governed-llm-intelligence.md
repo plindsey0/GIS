@@ -146,6 +146,23 @@ deterministic validation used by replay. Candidates remain human-review-required
 `OpenAILLMProvider` implements the recommendation and experiment proposal contracts after their
 respective human gates; it does not create a parallel workflow.
 
+After a human selects a recommendation for proposal generation, the initial governed experiment
+proposal is generated with this separate, explicitly authorized command:
+
+```bash
+LLM_PROVIDER=openai LLM_MODEL=gpt-5.6-sol OPENAI_API_KEY="$OPENAI_API_KEY" \
+GIS_PAID_EXECUTION_DISABLED=0 gis-intelligence live-experiment-proposals \
+  --tenant vahomemath --site vahomemath \
+  --recommendation-id 4fb3f91c-7dd3-475f-b710-3e5f6f5740a8 \
+  --confirm-paid-provider-call
+```
+
+This command uses the existing `experiment_proposal_v2` governed context and validation path. It
+requires a human-selected recommendation in the same tenant/site scope, preserves its evidence and
+review lineage, and creates only a `READY_FOR_REVIEW` proposal. It does not create an intervention
+or execute a website change. Invalid output creates no proposal and retains the failed LLM-run
+audit record.
+
 The repository does not prescribe a model name because availability and authorization are
 account-specific. Consult the official OpenAI model catalog and select a model supporting
 Structured Outputs before an authorized live run.
