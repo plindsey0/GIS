@@ -26,8 +26,22 @@ records are excluded. Missing target-page content and exact-query SERP evidence 
 gaps.
 
 No migration was required. Existing LLM-run provider metadata records packet construction mode
-and entity ID; evidence-package IDs remain the only model-referenceable evidence IDs. Packet
-inspection and Workbench rendering never construct a provider or make an LLM request.
+and entity ID. Packet inspection and Workbench rendering never construct a provider or make an
+LLM request.
+
+## Reference validation hotfix
+
+Enriched packets expose a typed `referenceable_evidence` allow-list. Each entry names its stable
+UUID, evidence class, packet section, and governing evidence-package lineage. Opportunity output
+may cite only IDs in this final constructed list. Explicit packets list only their selected package
+IDs; entity-scoped packets additionally list the exact governed observations and deterministic
+context records that crossed the boundary.
+
+Persistence resolves cited enriched references back to their governing evidence packages before
+writing normalized `opportunity_evidence` links. Fabricated IDs, database IDs outside the packet,
+duplicate references, and references whose package lineage leaves the packet tenant/site/entity
+scope fail closed. The opportunity prompt explicitly tells models to cite only listed
+`reference_id` values.
 
 ```bash
 gis-intelligence packet --tenant vahomemath --site vahomemath \

@@ -8,4 +8,4 @@ INTERPRETATION DISCIPLINE
 Respect evidence sufficiency, provenance, freshness, source independence, conflicts, and explicit gaps. Preserve low-volume uncertainty. Distinguish stable demand from emerging demand. An observed owned surface or query-page association does not prove intent satisfaction, coverage sufficiency, or page quality. Do not infer missing competitors, conversions, content, or relationships.
 
 TASK
-Semantically interpret the bounded evidence context and return schema-valid candidate opportunities with evidence-package lineage.
+Semantically interpret the bounded evidence context and return schema-valid candidate opportunities. Cite only `reference_id` values explicitly listed in `referenceable_evidence`. Those typed references carry their governing evidence-package lineage. Never cite any other UUID, even if it appears elsewhere in context.

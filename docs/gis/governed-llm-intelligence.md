@@ -16,6 +16,9 @@ deterministic evidence and provenance
 
 Model output is untrusted and is never authoritative merely because it is structured. GIS only
 persists an artifact after Pydantic schema validation and deterministic reference/scope checks.
+For entity-scoped packets, `referenceable_evidence` is the typed, packet-derived citation
+allow-list. Each enriched observation maps back to governing evidence-package lineage; arbitrary
+database UUIDs remain invalid. Explicit packets expose only their selected package IDs.
 Evidence text is clearly labeled untrusted data in every prompt; instructions embedded in
 collected content cannot change governance or lifecycle state. Confidence is model reasoning
 metadata, not a calibrated probability.
