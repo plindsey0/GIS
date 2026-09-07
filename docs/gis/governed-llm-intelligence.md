@@ -22,16 +22,21 @@ metadata, not a calibrated probability.
 
 ## Architecture and lineage
 
-`EvidencePacketService` selects at most 50 authoritative `evidence_package` records by explicit
+`EvidencePacketService` supports two governed construction modes. Explicit mode selects at most
+50 authoritative `evidence_package` records by explicit
 tenant/site, IDs, condition, dates, and latest-N filters. It exposes stable IDs, entity context,
 period, package items, source keys, rights state, quality-run provenance, and limitations. The
-model never receives database access.
+model never receives database access. Entity-scoped mode starts from one tenant/site/entity,
+selects the latest rights-usable package per classification (maximum ten), and constructs compact,
+bounded exact-match context from existing demand, ranking, GSC, GA4, market, quality, and gaps.
+Related queries remain excluded without a governed relationship. Query/page association requires
+an exact-query observation and a URL on the governed site; it never asserts intent satisfaction.
 
 `LLMProvider.generate_structured` is the narrow provider boundary. `ReplayLLMProvider` returns
 validated fixtures without network access or credentials. `OpenAILLMProvider` is the single
 production adapter and uses the OpenAI Responses API native Pydantic structured-output parser;
 it enables no tools and asks the provider not to store the response. The three versioned prompts are
-`opportunity_generation_v1`, `recommendation_generation_v1`, and `experiment_proposal_v1`.
+`opportunity_generation_v2`, `recommendation_generation_v1`, and `experiment_proposal_v1`.
 `llm_run` records provider/model, prompt version, input IDs, validated response snapshot,
 validation outcome/errors, request fingerprint, and optional token/cost metadata. It never stores
 hidden chain-of-thought.
@@ -78,6 +83,13 @@ gis-intelligence demo --tenant vahomemath --site vahomemath \
   --evidence-id UUID --reviewer your-name
 ```
 
+The entity-scoped packet can be inspected without writing records or contacting a provider:
+
+```bash
+gis-intelligence packet --tenant vahomemath --site vahomemath \
+  --entity-id 947737ce-fa06-49d5-8aef-b31fb914a828
+```
+
 The command prints the evidence packet, candidate opportunity, recorded human acceptance,
 recommendation, recorded human selection, implementable experiment proposal, and complete
 lineage. The provider fixture makes zero network and paid-provider calls. Invoking `demo` is the
@@ -106,7 +118,7 @@ GIS_PAID_EXECUTION_DISABLED=0 \
 gis-intelligence live-opportunities \
   --tenant vahomemath \
   --site vahomemath \
-  --evidence-id 84445354-9583-42cb-b40e-7359deb105e1 \
+  --entity-id 947737ce-fa06-49d5-8aef-b31fb914a828 \
   --confirm-paid-provider-call
 ```
 

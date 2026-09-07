@@ -6,9 +6,10 @@ import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from gis.intelligence.prompts import PROMPT_VERSIONS, system_prompt
@@ -22,15 +23,24 @@ from gis.intelligence.schemas import (
 )
 from gis.models import (
     AnalyticalEntity,
+    CompetitiveContentObservation,
+    DataRightsPolicy,
     DemandObservation,
+    EvidenceGap,
     EvidencePackage,
     EvidencePackageItem,
+    EvidenceQualityDimension,
     ExperimentProposal,
     ExperimentProposalEvidence,
     ExperimentProposalReview,
+    ExternalKeywordRanking,
+    ExternalSearchObservation,
+    GA4EventObservation,
+    GSCSearchObservation,
     LLMOpportunityDetail,
     LLMRecommendationDetail,
     LLMRun,
+    MarketDefinition,
     Opportunity,
     OpportunityDetectorPolicy,
     OpportunityEvaluation,
@@ -39,6 +49,7 @@ from gis.models import (
     OpportunityPriority,
     OpportunityReview,
     OpportunityStatus,
+    PermittedUse,
     Recommendation,
     RecommendationEvidence,
     RecommendationOpportunity,
@@ -48,8 +59,10 @@ from gis.models import (
     RecommendationRun,
     RecommendationRunStatus,
     RecommendationStatus,
+    RightsStatus,
     Site,
 )
+from gis.provenance.service import evaluate_policy_use
 
 METHOD_VERSION = "GOVERNED_LLM_INTELLIGENCE_V1"
 OPPORTUNITY_DECISIONS = {"ACCEPTED", "REJECTED", "NEEDS_REVIEW"}
@@ -67,6 +80,12 @@ def _digest(value: object) -> str:
 class EvidencePacketService:
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def _context_allowed(self, rights_policy_id: uuid.UUID) -> bool:
+        policy = self.session.get(DataRightsPolicy, rights_policy_id)
+        return evaluate_policy_use(
+            self.session, policy, PermittedUse.DERIVATIVE_CREATION
+        ).status is RightsStatus.ALLOWED
 
     def build(
         self,
@@ -179,6 +198,235 @@ class EvidencePacketService:
             ],
         )
 
+    def build_for_entity(
+        self,
+        tenant_id: uuid.UUID,
+        site_id: uuid.UUID,
+        analytical_entity_id: uuid.UUID,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        limit: int = 10,
+        generated_at: datetime | None = None,
+    ) -> EvidencePacket:
+        """Build bounded context using deterministic, exact entity/query/page relationships."""
+        entity = self.session.get(AnalyticalEntity, analytical_entity_id)
+        if not entity or entity.tenant_id != tenant_id or entity.site_id != site_id:
+            raise IntelligenceValidationError(
+                "Analytical entity does not belong to the permitted tenant/site context."
+            )
+        package_query = select(EvidencePackage).where(
+            EvidencePackage.tenant_id == tenant_id,
+            EvidencePackage.site_id == site_id,
+            EvidencePackage.analytical_entity_id == analytical_entity_id,
+            EvidencePackage.rights_usability.in_(["USABLE", "PARTIALLY_USABLE"]),
+        )
+        if start_date:
+            package_query = package_query.where(EvidencePackage.period_end >= start_date)
+        if end_date:
+            package_query = package_query.where(EvidencePackage.period_start <= end_date)
+        # Latest per classification keeps current and historical sibling packages without explosion.
+        candidates = list(self.session.scalars(
+            package_query.order_by(EvidencePackage.period_end.desc(), EvidencePackage.id).limit(50)
+        ))
+        selected: list[EvidencePackage] = []
+        seen_classifications: set[str] = set()
+        for package in candidates:
+            if package.classification not in seen_classifications:
+                selected.append(package)
+                seen_classifications.add(package.classification)
+            if len(selected) >= min(limit, 10):
+                break
+        if not selected:
+            raise IntelligenceValidationError("No governed evidence packages exist for the entity.")
+        packet = self.build(
+            tenant_id,
+            site_id,
+            evidence_ids=[row.id for row in selected],
+            limit=len(selected),
+            generated_at=generated_at,
+        )
+        packet.construction_mode = "entity_scoped"
+        packet.analytical_entity_id = entity.id
+        packet.entity_context = {
+            "analytical_entity_id": str(entity.id),
+            "canonical_key": entity.canonical_key,
+            "display_name": entity.display_name,
+            "entity_type": entity.entity_type.value,
+            "country_code": entity.country_code,
+            "language_code": entity.language_code,
+            "device": entity.device,
+            "resolution_method": entity.method_key,
+            "resolution_version": entity.method_version,
+        }
+        market_ids = [row.market_definition_id for row in selected if row.market_definition_id]
+        market = self.session.get(MarketDefinition, market_ids[0]) if market_ids else None
+        if market and market.tenant_id == tenant_id and market.site_id == site_id:
+            packet.market_context = {
+                "market_definition_id": str(market.id), "name": market.name,
+                "slug": market.slug, "version": market.version,
+                "country_code": market.country_code, "language_code": market.language_code,
+                "device": market.device,
+            }
+
+        normalized_query = " ".join(entity.canonical_key.lower().split())
+        observations = list(self.session.scalars(
+            select(DemandObservation).where(
+                DemandObservation.tenant_id == tenant_id,
+                DemandObservation.site_id == site_id,
+                func.lower(DemandObservation.entity_key) == normalized_query,
+            ).order_by(DemandObservation.observed_date).limit(24)
+        ))
+        if observations:
+            values = [row.value for row in observations if row.value is not None]
+            if not values:
+                raise IntelligenceValidationError("Entity demand observations contain no values.")
+            historical = max(selected, key=lambda row: (row.period_end - row.period_start).days)
+            packet.demand = [{
+                "evidence_package_ids": [str(row.id) for row in selected],
+                "metric": observations[-1].source_metric,
+                "period_start": observations[0].observed_date.isoformat(),
+                "period_end": observations[-1].observed_date.isoformat(),
+                "observation_count": len(observations),
+                "minimum": min(values), "maximum": max(values), "latest": values[-1],
+                "series": [{"date": row.observed_date.isoformat(), "value": row.value}
+                           for row in observations],
+                "classification": historical.classification,
+                "sufficiency": historical.sufficiency.value,
+                "source_independence": historical.source_independence.value,
+                "independent_root_sources": historical.independent_source_count,
+                "source": observations[-1].source_system,
+                "provenance": {"observation_ids": [str(row.id) for row in observations]},
+            }]
+
+        rankings = list(self.session.execute(
+            select(ExternalKeywordRanking, ExternalSearchObservation).join(
+                ExternalSearchObservation,
+                ExternalSearchObservation.id == ExternalKeywordRanking.external_search_observation_id,
+            ).where(
+                ExternalSearchObservation.tenant_id == tenant_id,
+                ExternalSearchObservation.site_id == site_id,
+                ExternalSearchObservation.effective_end.is_(None),
+                func.lower(ExternalKeywordRanking.normalized_keyword) == normalized_query,
+            ).order_by(ExternalSearchObservation.observed_date.desc()).limit(5)
+        ))
+        rankings = [row for row in rankings if self._context_allowed(row[1].rights_policy_id)]
+        packet.organic_visibility = [{
+            "observation_id": str(observation.id), "ranking_id": str(ranking.id),
+            "query": ranking.keyword, "observed_date": observation.observed_date.isoformat(),
+            "ranking_url": ranking.ranking_url or ranking.normalized_url,
+            "organic_position": ranking.position,
+            "provider_observations": {
+                "search_volume": ranking.search_volume, "keyword_difficulty": ranking.keyword_difficulty,
+                "cpc": ranking.cpc, "declared_intent": ranking.search_intent,
+                "estimated_traffic": ranking.estimated_traffic,
+            },
+            "source": observation.observation_type,
+            "rights_policy_id": str(observation.rights_policy_id),
+        } for ranking, observation in rankings]
+
+        gsc_rows = list(self.session.scalars(select(GSCSearchObservation).where(
+            GSCSearchObservation.tenant_id == tenant_id,
+            GSCSearchObservation.site_id == site_id,
+            GSCSearchObservation.effective_end.is_(None),
+            func.lower(GSCSearchObservation.query) == normalized_query,
+        ).order_by(GSCSearchObservation.observed_date.desc()).limit(10)))
+        gsc_rows = [row for row in gsc_rows if self._context_allowed(row.rights_policy_id)]
+        packet.search_console = [{
+            "observation_id": str(row.id), "query": row.query, "page": row.page,
+            "observed_date": row.observed_date.isoformat(), "impressions": row.impressions,
+            "clicks": row.clicks, "ctr": row.ctr, "average_position": row.position,
+            "country": row.country, "device": row.device, "quality": row.quality_flag.value,
+            "rights_policy_id": str(row.rights_policy_id),
+        } for row in gsc_rows]
+
+        associated_urls = sorted({
+            url for url in [
+                *(ranking.ranking_url or ranking.normalized_url for ranking, _ in rankings),
+                *(row.page for row in gsc_rows),
+            ] if url
+        })[:5]
+        paths = sorted({urlparse(url).path.rstrip("/") + "/" for url in associated_urls})
+        ga4_rows = list(self.session.scalars(select(GA4EventObservation).where(
+            GA4EventObservation.tenant_id == tenant_id,
+            GA4EventObservation.site_id == site_id,
+            GA4EventObservation.effective_end.is_(None),
+            GA4EventObservation.page_path.in_(paths),
+        ).order_by(GA4EventObservation.observed_date.desc(), GA4EventObservation.event_name).limit(20))) if paths else []
+        ga4_rows = [row for row in ga4_rows if self._context_allowed(row.rights_policy_id)]
+        packet.engagement = [{
+            "observation_id": str(row.id), "page": row.page_path,
+            "observed_date": row.observed_date.isoformat(), "event_name": row.event_name,
+            "event_count": row.event_count, "users": row.total_users,
+            "quality": row.quality_flag.value, "rights_policy_id": str(row.rights_policy_id),
+            "interpretation_constraint": "low-volume observation; statistical significance is not established",
+        } for row in ga4_rows]
+
+        site_host = (urlparse(packet.site).hostname or "").removeprefix("www.")
+        for url in associated_urls:
+            observed_host = (urlparse(url).hostname or "").removeprefix("www.")
+            if observed_host == site_host:
+                sources = []
+                if any((r.ranking_url or r.normalized_url) == url for r, _ in rankings):
+                    sources.append("exact_query_external_ranking")
+                if any(row.page == url for row in gsc_rows):
+                    sources.append("exact_query_gsc")
+                packet.owned_surfaces.append({
+                    "url": url, "relationship": "OBSERVED_QUERY_PAGE_ASSOCIATION",
+                    "query": entity.canonical_key, "corroborating_sources": sources,
+                    "ownership_basis": "URL hostname equals governed site hostname",
+                    "does_not_assert": ["INTENT_SATISFIED", "COVERAGE_SUFFICIENT", "PAGE_QUALITY"],
+                })
+
+        package_ids = [row.id for row in selected]
+        dimensions = list(self.session.scalars(select(EvidenceQualityDimension).where(
+            EvidenceQualityDimension.evidence_package_id.in_(package_ids)
+        ).order_by(EvidenceQualityDimension.evidence_package_id, EvidenceQualityDimension.dimension)))
+        packet.quality = [{
+            "evidence_package_id": str(row.evidence_package_id),
+            "dimension": row.dimension.value, "state": row.state.value,
+            "observed_value": row.observed_value, "expected_value": row.expected_value,
+            "reasons": row.reasons_json, "method": row.method_key,
+        } for row in dimensions]
+        gaps = list(self.session.scalars(select(EvidenceGap).where(
+            EvidenceGap.evidence_package_id.in_(package_ids), EvidenceGap.resolved_at.is_(None)
+        ).order_by(EvidenceGap.gap_type).limit(25)))
+        packet.evidence_gaps = [{
+            "gap_id": str(row.id), "evidence_package_id": str(row.evidence_package_id),
+            "gap_type": row.gap_type, "status": "UNRESOLVED",
+            "requested_capability": row.desired_evidence_capability,
+            "description": row.description, "urgency": row.urgency.value,
+        } for row in gaps]
+        if not any("SERP" in str(row["gap_type"]).upper() for row in packet.evidence_gaps):
+            packet.evidence_gaps.append({
+                "gap_type": "EXACT_QUERY_SERP_COMPETITOR_EVIDENCE", "status": "UNRESOLVED",
+                "description": "No governed exact-query SERP or competitor evidence was selected.",
+                "requested_capability": "exact_query_serp", "affected_domain": "organic_visibility",
+            })
+        content_rows = list(self.session.scalars(select(CompetitiveContentObservation).where(
+            CompetitiveContentObservation.tenant_id == tenant_id,
+            CompetitiveContentObservation.site_id == site_id,
+            CompetitiveContentObservation.effective_end.is_(None),
+            CompetitiveContentObservation.page_path.in_(paths),
+        ))) if paths else []
+        content_paths = {
+            row.page_path for row in content_rows if self._context_allowed(row.rights_policy_id)
+        }
+        if not content_paths:
+            packet.evidence_gaps.append({
+                "gap_type": "TARGET_PAGE_CONTENT_OBSERVATION", "status": "UNRESOLVED",
+                "description": "No governed target-page crawl/content observation was selected.",
+                "requested_capability": "owned_page_content", "affected_domain": "owned_surfaces",
+            })
+        packet.constraints.extend([
+            "entity-scoped deterministic discovery",
+            "exact query matches only; no semantic clustering",
+            "provider-derived metrics remain provider observations",
+            "owned surface association does not establish intent satisfaction",
+            "context rows are bounded and low-volume evidence remains low-volume",
+        ])
+        return packet
+
 
 class GovernedIntelligenceService:
     def __init__(self, session: Session, provider: LLMProvider) -> None:
@@ -260,6 +508,12 @@ class GovernedIntelligenceService:
         run, raw = self._invoke(task="candidate_opportunity", tenant_id=packet.tenant_id,
                                 site_id=packet.site_id, payload=payload, schema=OpportunityOutput,
                                 evidence_ids=packet.evidence_ids)
+        run.provider_metadata_json = {
+            **run.provider_metadata_json,
+            "evidence_packet_construction_mode": packet.construction_mode,
+            "analytical_entity_id": str(packet.analytical_entity_id)
+            if packet.analytical_entity_id else None,
+        }
         prior_details = list(self.session.scalars(
             select(LLMOpportunityDetail).where(LLMOpportunityDetail.llm_run_id == run.id)
         ))

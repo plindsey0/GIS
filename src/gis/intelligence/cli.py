@@ -31,6 +31,7 @@ def main() -> None:
         cmd.add_argument("--tenant", required=True)
         cmd.add_argument("--site", required=True)
         cmd.add_argument("--evidence-id", action="append", type=uuid.UUID)
+        cmd.add_argument("--entity-id", type=uuid.UUID)
         cmd.add_argument("--limit", type=int, default=10)
         if name == "demo":
             cmd.add_argument("--reviewer", required=True,
@@ -38,7 +39,9 @@ def main() -> None:
     live = sub.add_parser("live-opportunities")
     live.add_argument("--tenant", required=True)
     live.add_argument("--site", required=True)
-    live.add_argument("--evidence-id", action="append", type=uuid.UUID, required=True)
+    live_scope = live.add_mutually_exclusive_group(required=True)
+    live_scope.add_argument("--evidence-id", action="append", type=uuid.UUID)
+    live_scope.add_argument("--entity-id", type=uuid.UUID)
     live.add_argument("--limit", type=int, default=10)
     live.add_argument(
         "--confirm-paid-provider-call",
@@ -48,8 +51,14 @@ def main() -> None:
     args = parser.parse_args()
     with session_factory()() as session:
         tenant, site = _scope(session, args.tenant, args.site)
-        packet = EvidencePacketService(session).build(tenant.id, site.id,
-            evidence_ids=args.evidence_id, limit=args.limit)
+        if getattr(args, "entity_id", None) and getattr(args, "evidence_id", None):
+            raise ValueError("Choose either --entity-id or --evidence-id, not both.")
+        packet_service = EvidencePacketService(session)
+        packet = packet_service.build_for_entity(
+            tenant.id, site.id, args.entity_id, limit=args.limit
+        ) if getattr(args, "entity_id", None) else packet_service.build(
+            tenant.id, site.id, evidence_ids=args.evidence_id, limit=args.limit
+        )
         if args.command == "packet":
             print(packet.model_dump_json(indent=2))
             return

@@ -55,6 +55,17 @@ class EvidencePacket(BaseModel):
     generated_at: datetime
     evidence: list[EvidenceItem] = Field(min_length=1, max_length=50)
     constraints: list[str]
+    construction_mode: str = "explicit"
+    analytical_entity_id: Optional[uuid.UUID] = None
+    entity_context: dict[str, object] = Field(default_factory=dict)
+    market_context: dict[str, object] = Field(default_factory=dict)
+    demand: list[dict[str, object]] = Field(default_factory=list, max_length=4)
+    organic_visibility: list[dict[str, object]] = Field(default_factory=list, max_length=5)
+    search_console: list[dict[str, object]] = Field(default_factory=list, max_length=10)
+    engagement: list[dict[str, object]] = Field(default_factory=list, max_length=20)
+    owned_surfaces: list[dict[str, object]] = Field(default_factory=list, max_length=5)
+    quality: list[dict[str, object]] = Field(default_factory=list, max_length=50)
+    evidence_gaps: list[dict[str, object]] = Field(default_factory=list, max_length=25)
 
     @property
     def evidence_ids(self) -> set[uuid.UUID]:
