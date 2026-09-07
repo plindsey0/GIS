@@ -48,6 +48,13 @@ class EvidenceItem(BaseModel):
     provenance: dict[str, object]
 
 
+class EvidenceReference(BaseModel):
+    reference_id: uuid.UUID
+    reference_type: str
+    packet_section: str
+    evidence_package_ids: list[uuid.UUID] = Field(min_length=1)
+
+
 class EvidencePacket(BaseModel):
     tenant_id: uuid.UUID
     site_id: uuid.UUID
@@ -66,10 +73,23 @@ class EvidencePacket(BaseModel):
     owned_surfaces: list[dict[str, object]] = Field(default_factory=list, max_length=5)
     quality: list[dict[str, object]] = Field(default_factory=list, max_length=50)
     evidence_gaps: list[dict[str, object]] = Field(default_factory=list, max_length=25)
+    referenceable_evidence: list[EvidenceReference] = Field(default_factory=list, max_length=160)
 
     @property
     def evidence_ids(self) -> set[uuid.UUID]:
         return {item.evidence_id for item in self.evidence}
+
+    @property
+    def referenceable_evidence_ids(self) -> set[uuid.UUID]:
+        return {item.reference_id for item in self.referenceable_evidence}
+
+    def backing_evidence_ids(self, reference_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        references = {item.reference_id: item for item in self.referenceable_evidence}
+        return {
+            evidence_id
+            for reference_id in reference_ids
+            for evidence_id in references[reference_id].evidence_package_ids
+        }
 
 
 class CandidateOpportunity(BaseModel):
