@@ -11,8 +11,12 @@ from gis.db import session_factory
 from gis.intelligence.config import provider_from_environment
 from gis.intelligence.provider import ReplayLLMProvider
 from gis.intelligence.replay import replay_responses
-from gis.intelligence.service import EvidencePacketService, GovernedIntelligenceService
-from gis.models import ExperimentProposal, Site, Tenant
+from gis.intelligence.service import (
+    EvidencePacketService,
+    GovernedIntelligenceService,
+    IntelligenceValidationError,
+)
+from gis.models import ExperimentProposal, LLMRun, Recommendation, Site, Tenant
 
 
 def _scope(session: Any, tenant_slug: str, site_slug: str) -> tuple[Tenant, Site]:
@@ -23,7 +27,7 @@ def _scope(session: Any, tenant_slug: str, site_slug: str) -> tuple[Tenant, Site
     return tenant, site
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gis-intelligence")
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("packet", "demo"):
@@ -53,9 +57,66 @@ def main() -> None:
     regenerate.add_argument("--site", required=True)
     regenerate.add_argument("--proposal-id", required=True, type=uuid.UUID)
     regenerate.add_argument("--confirm-paid-provider-call", action="store_true")
-    args = parser.parse_args()
+    proposals = sub.add_parser("live-experiment-proposals")
+    proposals.add_argument("--tenant", required=True)
+    proposals.add_argument("--site", required=True)
+    proposals.add_argument("--recommendation-id", required=True, type=uuid.UUID)
+    proposals.add_argument("--confirm-paid-provider-call", action="store_true")
+    return parser
+
+
+def _rollback_preserving_failed_llm_audit(session: Any) -> None:
+    snapshot = session.info.pop("failed_llm_run_snapshot", None)
+    session.rollback()
+    if snapshot:
+        session.add(LLMRun(**snapshot))
+        session.commit()
+
+
+def _generate_live_experiment_proposal(
+    session: Any, args: argparse.Namespace, tenant: Tenant, site: Site
+) -> dict[str, object]:
+    if not args.confirm_paid_provider_call:
+        raise ValueError(
+            "live-experiment-proposals requires --confirm-paid-provider-call; no call was made"
+        )
+    recommendation = session.get(Recommendation, args.recommendation_id)
+    if (
+        not recommendation
+        or recommendation.tenant_id != tenant.id
+        or recommendation.site_id != site.id
+    ):
+        raise ValueError("recommendation not found in permitted tenant/site scope")
+    provider = provider_from_environment(allow_live=True)
+    try:
+        proposal = GovernedIntelligenceService(
+            session, provider
+        ).generate_experiment_proposal(recommendation.id)
+        session.commit()
+    except IntelligenceValidationError:
+        _rollback_preserving_failed_llm_audit(session)
+        raise
+    return {
+        "provider": provider.key,
+        "model": provider.model_identifier,
+        "proposal": {
+            "id": str(proposal.id),
+            "title": proposal.title,
+            "status": proposal.status,
+        },
+        "human_review_required": True,
+    }
+
+
+def main() -> None:
+    args = build_parser().parse_args()
     with session_factory()() as session:
         tenant, site = _scope(session, args.tenant, args.site)
+        if args.command == "live-experiment-proposals":
+            print(json.dumps(
+                _generate_live_experiment_proposal(session, args, tenant, site), indent=2
+            ))
+            return
         if args.command == "live-regenerate-proposal":
             if not args.confirm_paid_provider_call:
                 raise ValueError(
