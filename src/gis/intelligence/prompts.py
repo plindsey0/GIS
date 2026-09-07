@@ -4,8 +4,8 @@ from importlib.resources import files
 
 PROMPT_VERSIONS = {
     "candidate_opportunity": "opportunity_generation_v2",
-    "candidate_recommendation": "recommendation_generation_v1",
-    "experiment_proposal": "experiment_proposal_v1",
+    "candidate_recommendation": "recommendation_generation_v2",
+    "experiment_proposal": "experiment_proposal_v2",
 }
 
 

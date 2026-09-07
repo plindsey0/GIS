@@ -89,6 +89,13 @@ def test_governed_intelligence_workbench_is_human_gated_and_replay_only(
     assert generated.status_code == 200
     assert generated.json()["provider"] == "replay"
     recommendation_id = generated.json()["items"][0]["id"]
+    recommendation_detail = client.get(
+        f"/api/v1/recommendations/{recommendation_id}", params=query, headers=headers()
+    ).json()["data"]
+    assert recommendation_detail["provider"] == "replay"
+    assert recommendation_detail["prompt_version"] == "recommendation_generation_v2"
+    assert recommendation_detail["analytical_subject"] == "va loan trend"
+    assert recommendation_detail["evidence_reference_count"] >= 1
     assert client.post(
         f"/api/v1/recommendations/{recommendation_id}/select", params=query,
         headers=headers("REVIEW"), json={"actor": "operator", "reason": "test it"},
@@ -106,6 +113,35 @@ def test_governed_intelligence_workbench_is_human_gated_and_replay_only(
     assert proposal_detail["lineage"]["evidence_ids"] == [str(evidence.id)]
     assert proposal_detail["lineage"]["opportunity_ids"] == [str(opportunity.id)]
     assert proposal_detail["status"] == "READY_FOR_REVIEW"
+    assert proposal_detail["provider"] == "replay"
+    assert proposal_detail["prompt_version"] == "experiment_proposal_v2"
+    assert proposal_detail["evidence_reference_count"] >= 1
+    assert client.post(
+        f"/api/v1/experiment-proposals/{proposal_id}/review", params=query,
+        headers=headers("REVIEW"),
+        json={"actor": "operator", "decision": "NEEDS_REVIEW",
+              "comment": "Retain the exact query and correct metric direction."},
+    ).status_code == 200
+    regenerated = client.post(
+        f"/api/v1/experiment-proposals/{proposal_id}/replay-regenerate",
+        params=query, headers=headers("REVIEW"),
+    )
+    assert regenerated.status_code == 200
+    replacement_id = regenerated.json()["id"]
+    assert regenerated.json()["intervention_created"] is False
+    original = client.get(
+        f"/api/v1/experiment-proposals/{proposal_id}", params=query, headers=headers()
+    ).json()["data"]
+    replacement = client.get(
+        f"/api/v1/experiment-proposals/{replacement_id}", params=query, headers=headers()
+    ).json()["data"]
+    assert original["replacement_proposal_id"] == replacement_id
+    assert replacement["supersedes_proposal_id"] == proposal_id
+    assert client.post(
+        f"/api/v1/experiment-proposals/{proposal_id}/replay-regenerate",
+        params=query, headers=headers("REVIEW"),
+    ).json()["id"] == replacement_id
+    assert session.scalar(select(Intervention)) is None
 
 
 def params(tenant_id: uuid.UUID, site_id: uuid.UUID) -> dict[str, str]:

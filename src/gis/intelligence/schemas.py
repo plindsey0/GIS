@@ -144,7 +144,9 @@ class ExperimentProposalOutput(BaseModel):
     primary_metric: str = Field(min_length=1)
     secondary_metrics: list[str]
     baseline_evidence_ids: list[uuid.UUID] = Field(min_length=1)
-    expected_direction: str = Field(pattern="^(INCREASE|DECREASE|IMPROVE|MAINTAIN)$")
+    expected_direction: str = Field(
+        pattern="^(INCREASE|DECREASE|IMPROVE|MAINTAIN|NO_CHANGE|INCONCLUSIVE)$"
+    )
     expected_effect_description: str = Field(min_length=3)
     evaluation_window: str = Field(min_length=3)
     minimum_observation_guidance: str = Field(min_length=3)

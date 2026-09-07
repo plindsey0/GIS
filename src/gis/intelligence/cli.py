@@ -12,7 +12,7 @@ from gis.intelligence.config import provider_from_environment
 from gis.intelligence.provider import ReplayLLMProvider
 from gis.intelligence.replay import replay_responses
 from gis.intelligence.service import EvidencePacketService, GovernedIntelligenceService
-from gis.models import Site, Tenant
+from gis.models import ExperimentProposal, Site, Tenant
 
 
 def _scope(session: Any, tenant_slug: str, site_slug: str) -> tuple[Tenant, Site]:
@@ -48,9 +48,33 @@ def main() -> None:
         action="store_true",
         help="Required explicit authorization for this command to make one live provider call",
     )
+    regenerate = sub.add_parser("live-regenerate-proposal")
+    regenerate.add_argument("--tenant", required=True)
+    regenerate.add_argument("--site", required=True)
+    regenerate.add_argument("--proposal-id", required=True, type=uuid.UUID)
+    regenerate.add_argument("--confirm-paid-provider-call", action="store_true")
     args = parser.parse_args()
     with session_factory()() as session:
         tenant, site = _scope(session, args.tenant, args.site)
+        if args.command == "live-regenerate-proposal":
+            if not args.confirm_paid_provider_call:
+                raise ValueError(
+                    "live-regenerate-proposal requires --confirm-paid-provider-call; no call was made"
+                )
+            original = session.get(ExperimentProposal, args.proposal_id)
+            if not original or original.tenant_id != tenant.id or original.site_id != site.id:
+                raise ValueError("proposal not found in permitted tenant/site scope")
+            provider = provider_from_environment(allow_live=True)
+            replacement = GovernedIntelligenceService(
+                session, provider
+            ).generate_experiment_proposal(
+                original.recommendation_id, supersedes_proposal_id=original.id
+            )
+            session.commit()
+            print(json.dumps({"id": str(replacement.id), "provider": provider.key,
+                              "supersedes_proposal_id": str(original.id),
+                              "human_review_required": True}, indent=2))
+            return
         if getattr(args, "entity_id", None) and getattr(args, "evidence_id", None):
             raise ValueError("Choose either --entity-id or --evidence-id, not both.")
         packet_service = EvidencePacketService(session)

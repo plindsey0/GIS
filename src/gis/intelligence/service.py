@@ -545,6 +545,9 @@ class GovernedIntelligenceService:
             )
             self.session.add(run)
             self.session.flush()
+            self.session.info["failed_llm_run_snapshot"] = {
+                column.key: getattr(run, column.key) for column in LLMRun.__table__.columns
+            }
             raise IntelligenceValidationError(f"LLM response failed schema validation: {exc}") from exc
         run = LLMRun(
             tenant_id=tenant_id, site_id=site_id, task_type=task,
@@ -566,6 +569,9 @@ class GovernedIntelligenceService:
         run.validation_status = "INVALID"
         run.validation_errors_json = errors
         self.session.flush()
+        self.session.info["failed_llm_run_snapshot"] = {
+            column.key: getattr(run, column.key) for column in LLMRun.__table__.columns
+        }
         raise IntelligenceValidationError("; ".join(errors))
 
     def generate_opportunities(self, packet: EvidencePacket) -> list[Opportunity]:
@@ -712,6 +718,12 @@ class GovernedIntelligenceService:
             OpportunityEvaluation, OpportunityEvaluation.id == OpportunityEvidence.opportunity_evaluation_id
         ).where(OpportunityEvaluation.opportunity_id.in_(opportunity_ids))))
 
+    def _governed_context(self, opportunity: Opportunity) -> EvidencePacket:
+        return self.packets.build_for_entity(
+            opportunity.tenant_id, opportunity.site_id, opportunity.analytical_entity_id,
+            generated_at=opportunity.detected_at,
+        )
+
     def generate_recommendations(self, opportunity_ids: list[uuid.UUID]) -> list[Recommendation]:
         selected = set(opportunity_ids)
         if not selected:
@@ -726,11 +738,24 @@ class GovernedIntelligenceService:
         assert primary
         if any(item and (item.tenant_id != primary.tenant_id or item.site_id != primary.site_id) for item in opportunities):
             raise IntelligenceValidationError("Opportunities must share one permitted tenant/site context.")
-        evidence_ids = self._opportunity_evidence(selected)
+        packet = self._governed_context(primary)
+        evidence_ids = packet.referenceable_evidence_ids
         payload = {"accepted_opportunities": [
             {"id": str(item.id), "title": item.title, "type": item.opportunity_type,
-             "signal": item.condition_description} for item in opportunities if item
-        ], "allowed_evidence_ids": sorted(map(str, evidence_ids))}
+             "signal": item.condition_description,
+             "semantic_detail": (
+                 (lambda d: {"summary": d.summary, "reasoning": d.reasoning,
+                              "expected_value": d.expected_value,
+                              "suggested_action": d.suggested_action,
+                              "assumptions": d.assumptions_json} if d else {})(
+                     self.session.scalar(select(LLMOpportunityDetail).where(
+                         LLMOpportunityDetail.opportunity_id == item.id)))),
+             "limitations": item.limitations_json,
+             "human_reviews": [{"decision": r.decision, "comment": r.comment}
+                 for r in self.session.scalars(select(OpportunityReview).where(
+                     OpportunityReview.opportunity_id == item.id).order_by(OpportunityReview.reviewed_at))]}
+            for item in opportunities if item
+        ], "governed_evidence_packet": packet.model_dump(mode="json")}
         run, raw = self._invoke(task="candidate_recommendation", tenant_id=primary.tenant_id,
                                 site_id=primary.site_id, payload=payload, schema=RecommendationOutput,
                                 evidence_ids=evidence_ids, opportunity_ids=selected)
@@ -746,6 +771,16 @@ class GovernedIntelligenceService:
                 errors.append("Recommendation referenced an opportunity that was not supplied or accepted.")
             if set(candidate.evidence_ids) - evidence_ids:
                 errors.append("Recommendation referenced evidence outside opportunity lineage.")
+            subject = str(packet.entity_context.get("canonical_key", ""))
+            rendered = " ".join([candidate.title, candidate.summary, candidate.recommended_action,
+                                 candidate.rationale]).lower()
+            if self.provider.external and subject and subject.lower() not in rendered:
+                errors.append("Recommendation omitted the exact governed analytical subject.")
+            if any(claim in rendered for claim in (
+                "intent is satisfied", "satisfies search intent", "page quality is good",
+                "page quality is poor", "page content shows", "competitors are",
+            )):
+                errors.append("Recommendation promoted an unsupported association or missing evidence.")
         if errors:
             self._invalidate(run, errors)
         policy = self.session.scalar(select(RecommendationPolicy).where(
@@ -775,6 +810,8 @@ class GovernedIntelligenceService:
                 market_definition_version=primary.market_definition_version,
                 status=RecommendationStatus.READY_FOR_REVIEW, summary=candidate.summary,
                 assumptions_json=candidate.assumptions, limitations_json=candidate.risks,
+                evidence_references_json=[r.model_dump(mode="json") for r in packet.referenceable_evidence
+                    if r.reference_id in set(candidate.evidence_ids)],
                 identity_hash=_digest({"run": run.id, "candidate": candidate.model_dump(mode="json")}))
             self.session.add(recommendation)
             self.session.flush()
@@ -787,7 +824,7 @@ class GovernedIntelligenceService:
                 success_signals_json=candidate.success_signals))
             for oid in candidate.opportunity_ids:
                 self.session.add(RecommendationOpportunity(recommendation_id=recommendation.id, opportunity_id=oid))
-            for eid in candidate.evidence_ids:
+            for eid in sorted(packet.backing_evidence_ids(candidate.evidence_ids), key=str):
                 self.session.add(RecommendationEvidence(recommendation_id=recommendation.id,
                                                          evidence_package_id=eid, role="INHERITED_LINEAGE"))
             created.append(recommendation)
@@ -808,15 +845,66 @@ class GovernedIntelligenceService:
         row.status = RecommendationStatus.ACCEPTED
         return row
 
-    def generate_experiment_proposal(self, recommendation_id: uuid.UUID) -> ExperimentProposal:
+    def generate_experiment_proposal(self, recommendation_id: uuid.UUID,
+                                     supersedes_proposal_id: uuid.UUID | None = None) -> ExperimentProposal:
         recommendation = self.session.get(Recommendation, recommendation_id)
         if not recommendation or recommendation.status is not RecommendationStatus.ACCEPTED:
             raise IntelligenceValidationError("Experiment proposal requires a human-selected recommendation.")
-        evidence_ids = set(self.session.scalars(select(RecommendationEvidence.evidence_package_id).where(
-            RecommendationEvidence.recommendation_id == recommendation_id)))
+        opportunity = self.session.get(Opportunity, recommendation.opportunity_id)
+        assert opportunity
+        packet = self._governed_context(opportunity)
+        evidence_ids = {uuid.UUID(str(item["reference_id"]))
+                        for item in recommendation.evidence_references_json} or packet.evidence_ids
+        detail = self.session.scalar(select(LLMRecommendationDetail).where(
+            LLMRecommendationDetail.recommendation_id == recommendation.id))
+        selection_reviews = list(self.session.scalars(select(RecommendationReview).where(
+            RecommendationReview.recommendation_id == recommendation.id).order_by(RecommendationReview.reviewed_at)))
+        supporting_ids = list(self.session.scalars(select(RecommendationOpportunity.opportunity_id).where(
+            RecommendationOpportunity.recommendation_id == recommendation.id)))
+        supporting_context = []
+        for opportunity_id in supporting_ids:
+            supporting = self.session.get(Opportunity, opportunity_id)
+            semantic = self.session.scalar(select(LLMOpportunityDetail).where(
+                LLMOpportunityDetail.opportunity_id == opportunity_id))
+            if supporting:
+                supporting_context.append({
+                    "id": str(supporting.id), "title": supporting.title,
+                    "signal": supporting.condition_description,
+                    "limitations": supporting.limitations_json,
+                    "semantic_detail": {"summary": semantic.summary, "reasoning": semantic.reasoning,
+                        "expected_value": semantic.expected_value,
+                        "suggested_action": semantic.suggested_action,
+                        "assumptions": semantic.assumptions_json} if semantic else {},
+                    "human_acceptance_constraints": [review.comment for review in self.session.scalars(
+                        select(OpportunityReview).where(
+                            OpportunityReview.opportunity_id == supporting.id,
+                            OpportunityReview.decision == "ACCEPTED").order_by(
+                                OpportunityReview.reviewed_at)) if review.comment],
+                })
+        correction = None
+        if supersedes_proposal_id:
+            previous = self.session.get(ExperimentProposal, supersedes_proposal_id)
+            if not previous or previous.recommendation_id != recommendation.id or previous.status != "NEEDS_REVIEW":
+                raise IntelligenceValidationError("Regeneration requires a NEEDS_REVIEW proposal for this recommendation.")
+            correction_review = self.session.scalar(select(ExperimentProposalReview).where(
+                ExperimentProposalReview.experiment_proposal_id == previous.id,
+                ExperimentProposalReview.decision == "NEEDS_REVIEW").order_by(
+                    ExperimentProposalReview.reviewed_at.desc()))
+            correction = correction_review.comment if correction_review else None
         payload = {"selected_recommendation": {
             "id": str(recommendation.id), "summary": recommendation.summary,
-            "evidence_ids": sorted(map(str, evidence_ids))}}
+            "detail": {"title": detail.title, "recommended_action": detail.recommended_action,
+                "rationale": detail.rationale, "expected_impact": detail.expected_impact,
+                "confidence": detail.confidence, "priority": detail.priority,
+                "effort": detail.estimated_effort, "risks": detail.risks_json,
+                "dependencies": detail.dependencies_json, "success_signals": detail.success_signals_json}
+                if detail else {},
+            "assumptions": recommendation.assumptions_json,
+            "limitations": recommendation.limitations_json,
+            "human_selection_constraints": [r.comment for r in selection_reviews if r.comment],
+            "supporting_accepted_opportunities": supporting_context,
+            "regeneration_correction": correction,
+            "governed_evidence_packet": packet.model_dump(mode="json")}}
         run, raw = self._invoke(task="experiment_proposal", tenant_id=recommendation.tenant_id,
                                 site_id=recommendation.site_id, payload=payload,
                                 schema=ExperimentProposalOutput, evidence_ids=evidence_ids,
@@ -832,6 +920,37 @@ class GovernedIntelligenceService:
             errors.append("Experiment proposal referenced a recommendation that was not selected.")
         if set(output.baseline_evidence_ids) - evidence_ids:
             errors.append("Experiment proposal referenced evidence outside recommendation lineage.")
+        query = str(packet.entity_context.get("canonical_key", ""))
+        candidate_urls = {str(s["url"]) for s in packet.owned_surfaces}
+        rendered = " ".join([output.title, output.objective, output.hypothesis,
+                             output.target_surface, output.implementation_notes]).lower()
+        if self.provider.external and query and query.lower() not in rendered:
+            errors.append("Experiment proposal omitted the exact governed analytical subject.")
+        if self.provider.external and candidate_urls and output.target_url_or_resource not in candidate_urls:
+            errors.append("Experiment proposal omitted or contradicted the governed candidate URL.")
+        positive = any(word in (output.hypothesis + output.expected_effect_description).lower()
+                       for word in ("increase", "improve", "growth", "more clicks"))
+        if positive and output.expected_direction == "DECREASE":
+            errors.append("Expected direction contradicts the improvement hypothesis/effect.")
+        reduction_metric = any(word in output.primary_metric.lower() for word in (
+            "bounce", "error", "latency", "abandon", "failure", "load time"
+        ))
+        if reduction_metric and output.expected_direction == "INCREASE":
+            errors.append("Expected direction contradicts a desired-reduction primary metric.")
+        semantic_text = " ".join([
+            output.hypothesis, output.expected_effect_description,
+            output.minimum_observation_guidance, output.decision_rule,
+        ]).lower()
+        if any(term in semantic_text for term in (
+            "guaranteed lift", "guarantees", "statistically significant",
+            "proven conversion", "causes conversions",
+        )):
+            errors.append("Proposal asserts unsupported causal or statistical certainty.")
+        if any(claim in rendered for claim in (
+            "intent is satisfied", "satisfies search intent", "page quality is good",
+            "page quality is poor", "page content shows", "competitors are",
+        )):
+            errors.append("Proposal promoted an unsupported association or missing evidence.")
         if errors:
             self._invalidate(run, errors)
         fingerprint = _digest({"run": run.id, "proposal": output.model_dump(mode="json")})
@@ -851,12 +970,18 @@ class GovernedIntelligenceService:
             dependencies_json=output.dependencies, risks_json=output.risks,
             rollback_plan=output.rollback_plan, decision_rule=output.decision_rule,
             implementation_notes=output.implementation_notes, request_fingerprint=fingerprint)
+        proposal.evidence_references_json = [item for item in recommendation.evidence_references_json
+                                             if uuid.UUID(str(item["reference_id"])) in set(output.baseline_evidence_ids)]
+        proposal.supersedes_proposal_id = supersedes_proposal_id
         self.session.add(proposal)
         self.session.flush()
         for eid in output.baseline_evidence_ids:
             self.session.add(ExperimentProposalEvidence(experiment_proposal_id=proposal.id,
                                                          evidence_package_id=eid))
         run.validation_status = "VALID"
+        if supersedes_proposal_id:
+            previous = self.session.get_one(ExperimentProposal, supersedes_proposal_id)
+            previous.replacement_proposal_id = proposal.id
         return proposal
 
     def review_experiment_proposal(self, proposal_id: uuid.UUID, decision: str, reviewer: str,
