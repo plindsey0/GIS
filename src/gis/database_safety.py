@@ -16,6 +16,7 @@ from sqlalchemy.engine import URL, make_url
 LOGGER = logging.getLogger(__name__)
 DISPOSABLE_PREFIX = "gis_migration_test_"
 DENIED_DATABASES = {"gis", "postgres", "template0", "template1"}
+LOCAL_TEST_HOSTS = {"localhost", "127.0.0.1", "::1", "db", "local-socket"}
 REFUSAL = "REFUSING DESTRUCTIVE MIGRATION TEST AGAINST NON-DISPOSABLE DATABASE"
 
 
@@ -69,6 +70,8 @@ def assert_disposable_database_for_destructive_test(
         reasons.append("database is persistent or denied")
     if identity.database != expected_name:
         reasons.append("database is not owned by this test run")
+    if identity.host not in LOCAL_TEST_HOSTS:
+        reasons.append("database host is not an approved local test host")
     if authorization_token != expected_token:
         reasons.append("internal destructive-test authorization is invalid")
     if reasons:
