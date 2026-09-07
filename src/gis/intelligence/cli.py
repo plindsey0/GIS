@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import select
 
 from gis.db import session_factory
+from gis.intelligence.config import provider_from_environment
 from gis.intelligence.provider import ReplayLLMProvider
 from gis.intelligence.service import EvidencePacketService, GovernedIntelligenceService
 from gis.models import Site, Tenant
@@ -90,6 +91,16 @@ def main() -> None:
         if name == "demo":
             cmd.add_argument("--reviewer", required=True,
                              help="Human actor accepting/selecting the fixture-provider artifacts")
+    live = sub.add_parser("live-opportunities")
+    live.add_argument("--tenant", required=True)
+    live.add_argument("--site", required=True)
+    live.add_argument("--evidence-id", action="append", type=uuid.UUID, required=True)
+    live.add_argument("--limit", type=int, default=10)
+    live.add_argument(
+        "--confirm-paid-provider-call",
+        action="store_true",
+        help="Required explicit authorization for this command to make one live provider call",
+    )
     args = parser.parse_args()
     with session_factory()() as session:
         tenant, site = _scope(session, args.tenant, args.site)
@@ -97,6 +108,26 @@ def main() -> None:
             evidence_ids=args.evidence_id, limit=args.limit)
         if args.command == "packet":
             print(packet.model_dump_json(indent=2))
+            return
+        if args.command == "live-opportunities":
+            if not args.confirm_paid_provider_call:
+                raise ValueError(
+                    "live-opportunities requires --confirm-paid-provider-call; no call was made"
+                )
+            provider = provider_from_environment(allow_live=True)
+            opportunities = GovernedIntelligenceService(session, provider).generate_opportunities(
+                packet
+            )
+            session.commit()
+            print(json.dumps({
+                "provider": provider.key,
+                "model": provider.model_identifier,
+                "candidate_opportunities": [
+                    {"id": str(item.id), "title": item.title, "status": item.status.value}
+                    for item in opportunities
+                ],
+                "human_review_required": True,
+            }, indent=2))
             return
         evidence_id = packet.evidence[0].evidence_id
         subject = packet.evidence[0].subject

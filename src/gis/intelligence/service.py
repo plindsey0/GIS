@@ -198,7 +198,13 @@ class GovernedIntelligenceService:
         opportunity_ids: set[uuid.UUID] = set(),
         recommendation_ids: set[uuid.UUID] = set(),
     ) -> tuple[LLMRun, BaseModel]:
-        fingerprint = _digest({"task": task, "payload": payload, "prompt": PROMPT_VERSIONS[task]})
+        fingerprint = _digest({
+            "task": task,
+            "payload": payload,
+            "prompt": PROMPT_VERSIONS[task],
+            "provider": self.provider.key,
+            "model": self.provider.model_identifier,
+        })
         existing = self.session.scalar(select(LLMRun).where(LLMRun.request_fingerprint == fingerprint))
         if existing and existing.validation_status == "VALID":
             return existing, schema.model_validate(existing.response_snapshot_json)
