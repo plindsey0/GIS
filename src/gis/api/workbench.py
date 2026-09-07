@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from gis.api.errors import ApiError
 from gis.api.schemas import OpportunitySummary, Page, ResourceDetail
+from gis.intelligence.service import EvidencePacketService, IntelligenceValidationError
 from gis.models import (
     AnalyticalEntity,
     CollectionPlanItem,
@@ -315,9 +316,18 @@ class WorkbenchQueries:
                 rendered_items.append(rendered)
             evidence_cards.append({**row_data(package), "items": rendered_items})
         latest = reviews[-1] if reviews else None
+        evidence_context: dict[str, Any] | None = None
+        if opportunity.analytical_entity_id:
+            try:
+                evidence_context = EvidencePacketService(self.session).build_for_entity(
+                    opportunity.tenant_id, opportunity.site_id, opportunity.analytical_entity_id
+                ).model_dump(mode="json")
+            except IntelligenceValidationError:
+                evidence_context = None
         return {
             "governed_intelligence": True,
             "authoritative_evidence": evidence_cards,
+            "evidence_context": evidence_context,
             "model_inference": row_data(inference),
             "human_decision": row_data(latest) if latest else None,
             "decision_history": [row_data(item) for item in reviews],
