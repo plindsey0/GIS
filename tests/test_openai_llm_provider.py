@@ -133,14 +133,18 @@ def test_full_lineage_is_identical_through_mocked_openai_provider(session: Sessi
     service = GovernedIntelligenceService(session, provider)
     opportunity = service.generate_opportunities(packet)[0]
     service.review_opportunity(opportunity.id, "ACCEPTED", "human")
-    client.responses.outputs.append(
-        responses(evidence.id, opportunity_id=opportunity.id)["candidate_recommendation"]
-    )
+    recommendation_output = responses(
+        evidence.id, opportunity_id=opportunity.id
+    )["candidate_recommendation"]
+    recommendation_output["recommendations"][0]["recommended_action"] += " for va loan trend"  # type: ignore[index]
+    client.responses.outputs.append(recommendation_output)
     recommendation = service.generate_recommendations([opportunity.id])[0]
     service.select_recommendation(recommendation.id, "human")
-    client.responses.outputs.append(
-        responses(evidence.id, opportunity.id, recommendation.id)["experiment_proposal"]
-    )
+    proposal_output = responses(
+        evidence.id, opportunity.id, recommendation.id
+    )["experiment_proposal"]
+    proposal_output["implementation_notes"] += " Target query: va loan trend."  # type: ignore[index]
+    client.responses.outputs.append(proposal_output)
     proposal = service.generate_experiment_proposal(recommendation.id)
     lineage = service.lineage(proposal.id)
     assert lineage["recommendation_id"] == recommendation.id

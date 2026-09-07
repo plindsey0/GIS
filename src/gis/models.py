@@ -4972,6 +4972,7 @@ class Recommendation(Base, TimestampMixin):
     assumptions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_references_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
 
 
 class RecommendationCandidate(Base, TimestampMixin):
@@ -5211,6 +5212,13 @@ class ExperimentProposal(Base, TimestampMixin):
     decision_rule: Mapped[str] = mapped_column(Text, nullable=False)
     implementation_notes: Mapped[str] = mapped_column(Text, nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_references_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    supersedes_proposal_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.experiment_proposal.id")
+    )
+    replacement_proposal_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.experiment_proposal.id")
+    )
 
 
 class ExperimentProposalEvidence(Base):

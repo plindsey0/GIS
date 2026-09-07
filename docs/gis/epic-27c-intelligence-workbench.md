@@ -58,3 +58,9 @@ npm run build
 ```
 
 No migration is required for Epic 27C.
+
+The later governed-intelligence handoff follow-up enriches proposal list/detail read models with
+provider, model, prompt version, creation time, typed evidence-reference count, and proposal
+supersession state. `NEEDS_REVIEW` regeneration is an explicit replay-only browser operation and
+preserves the original artifact and review history. Technical UUID/run payloads remain available
+for audit while the parent chain and generation metadata are exposed directly.

@@ -7,7 +7,7 @@ import {OverviewPage} from "./overview";
 import {SystemPage} from "./system";
 import {GoalCreate, GoalMap, GoalsExplorer} from "./goals";
 import {ProviderDetail, ProvidersPage} from "./providers";
-import {InterventionInbox, OpportunityDecisionDetail, RecommendationDecisionDetail} from "./intelligence-workbench";
+import {InterventionInbox, OpportunityDecisionDetail, ProposalInbox, RecommendationDecisionDetail} from "./intelligence-workbench";
 
 vi.mock("next/navigation", () => ({useRouter: () => ({push: vi.fn()})}));
 
@@ -79,6 +79,7 @@ describe("GIS Workbench", () => {
     vi.stubGlobal("fetch", vi.fn(() => answer({id:"o1",resource_type:"opportunity",data:{id:"o1",title:"Evaluate focused coverage",limitations_json:["Lift unknown"],governed_intelligence:true,authoritative_evidence:[{id:"e1",condition_key:"query-demand",classification:"SUPPORTED",sufficiency:"SUFFICIENT",period_start:"2026-08-01",period_end:"2026-08-31",independent_source_count:1,items:[]}],model_inference:{summary:"A bounded interpretation",problem_or_signal:"Demand",reasoning:"Evidence supports a test",expected_value:"Unknown magnitude",confidence:"0.64",suggested_action:"Inventory first",assumptions_json:["Editable"]},human_decision:null,decision_history:[],recommendations:[],actions:{can_generate_recommendation:false,generation_provider:"replay",paid_provider_calls:0},llm_run:{provider_key:"replay"}}})));
     render(<OpportunityDecisionDetail id="o1"/>);
     expect(await screen.findByText("Authoritative GIS data")).toBeInTheDocument();
+    expect(screen.getByText("Generation trace")).toBeInTheDocument();
     expect(screen.getAllByText(/Model inference/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button",{name:"Accept for recommendation"})).toBeDisabled();
     expect(screen.getByText(/Live providers are never available/)).toBeInTheDocument();
@@ -95,6 +96,12 @@ describe("GIS Workbench", () => {
     render(<InterventionInbox/>);
     expect(screen.getByText(/No intervention was created by Epic 27 intelligence/)).toBeInTheDocument();
     expect(screen.getByText(/does not automatically become an intervention/)).toBeInTheDocument();
+  });
+
+  it("offers replay regeneration only for a needs-review proposal", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => answer({items:[{id:"p1",title:"Revise test",objective:"Correct direction",status:"NEEDS_REVIEW",provider:"replay",model:"fixture-v1",prompt_version:"experiment_proposal_v2",created_at:"2026-09-07",actions:{can_regenerate_replay:true}}],page:1,limit:25,total:1})));
+    render(<ProposalInbox/>);
+    expect(await screen.findByRole("button",{name:"Regenerate with Replay (free)"})).toBeInTheDocument();
   });
 
   it("renders gate-aware sufficiency without authorizing collection", async () => {

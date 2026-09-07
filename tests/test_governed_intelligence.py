@@ -113,15 +113,19 @@ def test_human_gates_and_complete_lineage(session: Session) -> None:
     service.review_opportunity(opportunity.id, "REJECTED", "human")
     with pytest.raises(IntelligenceValidationError, match="human-accepted"):
         service.generate_recommendations([opportunity.id])
-    service.review_opportunity(opportunity.id, "ACCEPTED", "human")
+    service.review_opportunity(opportunity.id, "ACCEPTED", "human", "Preserve the exact query")
     provider.responses.update(responses(evidence.id, opportunity_id=opportunity.id))
     recommendation = service.generate_recommendations([opportunity.id])[0]
+    assert "Preserve the exact query" in provider.calls[-1]["user_prompt"]
+    assert "governed_evidence_packet" in provider.calls[-1]["user_prompt"]
     assert service.generate_recommendations([opportunity.id])[0].id == recommendation.id
     with pytest.raises(IntelligenceValidationError, match="human-selected"):
         service.generate_experiment_proposal(recommendation.id)
-    service.select_recommendation(recommendation.id, "human")
+    service.select_recommendation(recommendation.id, "human", "Verify target content first")
     provider.responses.update(responses(evidence.id, opportunity.id, recommendation.id))
     proposal = service.generate_experiment_proposal(recommendation.id)
+    assert "Verify target content first" in provider.calls[-1]["user_prompt"]
+    assert "supporting_accepted_opportunities" in provider.calls[-1]["user_prompt"]
     assert service.generate_experiment_proposal(recommendation.id).id == proposal.id
     lineage = service.lineage(proposal.id)
     assert lineage["opportunity_ids"] == [opportunity.id]
@@ -144,6 +148,23 @@ def test_schema_and_reference_failures_do_not_persist_downstream_artifacts(sessi
     assert session.scalar(select(func.count()).select_from(Recommendation)) == 0
 
 
+def test_contradictory_proposal_direction_is_rejected(session: Session) -> None:
+    _, _, evidence, packet, provider, service = setup(session)
+    opportunity = service.generate_opportunities(packet)[0]
+    service.review_opportunity(opportunity.id, "ACCEPTED", "human")
+    provider.responses.update(responses(evidence.id, opportunity_id=opportunity.id))
+    recommendation = service.generate_recommendations([opportunity.id])[0]
+    service.select_recommendation(recommendation.id, "human")
+    invalid = responses(evidence.id, opportunity.id, recommendation.id)
+    invalid["experiment_proposal"]["expected_direction"] = "DECREASE"  # type: ignore[index]
+    provider.responses.update(invalid)
+    with pytest.raises(IntelligenceValidationError, match="contradicts"):
+        service.generate_experiment_proposal(recommendation.id)
+    assert session.scalar(select(func.count()).select_from(ExperimentProposal)) == 0
+    failed = session.scalar(select(LLMRun).where(LLMRun.task_type == "experiment_proposal"))
+    assert failed and failed.validation_status == "INVALID"
+
+
 def test_migration_upgrades_pre_epic_27_schema_without_rebuilding_existing_tables(
     migration_database_url: str,
 ) -> None:
@@ -153,6 +174,9 @@ def test_migration_upgrades_pre_epic_27_schema_without_rebuilding_existing_table
     command.stamp(config, "20260905_0033", purge=True)
     engine = create_engine(migration_database_url)
     with engine.begin() as connection:
+        connection.exec_driver_sql(
+            'ALTER TABLE gis_core."recommendation" DROP COLUMN IF EXISTS evidence_references_json'
+        )
         for table in (
             "experiment_proposal_review", "experiment_proposal_evidence", "experiment_proposal",
             "recommendation_opportunity", "llm_recommendation_detail", "opportunity_review",

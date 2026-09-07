@@ -73,6 +73,7 @@ from gis.models import (
     InterventionLifecycleEvent,
     InterventionOutcome,
     InterventionStatus,
+    LLMRun,
     MarketDefinition,
     MeasurementContract,
     MetricDefinition,
@@ -206,6 +207,14 @@ class IntelligenceDecisionInput(BaseModel):
 def _replay_service(session: Session, responses: dict[str, dict[str, Any]]) -> GovernedIntelligenceService:
     """Construct the only provider permitted from browser actions: deterministic replay."""
     return GovernedIntelligenceService(session, ReplayLLMProvider(responses))
+
+
+def _rollback_preserving_failed_llm_audit(session: Session) -> None:
+    snapshot = session.info.pop("failed_llm_run_snapshot", None)
+    session.rollback()
+    if snapshot:
+        session.add(LLMRun(**snapshot))
+        session.commit()
 
 
 @router.post(
@@ -1404,7 +1413,7 @@ def generate_replay_recommendations(resource_id: uuid.UUID, tenant_id: uuid.UUID
         return {"items": [row_data(row) for row in rows], "provider": "replay",
                 "paid_provider_calls": 0}
     except IntelligenceValidationError as error:
-        session.rollback()
+        _rollback_preserving_failed_llm_audit(session)
         raise ApiError(422, "INTELLIGENCE_GENERATION_INVALID", str(error)) from error
 
 
@@ -1560,7 +1569,7 @@ def generate_replay_experiment_proposal(resource_id: uuid.UUID, tenant_id: uuid.
         return {"id": proposal.id, "status": proposal.status, "provider": "replay",
                 "paid_provider_calls": 0, "intervention_created": False}
     except IntelligenceValidationError as error:
-        session.rollback()
+        _rollback_preserving_failed_llm_audit(session)
         raise ApiError(422, "EXPERIMENT_PROPOSAL_INVALID", str(error)) from error
 
 
@@ -1593,6 +1602,29 @@ def review_experiment_proposal(resource_id: uuid.UUID, tenant_id: uuid.UUID, sit
     except IntelligenceValidationError as error:
         session.rollback()
         raise ApiError(422, "EXPERIMENT_PROPOSAL_REVIEW_INVALID", str(error)) from error
+
+
+@router.post("/experiment-proposals/{resource_id}/replay-regenerate",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def regenerate_replay_experiment_proposal(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    original = scoped(ExperimentProposal, resource_id, tenant_id, site_id, session)
+    evidence_id = session.scalar(select(RecommendationEvidence.evidence_package_id).where(
+        RecommendationEvidence.recommendation_id == original.recommendation_id))
+    if not evidence_id:
+        raise ApiError(422, "INTELLIGENCE_LINEAGE_MISSING", "Proposal has no governed evidence lineage.")
+    try:
+        service = _replay_service(session, replay_responses(
+            evidence_id, recommendation_id=original.recommendation_id, target=original.target_surface))
+        replacement = service.generate_experiment_proposal(
+            original.recommendation_id, supersedes_proposal_id=original.id)
+        session.commit()
+        return {"id": replacement.id, "supersedes_proposal_id": original.id,
+                "provider": "replay", "paid_provider_calls": 0,
+                "intervention_created": False}
+    except IntelligenceValidationError as error:
+        _rollback_preserving_failed_llm_audit(session)
+        raise ApiError(422, "EXPERIMENT_PROPOSAL_REGENERATION_INVALID", str(error)) from error
 
 
 def review_recommendation(

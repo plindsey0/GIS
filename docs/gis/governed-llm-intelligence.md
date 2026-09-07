@@ -57,12 +57,28 @@ experiment_proposal
 
 ## Human gates
 
+Downstream generation reconstructs the bounded Epic 27D entity packet and combines it with the
+persisted model detail and human review comments that authorized the preceding transition.
+Recommendation and proposal records retain typed reference-level lineage in addition to normalized
+evidence-package foreign keys. Recommendation and proposal prompts are independently versioned at
+v2 so corrected context cannot reuse older cached runs.
+
+Before an artifact becomes reviewable, deterministic semantic checks reject upstream-ID or
+reference violations, omitted/contradicted governed query or candidate URL in live output, and
+contradictory improvement hypotheses paired with `DECREASE`. Missing content/SERP evidence and
+low-volume constraints remain explicit context; observed association never becomes verified intent
+satisfaction.
+
 - LLM opportunities begin as `WATCHING` semantic candidates. Only the latest explicit
   `opportunity_review=ACCEPTED` decision permits recommendation generation.
 - Recommendations begin `READY_FOR_REVIEW`. An explicit human selection writes the existing
   `recommendation_review` record and changes status to `ACCEPTED`.
 - Experiment proposals begin `READY_FOR_REVIEW`; only a human can mark them `APPROVED`,
   `REJECTED`, or `NEEDS_REVIEW`.
+- A `NEEDS_REVIEW` proposal can be regenerated only by an explicit operator action. The immutable
+  original and reviews remain, correction comments enter governed context, and reciprocal
+  supersession/replacement links identify the chain. Replay regeneration is free; neither review
+  nor regeneration creates an intervention.
 
 The replay provider cannot self-approve any artifact. No experiment is executed and VAHomeMath
 is not modified.
@@ -133,6 +149,16 @@ respective human gates; it does not create a parallel workflow.
 The repository does not prescribe a model name because availability and authorization are
 account-specific. Consult the official OpenAI model catalog and select a model supporting
 Structured Outputs before an authorized live run.
+
+Live proposal regeneration is CLI-only and requires the same independent configuration and paid
+execution confirmation. It is permitted only after a `NEEDS_REVIEW` decision:
+
+```bash
+LLM_PROVIDER=openai LLM_MODEL=gpt-5.6-sol OPENAI_API_KEY="$OPENAI_API_KEY" \
+GIS_PAID_EXECUTION_DISABLED=0 gis-intelligence live-regenerate-proposal \
+  --tenant vahomemath --site vahomemath --proposal-id UUID \
+  --confirm-paid-provider-call
+```
 
 ## Database safety
 

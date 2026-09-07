@@ -326,6 +326,13 @@ class WorkbenchQueries:
                 evidence_context = None
         return {
             "governed_intelligence": True,
+            "provider": run.provider_key if run else None,
+            "model": run.model_identifier if run else None,
+            "prompt_version": run.prompt_version if run else None,
+            "analytical_subject": (evidence_context or {}).get("entity_context", {}).get(
+                "canonical_key"
+            ),
+            "downstream_recommendation_count": len(recommendations),
             "authoritative_evidence": evidence_cards,
             "evidence_context": evidence_context,
             "model_inference": row_data(inference),
@@ -360,6 +367,16 @@ class WorkbenchQueries:
         opportunity_rows = [self.session.get(Opportunity, item) for item in opportunities]
         evidence_rows = [self.session.get(EvidencePackage, item) for item in evidence]
         run = self.session.get(LLMRun, detail.llm_run_id)
+        entity = self.session.get(AnalyticalEntity, recommendation.analytical_entity_id)
+        candidate_urls: list[str] = []
+        if entity:
+            try:
+                context = EvidencePacketService(self.session).build_for_entity(
+                    recommendation.tenant_id, recommendation.site_id, entity.id,
+                    generated_at=recommendation.created_at)
+                candidate_urls = [str(item["url"]) for item in context.owned_surfaces]
+            except IntelligenceValidationError:
+                pass
         return {**row_data(recommendation), "governed_intelligence": True,
             "model_recommendation": row_data(detail),
             "human_decisions": [row_data(item) for item in reviews],
@@ -373,6 +390,12 @@ class WorkbenchQueries:
                                      "period_end": item.period_end}
                                     for item in evidence_rows if item],
             "experiment_proposals": [row_data(item) for item in proposals],
+            "provider": run.provider_key if run else None,
+            "model": run.model_identifier if run else None,
+            "prompt_version": run.prompt_version if run else None,
+            "analytical_subject": entity.canonical_key if entity else None,
+            "candidate_urls": candidate_urls,
+            "evidence_reference_count": len(recommendation.evidence_references_json),
             "actions": {"can_select": recommendation.status.value == "READY_FOR_REVIEW",
                         "can_generate_proposal": recommendation.status.value == "ACCEPTED" and not proposals,
                         "generation_provider": "replay", "paid_provider_calls": 0},
@@ -394,7 +417,10 @@ class WorkbenchQueries:
 
     def experiment_proposals(self, tenant_id: uuid.UUID, site_id: uuid.UUID,
                              page: int, limit: int) -> dict[str, Any]:
-        return self.simple_page(ExperimentProposal, tenant_id, site_id, page, limit)
+        page_data = self.simple_page(ExperimentProposal, tenant_id, site_id, page, limit)
+        page_data["items"] = [self.experiment_proposal(self.session.get_one(
+            ExperimentProposal, item["id"])) for item in page_data["items"]]
+        return page_data
 
     def experiment_proposal(self, proposal: ExperimentProposal) -> dict[str, Any]:
         reviews = list(self.session.scalars(select(ExperimentProposalReview).where(
@@ -404,9 +430,16 @@ class WorkbenchQueries:
             .where(ExperimentProposalEvidence.experiment_proposal_id == proposal.id)))
         recommendation = self.session.get(Recommendation, proposal.recommendation_id)
         linked = self._intelligence_recommendation(recommendation) if recommendation else None
+        run = self.session.get(LLMRun, proposal.llm_run_id)
         return {**row_data(proposal), "human_decisions": [row_data(item) for item in reviews],
                 "evidence_ids": evidence, "recommendation": linked,
-                "actions": {"can_review": proposal.status in {"READY_FOR_REVIEW", "NEEDS_REVIEW"}},
+                "provider": run.provider_key if run else None,
+                "model": run.model_identifier if run else None,
+                "prompt_version": run.prompt_version if run else None,
+                "analytical_subject": linked.get("analytical_subject") if linked else None,
+                "evidence_reference_count": len(proposal.evidence_references_json),
+                "actions": {"can_review": proposal.status in {"READY_FOR_REVIEW", "NEEDS_REVIEW"},
+                            "can_regenerate_replay": proposal.status == "NEEDS_REVIEW"},
                 "lineage": {"evidence_ids": evidence,
                             "opportunity_ids": linked.get("opportunity_ids", []) if linked else [],
                             "recommendation_id": proposal.recommendation_id,
