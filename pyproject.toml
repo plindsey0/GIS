@@ -12,7 +12,9 @@ dependencies = [
   "boto3>=1.35,<2",
   "fastapi>=0.115,<1",
   "google-auth>=2.35,<3",
+  "openai>=2.26,<3",
   "psycopg[binary]>=3.1,<4",
+  "pydantic>=2.0,<3",
   "requests>=2.32,<3",
   "tldextract>=5,<6",
   "sqlalchemy>=2.0,<3",
@@ -58,6 +60,7 @@ gis-recommendations = "gis.recommendations.cli:main"
 gis-goals = "gis.goals.cli:main"
 gis-api = "gis.api.app:main"
 gis-provider-recovery = "gis.provider_control.incident_recovery:main"
+gis-intelligence = "gis.intelligence.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gis"]
@@ -81,4 +84,8 @@ packages = ["gis"]
 
 [[tool.mypy.overrides]]
 module = ["boto3", "boto3.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["openai"]
 ignore_missing_imports = true

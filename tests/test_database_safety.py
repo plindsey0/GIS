@@ -68,6 +68,14 @@ def test_correct_ephemeral_identity_is_allowed() -> None:
     authorize("postgresql+psycopg://gis:gis@localhost:5433/gis_migration_test_abc123")
 
 
+def test_production_looking_remote_host_is_refused() -> None:
+    with pytest.raises(DestructiveDatabaseSafetyError, match="approved local test host"):
+        authorize(
+            "postgresql+psycopg://gis:gis@production.cluster.rds.amazonaws.com/"
+            "gis_migration_test_abc123"
+        )
+
+
 def test_refusal_happens_before_destructive_callback() -> None:
     destructive_reached = False
     with pytest.raises(DestructiveDatabaseSafetyError, match=REFUSAL):

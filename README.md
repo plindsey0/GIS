@@ -9,6 +9,8 @@ without forcing cross-source totals to reconcile.
 
 See [local development](docs/gis/local-development.md) for setup commands and
 [the architecture](docs/gis/architecture.md) for design context.
+The provider-free, human-governed evidence-to-experiment workflow is documented in
+[governed LLM intelligence](docs/gis/governed-llm-intelligence.md).
 Before any persistent local migration, use `scripts/dev-migrate.sh`; destructive migration
 tests are restricted to run-owned disposable databases. See
 [database safety](docs/gis/database-safety.md).

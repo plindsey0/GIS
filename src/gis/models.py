@@ -5059,6 +5059,191 @@ class RecommendationReview(Base):
     reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class LLMRun(Base):
+    """Provider-neutral audit record for a governed structured-generation attempt."""
+
+    __tablename__ = "llm_run"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("request_fingerprint", name="uq_llm_run_request_fingerprint"),
+        Index("ix_llm_run_scope", "tenant_id", "site_id", "created_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    model_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_evidence_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    input_opportunity_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    input_recommendation_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    response_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    validation_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    validation_errors_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    provider_metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    input_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    output_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    provider_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class LLMOpportunityDetail(Base, TimestampMixin):
+    __tablename__ = "llm_opportunity_detail"
+    __table_args__ = (
+        UniqueConstraint("opportunity_id", name="uq_llm_opportunity_detail"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id", ondelete="CASCADE"), nullable=False
+    )
+    llm_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.llm_run.id"), nullable=False
+    )
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    problem_or_signal: Mapped[str] = mapped_column(Text, nullable=False)
+    reasoning: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_value: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    suggested_action: Mapped[str] = mapped_column(Text, nullable=False)
+    assumptions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+
+
+class OpportunityReview(Base):
+    __tablename__ = "opportunity_review"
+    __table_args__ = (
+        Index("ix_opportunity_review_history", "opportunity_id", "reviewed_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id", ondelete="CASCADE"), nullable=False
+    )
+    decision: Mapped[str] = mapped_column(String(50), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(255), nullable=False)
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class LLMRecommendationDetail(Base, TimestampMixin):
+    __tablename__ = "llm_recommendation_detail"
+    __table_args__ = (
+        UniqueConstraint("recommendation_id", name="uq_llm_recommendation_detail"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation.id", ondelete="CASCADE"), nullable=False
+    )
+    llm_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.llm_run.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    recommended_action: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_impact: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    priority: Mapped[str] = mapped_column(String(50), nullable=False)
+    estimated_effort: Mapped[str] = mapped_column(String(50), nullable=False)
+    risks_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    dependencies_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    success_signals_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+
+
+class RecommendationOpportunity(Base):
+    __tablename__ = "recommendation_opportunity"
+    __table_args__ = (
+        UniqueConstraint("recommendation_id", "opportunity_id", name="uq_recommendation_opportunity"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation.id", ondelete="CASCADE"), nullable=False
+    )
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id"), nullable=False
+    )
+
+
+class ExperimentProposal(Base, TimestampMixin):
+    __tablename__ = "experiment_proposal"
+    __table_args__ = (
+        UniqueConstraint("request_fingerprint", name="uq_experiment_proposal_request"),
+        Index("ix_experiment_proposal_scope", "tenant_id", "site_id", "status"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation.id"), nullable=False
+    )
+    llm_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.llm_run.id"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    hypothesis: Mapped[str] = mapped_column(Text, nullable=False)
+    target_surface: Mapped[str] = mapped_column(Text, nullable=False)
+    target_url_or_resource: Mapped[str] = mapped_column(Text, nullable=False)
+    control_description: Mapped[str] = mapped_column(Text, nullable=False)
+    treatment_description: Mapped[str] = mapped_column(Text, nullable=False)
+    implementation_steps_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    primary_metric: Mapped[str] = mapped_column(Text, nullable=False)
+    secondary_metrics_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    expected_direction: Mapped[str] = mapped_column(String(50), nullable=False)
+    expected_effect_description: Mapped[str] = mapped_column(Text, nullable=False)
+    evaluation_window: Mapped[str] = mapped_column(Text, nullable=False)
+    minimum_observation_guidance: Mapped[str] = mapped_column(Text, nullable=False)
+    guardrail_metrics_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    instrumentation_requirements_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    dependencies_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    risks_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    rollback_plan: Mapped[str] = mapped_column(Text, nullable=False)
+    decision_rule: Mapped[str] = mapped_column(Text, nullable=False)
+    implementation_notes: Mapped[str] = mapped_column(Text, nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class ExperimentProposalEvidence(Base):
+    __tablename__ = "experiment_proposal_evidence"
+    __table_args__ = (
+        UniqueConstraint("experiment_proposal_id", "evidence_package_id", name="uq_experiment_proposal_evidence"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    experiment_proposal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.experiment_proposal.id", ondelete="CASCADE"), nullable=False
+    )
+    evidence_package_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id"), nullable=False
+    )
+
+
+class ExperimentProposalReview(Base):
+    __tablename__ = "experiment_proposal_review"
+    __table_args__ = (
+        Index("ix_experiment_proposal_review_history", "experiment_proposal_id", "reviewed_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    experiment_proposal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.experiment_proposal.id", ondelete="CASCADE"), nullable=False
+    )
+    decision: Mapped[str] = mapped_column(String(50), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(255), nullable=False)
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class CompetitiveEventPolicy(Base, TimestampMixin):
     __tablename__ = "competitive_event_policy"
     __table_args__ = (
