@@ -1,2 +1,2 @@
-import {ResourceList} from "@/components/resource-view";
-export default function Page() { return <ResourceList kind="interventions"/>; }
+import {InterventionInbox} from "@/components/intelligence-workbench";
+export default function Page() { return <InterventionInbox/>; }

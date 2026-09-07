@@ -21,5 +21,7 @@ export type Opportunity = {
   id: string; title: string; family: string; opportunity_type: string; status: string;
   priority: string; evidence_sufficiency: string; entity_type: string; entity_key: string;
   detected_at: string; recommendation_status: string | null; intervention_status: string | null;
+  review_state: string | null; recommendation_state: string | null; experiment_state: string | null;
+  governed_intelligence: boolean;
 };
 export type Resource = {id: string; resource_type: string; data: Record<string, unknown>};

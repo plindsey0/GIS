@@ -46,6 +46,10 @@ class OpportunitySummary(BaseModel):
     limitations: list[str]
     recommendation_status: Optional[str] = None
     intervention_status: Optional[str] = None
+    review_state: Optional[str] = None
+    recommendation_state: Optional[str] = None
+    experiment_state: Optional[str] = None
+    governed_intelligence: bool = False
 
 
 class DecisionInput(BaseModel):
