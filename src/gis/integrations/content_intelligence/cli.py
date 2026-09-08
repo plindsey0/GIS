@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gis.db import session_factory
+from gis.integrations.content_intelligence.extraction import normalize_url
 from gis.integrations.content_intelligence.retrieval import (
     DirectHTTPRetriever,
     validate_public_http_url,
@@ -17,6 +18,7 @@ from gis.integrations.content_intelligence.service import (
     create_cohort,
     discover_content_targets,
 )
+from gis.integrations.owned_surface.service import OwnedSurfaceObservationService
 from gis.models import (
     CompetitiveContentCohortMember,
     CompetitiveContentDocument,
@@ -86,6 +88,11 @@ def parser() -> argparse.ArgumentParser:
     collect.add_argument("--domain")
     collect.add_argument("--top", type=int, default=10)
     collect.add_argument("--dry-run", action="store_true")
+    owned = commands.add_parser("collect-owned-surface")
+    owned.add_argument("--connection", type=uuid.UUID, required=True)
+    owned.add_argument("--site", type=uuid.UUID, required=True)
+    owned.add_argument("--collection-target", type=uuid.UUID, required=True)
+    owned.add_argument("--analytical-entity", type=uuid.UUID, required=True)
     estimate = commands.add_parser("estimate")
     estimate.add_argument("--pages", type=int, required=True)
     inspect = commands.add_parser("inspect")
@@ -221,6 +228,27 @@ def run(arguments: list[str] | None = None) -> int:
                         }
                         for item in runs
                     ]
+            elif args.command == "collect-owned-surface":
+                governed_site = session.get(Site, args.site)
+                if not governed_site:
+                    raise ValueError("site not found")
+                allowed_host = normalize_url(governed_site.canonical_url)[1]
+                owned_run = OwnedSurfaceObservationService(
+                    session,
+                    DirectHTTPRetriever(allowed_hosts={allowed_host}),
+                ).collect(
+                    args.connection,
+                    args.site,
+                    args.collection_target,
+                    args.analytical_entity,
+                )
+                output = {
+                    "run_id": str(owned_run.id),
+                    "status": owned_run.status.value,
+                    "error": owned_run.error_summary,
+                    "provider_calls": 0,
+                    "llm_calls": 0,
+                }
             elif args.command == "inspect":
                 statement = (
                     select(CompetitiveContentObservation)

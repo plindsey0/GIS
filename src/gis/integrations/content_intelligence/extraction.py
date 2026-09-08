@@ -75,6 +75,10 @@ class ExtractedPage:
     terms: Counter[str] = field(default_factory=Counter)
     publication_dates: list[dict[str, str]] = field(default_factory=list)
     modified_dates: list[dict[str, str]] = field(default_factory=list)
+    controls: list[dict[str, object]] = field(default_factory=list)
+    images: list[dict[str, object]] = field(default_factory=list)
+    landmarks: Counter[str] = field(default_factory=Counter)
+    instrumentation: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def word_count(self) -> int:
@@ -93,12 +97,21 @@ class _PageParser(HTMLParser):
         self.current_link: dict[str, object] | None = None
         self.json_ld = False
         self.json_parts: list[str] = []
+        self.current_control: dict[str, object] | None = None
+        self.current_label_for: str | None = None
+        self.current_label_parts: list[str] = []
+        self.labels: dict[str, str] = {}
 
     def handle_starttag(self, tag: str, attrs_list: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
         attrs = {key.lower(): value or "" for key, value in attrs_list}
         self.stack.append(tag)
         self.page.tag_counts[tag] += 1
+        if tag in {"main", "nav", "header", "footer", "aside"}:
+            self.page.landmarks[tag] += 1
+        role = attrs.get("role", "").lower()
+        if role in {"main", "navigation", "banner", "contentinfo", "complementary", "form"}:
+            self.page.landmarks[f"role:{role}"] += 1
         if tag == "html" and attrs.get("lang"):
             self.page.language = attrs["lang"][:32]
         if tag == "meta":
@@ -136,6 +149,33 @@ class _PageParser(HTMLParser):
             }
         if tag == "script" and attrs.get("type", "").lower() == "application/ld+json":
             self.json_ld, self.json_parts = True, []
+        if tag == "script":
+            source = attrs.get("src", "").lower()
+            if "googletagmanager.com/gtag" in source or "google-analytics.com" in source:
+                self.page.instrumentation.append({"type": "GOOGLE_ANALYTICS_TAG", "source": source})
+        for key in ("data-event", "data-event-name", "data-analytics-event"):
+            if attrs.get(key):
+                self.page.instrumentation.append({"type": "DECLARED_EVENT_HOOK", "name": attrs[key][:200]})
+        if tag in {"input", "select", "textarea", "button", "output"}:
+            self.current_control = {
+                "element": tag,
+                "type": attrs.get("type") or None,
+                "name": attrs.get("name") or None,
+                "id": attrs.get("id") or None,
+                "label": attrs.get("aria-label") or None,
+                "aria_describedby": attrs.get("aria-describedby") or None,
+                "text": "",
+            }
+            self.page.controls.append(self.current_control)
+        if tag == "label":
+            self.current_label_for = attrs.get("for") or None
+            self.current_label_parts = []
+        if tag == "img":
+            self.page.images.append({
+                "src": urljoin(self.base_url, attrs.get("src", "")) if attrs.get("src") else None,
+                "alt_present": "alt" in attrs,
+                "alt": attrs.get("alt") or None,
+            })
         if tag == "time" and attrs.get("datetime"):
             target = (
                 self.page.modified_dates
@@ -159,6 +199,14 @@ class _PageParser(HTMLParser):
         if tag == "script" and self.json_ld:
             self._extract_json_ld("".join(self.json_parts))
             self.json_ld = False
+        if tag in {"input", "select", "textarea", "button", "output"}:
+            self.current_control = None
+        if tag == "label":
+            label_text = normalize_text(" ".join(self.current_label_parts))
+            if self.current_label_for and label_text:
+                self.labels[self.current_label_for] = label_text[:500]
+            self.current_label_for = None
+            self.current_label_parts = []
         if self.stack:
             for index in range(len(self.stack) - 1, -1, -1):
                 if self.stack[index] == tag:
@@ -178,6 +226,12 @@ class _PageParser(HTMLParser):
             self.current_link["anchor"] = normalize_text(
                 f"{self.current_link.get('anchor', '')} {clean}"
             )
+        if self.current_control:
+            self.current_control["text"] = normalize_text(
+                f"{self.current_control.get('text', '')} {clean}"
+            )[:500]
+        if self.current_label_for is not None:
+            self.current_label_parts.append(clean)
         if not any(tag in SKIP_TAGS for tag in self.stack):
             self.text_parts.append(clean)
 
@@ -206,6 +260,10 @@ def extract_page(html: bytes, base_url: str, encoding: str = "utf-8") -> Extract
     parser.feed(html.decode(encoding, errors="replace"))
     page = parser.page
     page.visible_text = normalize_text(" ".join(parser.text_parts))
+    for control in page.controls:
+        control_id = control.get("id")
+        if not control.get("label") and isinstance(control_id, str):
+            control["label"] = parser.labels.get(control_id)
     source_domain = normalize_url(base_url)[1]
     normalized_links: list[dict[str, object]] = []
     for link in page.links:

@@ -25,7 +25,10 @@ from gis.intelligence.schemas import (
 )
 from gis.models import (
     AnalyticalEntity,
+    CompetitiveContentDocument,
+    CompetitiveContentHeading,
     CompetitiveContentObservation,
+    CompetitiveContentSchemaType,
     DataRightsPolicy,
     DemandObservation,
     EvidenceGap,
@@ -51,6 +54,7 @@ from gis.models import (
     OpportunityPriority,
     OpportunityReview,
     OpportunityStatus,
+    OwnedSurfaceObservationDetail,
     PermittedUse,
     Recommendation,
     RecommendationEvidence,
@@ -497,6 +501,45 @@ class EvidencePacketService:
                 "description": "No governed target-page crawl/content observation was selected.",
                 "requested_capability": "owned_page_content", "affected_domain": "owned_surfaces",
             })
+        owned_details = list(self.session.scalars(
+            select(OwnedSurfaceObservationDetail).where(
+                OwnedSurfaceObservationDetail.evidence_package_id.in_(package_ids),
+                OwnedSurfaceObservationDetail.reassessment_ready.is_(True),
+            ).order_by(OwnedSurfaceObservationDetail.observed_at.desc()).limit(5)
+        ))
+        for detail in owned_details:
+            observation = self.session.get(CompetitiveContentObservation, detail.observation_id)
+            document = self.session.get(CompetitiveContentDocument, detail.observation_id)
+            if not observation or not document:
+                continue
+            headings = list(self.session.scalars(select(CompetitiveContentHeading).where(
+                CompetitiveContentHeading.observation_id == detail.observation_id
+            ).order_by(CompetitiveContentHeading.ordinal).limit(20)))
+            schema_types = list(self.session.scalars(select(CompetitiveContentSchemaType).where(
+                CompetitiveContentSchemaType.observation_id == detail.observation_id
+            ).order_by(CompetitiveContentSchemaType.schema_type).limit(20)))
+            packet.owned_surface_observations.append({
+                "observation_id": str(observation.id),
+                "evidence_package_id": str(detail.evidence_package_id),
+                "url": observation.normalized_url,
+                "observed_at": observation.observed_at.isoformat(),
+                "retrieval_status": observation.retrieval_status,
+                "http_status": observation.http_status,
+                "render_state": detail.render_state,
+                "canonical_url": observation.canonical_url,
+                "canonical_assessment": detail.canonical_assessment,
+                "indexability_assessment": detail.indexability_assessment,
+                "title": document.title,
+                "meta_description": document.meta_description,
+                "headings": [{"level": row.level, "text": row.heading_text} for row in headings],
+                "content_preview": detail.visible_text_preview[:2000],
+                "controls": detail.controls_json[:25],
+                "structured_data_types": [row.schema_type for row in schema_types],
+                "instrumentation": detail.instrumentation_json[:20],
+                "change_classification": detail.change_classification,
+                "quality_state": detail.quality_state,
+                "limitations": detail.limitations_json,
+            })
         packet.constraints.extend([
             "entity-scoped deterministic discovery",
             "exact query matches only; no semantic clustering",
@@ -535,6 +578,13 @@ class EvidencePacketService:
             )
             surface["reference_id"] = str(surface_id)
             reference(surface_id, "OBSERVED_QUERY_PAGE_ASSOCIATION", "owned_surfaces")
+        for owned_observation in packet.owned_surface_observations:
+            reference(
+                uuid.UUID(str(owned_observation["observation_id"])),
+                "OWNED_SURFACE_OBSERVATION",
+                "owned_surface_observations",
+                [uuid.UUID(str(owned_observation["evidence_package_id"]))],
+            )
         for dimension in dimensions:
             reference(
                 dimension.id, "EVIDENCE_QUALITY_DIMENSION", "quality",

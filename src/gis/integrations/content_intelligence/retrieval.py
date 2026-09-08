@@ -29,6 +29,7 @@ class RetrievalResult:
     body: bytes
     truncated: bool
     headers: dict[str, str]
+    redirect_chain: tuple[str, ...] = ()
 
 
 class ContentRetriever(Protocol):
@@ -64,16 +65,22 @@ class DirectHTTPRetriever:
         session: requests.Session | None = None,
         max_bytes: int = MAX_RESPONSE_BYTES,
         timeout: tuple[float, float] = (5.0, 15.0),
+        allowed_hosts: set[str] | None = None,
     ) -> None:
         self.session = session or requests.Session()
         self.max_bytes = max_bytes
         self.timeout = timeout
+        self.allowed_hosts = {host.casefold().removeprefix("www.") for host in allowed_hosts or set()}
 
     def retrieve(self, url: str) -> RetrievalResult:
         requested = validate_public_http_url(url)
         current = requested
+        redirect_chain: list[str] = []
         for redirect_count in range(MAX_REDIRECTS + 1):
             validate_public_http_url(current)
+            current_host = (urlsplit(current).hostname or "").casefold().removeprefix("www.")
+            if self.allowed_hosts and current_host not in self.allowed_hosts:
+                raise RetrievalError("redirect left the governed host scope")
             try:
                 response = self.session.get(
                     current,
@@ -92,6 +99,7 @@ class DirectHTTPRetriever:
                     raise RetrievalError("redirect response omitted Location")
                 current = urljoin(current, location)
                 validate_public_http_url(current)
+                redirect_chain.append(current)
                 continue
             media_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
             if media_type not in ALLOWED_CONTENT_TYPES:
@@ -126,8 +134,9 @@ class DirectHTTPRetriever:
                         "x-vercel-id",
                         "cf-ray",
                         "cf-cache-status",
-                        "set-cookie",
+                        "x-robots-tag",
                     }
                 },
+                redirect_chain=tuple(redirect_chain),
             )
         raise RetrievalError("redirect limit exceeded")

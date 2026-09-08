@@ -15,6 +15,11 @@ from gis.models import (
     CollectionTarget,
     CollectionTargetEvidence,
     CollectorCapability,
+    CompetitiveContentDocument,
+    CompetitiveContentHeading,
+    CompetitiveContentLink,
+    CompetitiveContentObservation,
+    CompetitiveContentSchemaType,
     DemandSignal,
     EvidenceContract,
     EvidenceGap,
@@ -26,6 +31,7 @@ from gis.models import (
     MarketMetricObservation,
     MarketObservation,
     MarketParticipantObservation,
+    OwnedSurfaceObservationDetail,
 )
 from gis.opportunities.sufficiency import diagnose
 
@@ -410,6 +416,43 @@ def collection_detail(
     gaps = list(
         session.scalars(select(EvidenceGap).where(EvidenceGap.collection_target_id == target.id))
     )
+    owned_rows = session.execute(
+        select(OwnedSurfaceObservationDetail, CompetitiveContentObservation,
+               CompetitiveContentDocument)
+        .join(CompetitiveContentObservation,
+              CompetitiveContentObservation.id == OwnedSurfaceObservationDetail.observation_id)
+        .join(CompetitiveContentDocument,
+              CompetitiveContentDocument.observation_id == OwnedSurfaceObservationDetail.observation_id)
+        .where(OwnedSurfaceObservationDetail.collection_target_id == target.id)
+        .order_by(OwnedSurfaceObservationDetail.observed_at.desc())
+        .limit(20)
+    ).all()
+    observation_ids = [detail.observation_id for detail, _, _ in owned_rows]
+    headings_by_observation: dict[uuid.UUID, list[dict[str, Any]]] = {
+        item: [] for item in observation_ids
+    }
+    for heading in session.scalars(select(CompetitiveContentHeading).where(
+        CompetitiveContentHeading.observation_id.in_(observation_ids)
+    ).order_by(CompetitiveContentHeading.observation_id, CompetitiveContentHeading.ordinal)):
+        headings_by_observation[heading.observation_id].append({
+            "level": heading.level, "text": heading.heading_text
+        })
+    links_by_observation: dict[uuid.UUID, list[dict[str, Any]]] = {
+        item: [] for item in observation_ids
+    }
+    for link in session.scalars(select(CompetitiveContentLink).where(
+        CompetitiveContentLink.observation_id.in_(observation_ids),
+        CompetitiveContentLink.link_class == "INTERNAL",
+    ).order_by(CompetitiveContentLink.observation_id, CompetitiveContentLink.target_url)):
+        links_by_observation[link.observation_id].append({
+            "url": link.target_url, "anchor": link.anchor_text
+        })
+    schemas_by_observation: dict[uuid.UUID, list[str]] = {item: [] for item in observation_ids}
+    for schema in session.scalars(select(CompetitiveContentSchemaType).where(
+        CompetitiveContentSchemaType.observation_id.in_(observation_ids)
+    ).order_by(CompetitiveContentSchemaType.observation_id,
+               CompetitiveContentSchemaType.schema_type)):
+        schemas_by_observation[schema.observation_id].append(schema.schema_type)
     return {
         "id": str(target.id),
         "resource_type": "collection_target",
@@ -432,6 +475,50 @@ def collection_detail(
         ],
         "demand_signals": [row_data(item) for item in signals],
         "evidence_gaps": [{**row_data(item), "href": f"/evidence/gaps/{item.id}"} for item in gaps],
+        "owned_surface_observations": [
+            {
+                "id": str(detail.observation_id),
+                "url": observation.normalized_url,
+                "observed_at": encoded(detail.observed_at),
+                "collection_status": observation.retrieval_status,
+                "method": detail.method_version,
+                "render_state": detail.render_state,
+                "http_status": observation.http_status,
+                "final_url": observation.resolved_url,
+                "canonical_url": observation.canonical_url,
+                "canonical_assessment": detail.canonical_assessment,
+                "indexability_assessment": detail.indexability_assessment,
+                "title": document.title,
+                "meta_description": document.meta_description,
+                "headings": headings_by_observation[detail.observation_id],
+                "content_preview": detail.visible_text_preview,
+                "structured_data_types": schemas_by_observation[detail.observation_id],
+                "important_internal_links": links_by_observation[detail.observation_id][:25],
+                "controls": detail.controls_json,
+                "images": detail.images_json,
+                "landmarks": detail.landmarks_json,
+                "instrumentation": detail.instrumentation_json,
+                "quality_state": detail.quality_state,
+                "limitations": detail.limitations_json,
+                "change_classification": detail.change_classification,
+                "previous_observation_id": encoded(detail.previous_observation_id),
+                "reassessment_ready": detail.reassessment_ready,
+                "evidence_package": (
+                    f"/evidence/{detail.evidence_package_id}"
+                    if detail.evidence_package_id else None
+                ),
+                "technical": {
+                    "raw_response_fingerprint": detail.raw_response_fingerprint,
+                    "normalized_content_fingerprint": detail.normalized_content_fingerprint,
+                    "structure_fingerprint": detail.structure_fingerprint,
+                    "metadata_fingerprint": detail.metadata_fingerprint,
+                    "ingestion_run_id": str(observation.ingestion_run_id),
+                    "rights_policy_id": str(observation.rights_policy_id),
+                    "retrieval_metadata": observation.retrieval_metadata,
+                },
+            }
+            for detail, observation, document in owned_rows
+        ],
         "relationships": {"market": f"/markets/{target.market_definition_id}"},
         "technical_id": str(target.id),
     }

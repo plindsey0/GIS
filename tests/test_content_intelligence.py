@@ -152,6 +152,15 @@ def test_redirect_targets_size_and_content_type_are_bounded(
     )
     with pytest.raises(ValueError, match="prohibited"):
         DirectHTTPRetriever(session=redirect).retrieve("https://example.com")  # type: ignore[arg-type]
+    scoped_redirect = FakeHTTPSession(
+        [FakeHTTPResponse(status=302, headers={"Location": "https://outside.test/page"})]
+    )
+    with pytest.raises(RetrievalError, match="governed host scope"):
+        DirectHTTPRetriever(
+            session=scoped_redirect,  # type: ignore[arg-type]
+            allowed_hosts={"example.com"},
+        ).retrieve("https://example.com")
+    assert scoped_redirect.calls == 1
     oversized = FakeHTTPSession([FakeHTTPResponse(body=b"x" * 30)])
     result = DirectHTTPRetriever(session=oversized, max_bytes=10).retrieve("https://example.com")  # type: ignore[arg-type]
     assert result.truncated and len(result.body) == 10

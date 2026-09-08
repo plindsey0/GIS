@@ -75,4 +75,26 @@ describe("entity-centered evidence", () => {
     render(<DomainEvidence id="empty" />);
     expect(await screen.findByText("No BuiltWith technology observations are available for this domain.")).toBeInTheDocument();
   });
+
+  it("renders owned-surface observations and keeps technical lineage collapsed", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => answer({
+      label: "va-entitlement-calculator",
+      description: "Governed collection target.",
+      owned_surface_observations: [{
+        observation_id: "observation-1", url: "https://vahomemath.test/va-entitlement-calculator/",
+        observed_at: "2026-09-08T12:00:00Z", collection_status: "SUCCESS", method: "OWNED_SURFACE_OBSERVATION_V1",
+        render_state: "NOT_RENDERED_STATIC_HTTP", http_status: 200, canonical_target: "https://vahomemath.test/va-entitlement-calculator/",
+        indexability: "NO_BLOCKING_DIRECTIVE_OBSERVED", title: "VA Entitlement Calculator Fixture",
+        headings: [{level: 1, text: "VA Entitlement Calculator"}],
+        controls: [{element: "input", label: "Loan amount", type: "number"}],
+        limitations: ["Static HTTP observation; page scripts were not executed."],
+        technical: {raw_response_fingerprint: "hash", evidence_package_id: "package-1"},
+      }],
+    })));
+    render(<SemanticDetail endpoint="/api/v1/collections/target-1" eyebrow="Collection target" fallback="Target" />);
+    expect(await screen.findByText("VA Entitlement Calculator Fixture")).toBeInTheDocument();
+    expect(screen.getByText("Loan amount")).toBeInTheDocument();
+    const technical = screen.getByText("Technical details").closest("details");
+    expect(technical).not.toHaveAttribute("open");
+  });
 });
