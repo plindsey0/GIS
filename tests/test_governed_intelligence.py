@@ -10,6 +10,7 @@ from test_opportunities import package
 
 from gis.database_safety import explicit_alembic_config
 from gis.intelligence.provider import ReplayLLMProvider
+from gis.intelligence.schemas import EvidenceReference
 from gis.intelligence.service import (
     EvidencePacketService,
     GovernedIntelligenceService,
@@ -18,10 +19,18 @@ from gis.intelligence.service import (
 from gis.models import (
     DemandEvidenceStrength,
     ExperimentProposal,
+    ExperimentProposalEvidence,
+    Intervention,
     LLMRun,
     Opportunity,
     Recommendation,
 )
+
+
+class ExternalReplayLLMProvider(ReplayLLMProvider):
+    """Offline fixture that exercises validation applied to external-provider output."""
+
+    external = True
 
 
 def responses(evidence_id: uuid.UUID, opportunity_id: uuid.UUID | None = None,
@@ -71,6 +80,42 @@ def setup(session: Session):
     packet = EvidencePacketService(session).build(tenant.id, site.id, evidence_ids=[evidence.id])
     provider = ReplayLLMProvider(responses(evidence.id))
     return tenant, site, evidence, packet, provider, GovernedIntelligenceService(session, provider)
+
+
+def proposal_service_with_enriched_context(
+    session: Session, monkeypatch: pytest.MonkeyPatch, *, target: str,
+    cited_reference_id: uuid.UUID | None = None,
+):
+    tenant, site, evidence, packet, provider, service = setup(session)
+    opportunity = service.generate_opportunities(packet)[0]
+    service.review_opportunity(opportunity.id, "ACCEPTED", "human")
+    provider.responses.update(responses(evidence.id, opportunity_id=opportunity.id))
+    recommendation = service.generate_recommendations([opportunity.id])[0]
+    service.select_recommendation(recommendation.id, "human", "Preserve the governed target")
+
+    enriched_reference_id = uuid.uuid4()
+    packet.referenceable_evidence.append(EvidenceReference(
+        reference_id=enriched_reference_id,
+        reference_type="GA4_EVENT_OBSERVATION",
+        packet_section="engagement",
+        evidence_package_ids=[evidence.id],
+    ))
+    governed_url = "https://www.vahomemath.com/va-entitlement-calculator/"
+    packet.owned_surfaces = [{
+        "url": governed_url,
+        "relationship": "OBSERVED_QUERY_PAGE_ASSOCIATION",
+        "does_not_assert": ["INTENT_SATISFIED", "COVERAGE_SUFFICIENT", "PAGE_QUALITY"],
+    }]
+    packet.entity_context = {}
+    output = responses(evidence.id, opportunity.id, recommendation.id)["experiment_proposal"]
+    output["target_url_or_resource"] = target
+    output["baseline_evidence_ids"] = [
+        str(evidence.id), str(cited_reference_id or enriched_reference_id)
+    ]
+    external_provider = ExternalReplayLLMProvider({"experiment_proposal": output})
+    service.provider = external_provider
+    monkeypatch.setattr(service, "_governed_context", lambda _: packet)
+    return service, recommendation, evidence, enriched_reference_id, external_provider
 
 
 def test_packet_is_bounded_authoritative_and_context_isolated(session: Session) -> None:
@@ -163,6 +208,103 @@ def test_contradictory_proposal_direction_is_rejected(session: Session) -> None:
     assert session.scalar(select(func.count()).select_from(ExperimentProposal)) == 0
     failed = session.scalar(select(LLMRun).where(LLMRun.task_type == "experiment_proposal"))
     assert failed and failed.validation_status == "INVALID"
+
+
+def test_proposal_accepts_enriched_reference_from_final_governed_packet(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, recommendation, evidence, enriched_id, provider = (
+        proposal_service_with_enriched_context(
+            session, monkeypatch,
+            target="https://www.vahomemath.com/va-entitlement-calculator/",
+        )
+    )
+    assert enriched_id not in {
+        uuid.UUID(str(item["reference_id"]))
+        for item in recommendation.evidence_references_json
+    }
+
+    proposal = service.generate_experiment_proposal(recommendation.id)
+
+    persisted_references = {
+        uuid.UUID(str(item["reference_id"])) for item in proposal.evidence_references_json
+    }
+    package_ids = set(session.scalars(select(
+        ExperimentProposalEvidence.evidence_package_id
+    ).where(ExperimentProposalEvidence.experiment_proposal_id == proposal.id)))
+    assert persisted_references == {evidence.id, enriched_id}
+    assert package_ids == {evidence.id}
+    assert str(enriched_id) in provider.calls[0]["user_prompt"]
+    assert session.scalar(select(func.count()).select_from(Intervention)) == 0
+
+
+def test_proposal_still_rejects_fabricated_reference_without_artifacts(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fabricated = uuid.uuid4()
+    service, recommendation, _, _, _ = proposal_service_with_enriched_context(
+        session, monkeypatch,
+        target="https://www.vahomemath.com/va-entitlement-calculator/",
+        cited_reference_id=fabricated,
+    )
+    with pytest.raises(IntelligenceValidationError, match="outside recommendation lineage"):
+        service.generate_experiment_proposal(recommendation.id)
+    assert session.scalar(select(func.count()).select_from(ExperimentProposal)) == 0
+    assert session.scalar(select(func.count()).select_from(Intervention)) == 0
+    failed = session.scalar(select(LLMRun).where(LLMRun.task_type == "experiment_proposal"))
+    assert failed and failed.validation_status == "INVALID"
+
+
+@pytest.mark.parametrize("target", [
+    "https://www.vahomemath.com/va-entitlement-calculator/",
+    "HTTPS://WWW.VAHOMEMATH.COM/va-entitlement-calculator",
+    "https://vahomemath.com/va-entitlement-calculator/",
+    "/va-entitlement-calculator/",
+    (
+        "Exact governed candidate URL: "
+        "https://www.vahomemath.com/va-entitlement-calculator/; review only"
+    ),
+])
+def test_proposal_candidate_url_normalized_variants_pass(
+    session: Session, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    service, recommendation, _, _, _ = proposal_service_with_enriched_context(
+        session, monkeypatch, target=target
+    )
+    assert service.generate_experiment_proposal(recommendation.id).status == "READY_FOR_REVIEW"
+
+
+@pytest.mark.parametrize("target", [
+    "No governed candidate was supplied.",
+    "https://www.vahomemath.com/different-calculator/",
+])
+def test_proposal_candidate_url_omission_or_contradiction_fails(
+    session: Session, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    service, recommendation, _, _, _ = proposal_service_with_enriched_context(
+        session, monkeypatch, target=target
+    )
+    with pytest.raises(IntelligenceValidationError, match="governed candidate URL"):
+        service.generate_experiment_proposal(recommendation.id)
+    assert session.scalar(select(func.count()).select_from(ExperimentProposal)) == 0
+    assert session.scalar(select(func.count()).select_from(Intervention)) == 0
+
+
+def test_proposal_allows_explicit_governed_no_test_candidate_url_gate(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, recommendation, _, _, provider = proposal_service_with_enriched_context(
+        session, monkeypatch, target="https://www.vahomemath.com/different-calculator/"
+    )
+    output = provider.responses["experiment_proposal"]
+    output["expected_direction"] = "INCONCLUSIVE"
+    output["implementation_notes"] = (
+        "No-test gate: the governed candidate "
+        "https://www.vahomemath.com/va-entitlement-calculator/ cannot be used because "
+        "the required owned-page verification is unavailable. Association is not intent proof."
+    )
+    assert service.generate_experiment_proposal(recommendation.id).status == "READY_FOR_REVIEW"
+    assert session.scalar(select(func.count()).select_from(Intervention)) == 0
 
 
 def test_migration_upgrades_pre_epic_27_schema_without_rebuilding_existing_tables(

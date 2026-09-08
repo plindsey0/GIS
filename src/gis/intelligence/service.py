@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -72,6 +73,74 @@ PROPOSAL_DECISIONS = {"APPROVED", "REJECTED", "NEEDS_REVIEW"}
 
 class IntelligenceValidationError(ValueError):
     pass
+
+
+_ABSOLUTE_URL = re.compile(r"https?://[^\s;,]+", re.IGNORECASE)
+
+
+def _normalized_url_identity(value: str, governed_url: str) -> tuple[str, str, str, str] | None:
+    value = value.strip().strip("\"'()[]{}<>.,;:")
+    governed = urlparse(governed_url)
+    if value.startswith("/"):
+        parsed = urlparse(f"{governed.scheme}://{governed.netloc}{value}")
+    else:
+        parsed = urlparse(value)
+    if not parsed.scheme or not parsed.hostname:
+        return None
+    scheme = parsed.scheme.casefold()
+    try:
+        hostname = parsed.hostname.casefold().encode("idna").decode("ascii")
+        port = parsed.port
+    except (UnicodeError, ValueError):
+        return None
+    hostname = hostname.removeprefix("www.")
+    authority = hostname if port is None or (scheme, port) in {
+        ("http", 80), ("https", 443)
+    } else f"{hostname}:{port}"
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/") or "/"
+    return scheme, authority, path, parsed.query
+
+
+def _proposal_preserves_candidate_url(
+    output: ExperimentProposalOutput, candidate_urls: set[str]
+) -> bool:
+    for governed_url in candidate_urls:
+        governed_identity = _normalized_url_identity(governed_url, governed_url)
+        target_values = _ABSOLUTE_URL.findall(output.target_url_or_resource)
+        if output.target_url_or_resource.strip().startswith("/"):
+            target_values.append(output.target_url_or_resource.strip())
+        target_identities = {
+            identity for value in target_values
+            if (identity := _normalized_url_identity(value, governed_url)) is not None
+        }
+        matching = governed_identity in target_identities
+        conflicting = bool(target_identities - {governed_identity})
+        if matching and not conflicting:
+            return True
+
+        explanation = " ".join([
+            output.target_url_or_resource,
+            output.target_surface,
+            output.hypothesis,
+            output.decision_rule,
+            output.implementation_notes,
+        ]).casefold()
+        mentioned_identities = {
+            identity for value in _ABSOLUTE_URL.findall(explanation)
+            if (identity := _normalized_url_identity(value, governed_url)) is not None
+        }
+        explicit_gate = (
+            output.expected_direction in {"NO_CHANGE", "INCONCLUSIVE"}
+            and any(marker in explanation for marker in (
+                "cannot be used because", "must not be used because",
+                "reject the candidate", "no-test gate", "no test gate",
+            ))
+        )
+        if governed_identity in mentioned_identities and explicit_gate:
+            return True
+    return False
 
 
 def _digest(value: object) -> str:
@@ -499,6 +568,34 @@ class GovernedIntelligenceService:
         self.provider = provider
         self.packets = EvidencePacketService(session)
 
+    def _reference_registry_errors(self, packet: EvidencePacket) -> list[str]:
+        errors: list[str] = []
+        references = {item.reference_id: item for item in packet.referenceable_evidence}
+        if len(references) != len(packet.referenceable_evidence):
+            errors.append("Packet contains duplicate referenceable evidence IDs.")
+        for reference in packet.referenceable_evidence:
+            if not set(reference.evidence_package_ids) <= packet.evidence_ids:
+                errors.append(
+                    f"Reference {reference.reference_id} has evidence lineage outside the packet."
+                )
+            for evidence_id in reference.evidence_package_ids:
+                package = self.session.get(EvidencePackage, evidence_id)
+                if (
+                    not package
+                    or package.tenant_id != packet.tenant_id
+                    or package.site_id != packet.site_id
+                ):
+                    errors.append(f"Reference {reference.reference_id} has invalid scope lineage.")
+                elif packet.analytical_entity_id and (
+                    package.analytical_entity_id != packet.analytical_entity_id
+                ):
+                    errors.append(f"Reference {reference.reference_id} has invalid entity lineage.")
+                elif package.rights_usability.value not in {"USABLE", "PARTIALLY_USABLE"}:
+                    errors.append(f"Reference {reference.reference_id} has unusable rights lineage.")
+                elif not package.quality_run_id or not package.method_version:
+                    errors.append(f"Reference {reference.reference_id} has incomplete provenance lineage.")
+        return errors
+
     def _invoke(
         self,
         *,
@@ -595,23 +692,7 @@ class GovernedIntelligenceService:
         if prior_details:
             return [self.session.get_one(Opportunity, detail.opportunity_id) for detail in prior_details]
         output = OpportunityOutput.model_validate(raw)
-        errors: list[str] = []
-        references = {item.reference_id: item for item in packet.referenceable_evidence}
-        if len(references) != len(packet.referenceable_evidence):
-            errors.append("Packet contains duplicate referenceable evidence IDs.")
-        for reference in packet.referenceable_evidence:
-            if not set(reference.evidence_package_ids) <= packet.evidence_ids:
-                errors.append(
-                    f"Reference {reference.reference_id} has evidence lineage outside the packet."
-                )
-            for evidence_id in reference.evidence_package_ids:
-                package = self.session.get(EvidencePackage, evidence_id)
-                if not package or package.tenant_id != packet.tenant_id or package.site_id != packet.site_id:
-                    errors.append(f"Reference {reference.reference_id} has invalid scope lineage.")
-                elif packet.analytical_entity_id and (
-                    package.analytical_entity_id != packet.analytical_entity_id
-                ):
-                    errors.append(f"Reference {reference.reference_id} has invalid entity lineage.")
+        errors = self._reference_registry_errors(packet)
         for candidate in output.opportunities:
             unknown = set(candidate.evidence_ids) - packet.referenceable_evidence_ids
             if unknown:
@@ -765,7 +846,7 @@ class GovernedIntelligenceService:
         if prior_details:
             return [self.session.get_one(Recommendation, detail.recommendation_id) for detail in prior_details]
         output = RecommendationOutput.model_validate(raw)
-        errors = []
+        errors = self._reference_registry_errors(packet)
         for candidate in output.recommendations:
             if set(candidate.opportunity_ids) - selected:
                 errors.append("Recommendation referenced an opportunity that was not supplied or accepted.")
@@ -853,8 +934,7 @@ class GovernedIntelligenceService:
         opportunity = self.session.get(Opportunity, recommendation.opportunity_id)
         assert opportunity
         packet = self._governed_context(opportunity)
-        evidence_ids = {uuid.UUID(str(item["reference_id"]))
-                        for item in recommendation.evidence_references_json} or packet.evidence_ids
+        evidence_ids = packet.referenceable_evidence_ids
         detail = self.session.scalar(select(LLMRecommendationDetail).where(
             LLMRecommendationDetail.recommendation_id == recommendation.id))
         selection_reviews = list(self.session.scalars(select(RecommendationReview).where(
@@ -915,10 +995,11 @@ class GovernedIntelligenceService:
         if prior:
             return prior
         output = ExperimentProposalOutput.model_validate(raw)
-        errors = []
+        errors = self._reference_registry_errors(packet)
         if output.recommendation_id != recommendation.id:
             errors.append("Experiment proposal referenced a recommendation that was not selected.")
-        if set(output.baseline_evidence_ids) - evidence_ids:
+        cited_evidence_ids = set(output.baseline_evidence_ids)
+        if cited_evidence_ids - evidence_ids:
             errors.append("Experiment proposal referenced evidence outside recommendation lineage.")
         query = str(packet.entity_context.get("canonical_key", ""))
         candidate_urls = {str(s["url"]) for s in packet.owned_surfaces}
@@ -926,7 +1007,11 @@ class GovernedIntelligenceService:
                              output.target_surface, output.implementation_notes]).lower()
         if self.provider.external and query and query.lower() not in rendered:
             errors.append("Experiment proposal omitted the exact governed analytical subject.")
-        if self.provider.external and candidate_urls and output.target_url_or_resource not in candidate_urls:
+        if (
+            self.provider.external
+            and candidate_urls
+            and not _proposal_preserves_candidate_url(output, candidate_urls)
+        ):
             errors.append("Experiment proposal omitted or contradicted the governed candidate URL.")
         positive = any(word in (output.hypothesis + output.expected_effect_description).lower()
                        for word in ("increase", "improve", "growth", "more clicks"))
@@ -970,14 +1055,19 @@ class GovernedIntelligenceService:
             dependencies_json=output.dependencies, risks_json=output.risks,
             rollback_plan=output.rollback_plan, decision_rule=output.decision_rule,
             implementation_notes=output.implementation_notes, request_fingerprint=fingerprint)
-        proposal.evidence_references_json = [item for item in recommendation.evidence_references_json
-                                             if uuid.UUID(str(item["reference_id"])) in set(output.baseline_evidence_ids)]
+        proposal.evidence_references_json = [
+            item.model_dump(mode="json") for item in packet.referenceable_evidence
+            if item.reference_id in cited_evidence_ids
+        ]
         proposal.supersedes_proposal_id = supersedes_proposal_id
         self.session.add(proposal)
         self.session.flush()
-        for eid in output.baseline_evidence_ids:
-            self.session.add(ExperimentProposalEvidence(experiment_proposal_id=proposal.id,
-                                                         evidence_package_id=eid))
+        for evidence_id in sorted(
+            packet.backing_evidence_ids(output.baseline_evidence_ids), key=str
+        ):
+            self.session.add(ExperimentProposalEvidence(
+                experiment_proposal_id=proposal.id, evidence_package_id=evidence_id
+            ))
         run.validation_status = "VALID"
         if supersedes_proposal_id:
             previous = self.session.get_one(ExperimentProposal, supersedes_proposal_id)
