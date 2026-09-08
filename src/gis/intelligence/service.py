@@ -9,8 +9,8 @@ from decimal import Decimal
 from typing import Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ValidationError
-from sqlalchemy import func, select
+from pydantic import BaseModel
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from gis.intelligence.prompts import PROMPT_VERSIONS, system_prompt
@@ -567,6 +567,8 @@ class GovernedIntelligenceService:
         self.session = session
         self.provider = provider
         self.packets = EvidencePacketService(session)
+        self.last_run_reused = False
+        self.last_run_id: uuid.UUID | None = None
 
     def _reference_registry_errors(self, packet: EvidencePacket) -> list[str]:
         errors: list[str] = []
@@ -596,6 +598,31 @@ class GovernedIntelligenceService:
                     errors.append(f"Reference {reference.reference_id} has incomplete provenance lineage.")
         return errors
 
+    def _has_downstream_artifact(self, run: LLMRun) -> bool:
+        if run.task_type == "candidate_opportunity":
+            return self.session.scalar(select(LLMOpportunityDetail.id).where(
+                LLMOpportunityDetail.llm_run_id == run.id
+            )) is not None
+        if run.task_type == "candidate_recommendation":
+            return self.session.scalar(select(LLMRecommendationDetail.id).where(
+                LLMRecommendationDetail.llm_run_id == run.id
+            )) is not None
+        if run.task_type == "experiment_proposal":
+            return self.session.scalar(select(ExperimentProposal.id).where(
+                ExperimentProposal.llm_run_id == run.id
+            )) is not None
+        return False
+
+    def _lock_logical_request(self, fingerprint: str) -> None:
+        if self.session.get_bind().dialect.name != "postgresql":
+            return
+        lock_key = int(fingerprint[:16], 16)
+        if lock_key >= 2 ** 63:
+            lock_key -= 2 ** 64
+        self.session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {
+            "lock_key": lock_key
+        })
+
     def _invoke(
         self,
         *,
@@ -615,9 +642,28 @@ class GovernedIntelligenceService:
             "provider": self.provider.key,
             "model": self.provider.model_identifier,
         })
-        existing = self.session.scalar(select(LLMRun).where(LLMRun.request_fingerprint == fingerprint))
-        if existing and existing.validation_status == "VALID":
-            return existing, schema.model_validate(existing.response_snapshot_json)
+        self.last_run_reused = False
+        self.last_run_id = None
+        self._lock_logical_request(fingerprint)
+        attempts = list(self.session.scalars(select(LLMRun).where(
+            LLMRun.request_fingerprint == fingerprint
+        ).order_by(LLMRun.attempt_number.desc(), LLMRun.created_at.desc(), LLMRun.id.desc())))
+        valid = next((run for run in attempts if run.validation_status == "VALID"), None)
+        if valid:
+            if not self._has_downstream_artifact(valid):
+                raise IntelligenceValidationError(
+                    "A VALID LLM run exists without its governed downstream artifact; "
+                    "provider invocation was refused."
+                )
+            self.last_run_reused = True
+            self.last_run_id = valid.id
+            return valid, schema.model_validate(valid.response_snapshot_json)
+        if any(run.validation_status == "PENDING" for run in attempts):
+            raise IntelligenceValidationError(
+                "A governed LLM execution attempt is already pending; provider invocation was refused."
+            )
+        attempt_number = max((run.attempt_number for run in attempts), default=0) + 1
+        retry_of_run_id = attempts[0].id if attempts else None
         try:
             result = self.provider.generate_structured(
                 task=task,
@@ -629,11 +675,12 @@ class GovernedIntelligenceService:
                 metadata={"prompt_version": PROMPT_VERSIONS[task], "request_fingerprint": fingerprint},
             )
             snapshot = result.value.model_dump(mode="json")
-        except (ValidationError, ValueError) as exc:
+        except Exception as exc:
             run = LLMRun(
                 tenant_id=tenant_id, site_id=site_id, task_type=task,
                 provider_key=self.provider.key, model_identifier=self.provider.model_identifier,
                 prompt_version=PROMPT_VERSIONS[task], request_fingerprint=fingerprint,
+                attempt_number=attempt_number, retry_of_run_id=retry_of_run_id,
                 input_evidence_ids_json=sorted(map(str, evidence_ids)),
                 input_opportunity_ids_json=sorted(map(str, opportunity_ids)),
                 input_recommendation_ids_json=sorted(map(str, recommendation_ids)),
@@ -642,14 +689,18 @@ class GovernedIntelligenceService:
             )
             self.session.add(run)
             self.session.flush()
+            self.last_run_id = run.id
             self.session.info["failed_llm_run_snapshot"] = {
                 column.key: getattr(run, column.key) for column in LLMRun.__table__.columns
             }
-            raise IntelligenceValidationError(f"LLM response failed schema validation: {exc}") from exc
+            raise IntelligenceValidationError(
+                f"LLM provider execution or response validation failed: {exc}"
+            ) from exc
         run = LLMRun(
             tenant_id=tenant_id, site_id=site_id, task_type=task,
             provider_key=result.provider, model_identifier=result.model,
             prompt_version=PROMPT_VERSIONS[task], request_fingerprint=fingerprint,
+            attempt_number=attempt_number, retry_of_run_id=retry_of_run_id,
             input_evidence_ids_json=sorted(map(str, evidence_ids)),
             input_opportunity_ids_json=sorted(map(str, opportunity_ids)),
             input_recommendation_ids_json=sorted(map(str, recommendation_ids)),
@@ -660,6 +711,7 @@ class GovernedIntelligenceService:
         )
         self.session.add(run)
         self.session.flush()
+        self.last_run_id = run.id
         return run, result.value
 
     def _invalidate(self, run: LLMRun, errors: list[str]) -> None:

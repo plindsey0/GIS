@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import uuid
 
 import pytest
@@ -8,6 +9,7 @@ from sqlalchemy import create_engine, func, inspect, select
 from sqlalchemy.orm import Session
 from test_opportunities import package
 
+from gis.api.workbench import WorkbenchQueries
 from gis.database_safety import explicit_alembic_config
 from gis.intelligence.provider import ReplayLLMProvider
 from gis.intelligence.schemas import EvidenceReference
@@ -208,6 +210,87 @@ def test_contradictory_proposal_direction_is_rejected(session: Session) -> None:
     assert session.scalar(select(func.count()).select_from(ExperimentProposal)) == 0
     failed = session.scalar(select(LLMRun).where(LLMRun.task_type == "experiment_proposal"))
     assert failed and failed.validation_status == "INVALID"
+
+
+def test_invalid_logical_request_retries_as_distinct_attempt_then_reuses(
+    session: Session,
+) -> None:
+    _, _, evidence, packet, provider, service = setup(session)
+    opportunity = service.generate_opportunities(packet)[0]
+    service.review_opportunity(opportunity.id, "ACCEPTED", "human")
+    provider.responses.update(responses(evidence.id, opportunity_id=opportunity.id))
+    recommendation = service.generate_recommendations([opportunity.id])[0]
+    service.select_recommendation(recommendation.id, "human")
+    invalid = responses(evidence.id, opportunity.id, recommendation.id)
+    invalid["experiment_proposal"]["baseline_evidence_ids"] = [str(uuid.uuid4())]  # type: ignore[index]
+    provider.responses.update(invalid)
+
+    with pytest.raises(IntelligenceValidationError, match="outside recommendation lineage"):
+        service.generate_experiment_proposal(recommendation.id)
+    original = session.scalar(select(LLMRun).where(LLMRun.task_type == "experiment_proposal"))
+    assert original and original.validation_status == "INVALID"
+    original_snapshot = copy.deepcopy(original.response_snapshot_json)
+    original_errors = list(original.validation_errors_json)
+    original_created_at = original.created_at
+    calls_before_retry = len(provider.calls)
+
+    provider.responses.update(responses(evidence.id, opportunity.id, recommendation.id))
+    proposal = service.generate_experiment_proposal(recommendation.id)
+    attempts = list(session.scalars(select(LLMRun).where(
+        LLMRun.request_fingerprint == original.request_fingerprint
+    ).order_by(LLMRun.attempt_number)))
+    assert len(provider.calls) == calls_before_retry + 1
+    assert len(attempts) == 2
+    assert [item.attempt_number for item in attempts] == [1, 2]
+    assert attempts[1].retry_of_run_id == original.id
+    assert attempts[1].validation_status == "VALID"
+    assert proposal.llm_run_id == attempts[1].id
+    assert original.validation_status == "INVALID"
+    assert original.response_snapshot_json == original_snapshot
+    assert original.validation_errors_json == original_errors
+    assert original.created_at == original_created_at
+    audit = WorkbenchQueries(session).experiment_proposal(proposal)["llm_run"]
+    assert audit["logical_request"] == original.request_fingerprint[:12]
+    assert audit["attempt_number"] == 2
+    assert audit["retry_of_run_id"] == str(original.id)
+    assert audit["prior_attempts"] == [{
+        "id": str(original.id),
+        "attempt_number": 1,
+        "validation_status": "INVALID",
+        "created_at": str(original.created_at),
+    }]
+
+    replay_without_response = ReplayLLMProvider({})
+    reused = GovernedIntelligenceService(session, replay_without_response)
+    assert reused.generate_experiment_proposal(recommendation.id).id == proposal.id
+    assert reused.last_run_reused is True
+    assert replay_without_response.calls == []
+    assert session.scalar(select(func.count()).select_from(Intervention)) == 0
+
+
+def test_pending_logical_request_refuses_before_provider_invocation(session: Session) -> None:
+    _, _, evidence, packet, provider, service = setup(session)
+    opportunity = service.generate_opportunities(packet)[0]
+    service.review_opportunity(opportunity.id, "ACCEPTED", "human")
+    provider.responses.update(responses(evidence.id, opportunity_id=opportunity.id))
+    recommendation = service.generate_recommendations([opportunity.id])[0]
+    service.select_recommendation(recommendation.id, "human")
+    invalid = responses(evidence.id, opportunity.id, recommendation.id)
+    invalid["experiment_proposal"]["baseline_evidence_ids"] = [str(uuid.uuid4())]  # type: ignore[index]
+    provider.responses.update(invalid)
+    with pytest.raises(IntelligenceValidationError):
+        service.generate_experiment_proposal(recommendation.id)
+    pending = session.scalar(select(LLMRun).where(LLMRun.task_type == "experiment_proposal"))
+    assert pending
+    pending.validation_status = "PENDING"
+    calls_before_preflight = len(provider.calls)
+    provider.responses.update(responses(evidence.id, opportunity.id, recommendation.id))
+
+    with pytest.raises(IntelligenceValidationError, match="already pending"):
+        service.generate_experiment_proposal(recommendation.id)
+    assert len(provider.calls) == calls_before_preflight
+    assert session.scalar(select(func.count()).select_from(ExperimentProposal)) == 0
+    assert session.scalar(select(func.count()).select_from(Intervention)) == 0
 
 
 def test_proposal_accepts_enriched_reference_from_final_governed_packet(

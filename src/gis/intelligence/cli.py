@@ -88,10 +88,9 @@ def _generate_live_experiment_proposal(
     ):
         raise ValueError("recommendation not found in permitted tenant/site scope")
     provider = provider_from_environment(allow_live=True)
+    service = GovernedIntelligenceService(session, provider)
     try:
-        proposal = GovernedIntelligenceService(
-            session, provider
-        ).generate_experiment_proposal(recommendation.id)
+        proposal = service.generate_experiment_proposal(recommendation.id)
         session.commit()
     except IntelligenceValidationError:
         _rollback_preserving_failed_llm_audit(session)
@@ -105,6 +104,7 @@ def _generate_live_experiment_proposal(
             "status": proposal.status,
         },
         "human_review_required": True,
+        "reused_existing_artifact": service.last_run_reused,
     }
 
 
@@ -126,15 +126,15 @@ def main() -> None:
             if not original or original.tenant_id != tenant.id or original.site_id != site.id:
                 raise ValueError("proposal not found in permitted tenant/site scope")
             provider = provider_from_environment(allow_live=True)
-            replacement = GovernedIntelligenceService(
-                session, provider
-            ).generate_experiment_proposal(
+            service = GovernedIntelligenceService(session, provider)
+            replacement = service.generate_experiment_proposal(
                 original.recommendation_id, supersedes_proposal_id=original.id
             )
             session.commit()
             print(json.dumps({"id": str(replacement.id), "provider": provider.key,
                               "supersedes_proposal_id": str(original.id),
-                              "human_review_required": True}, indent=2))
+                              "human_review_required": True,
+                              "reused_existing_artifact": service.last_run_reused}, indent=2))
             return
         if getattr(args, "entity_id", None) and getattr(args, "evidence_id", None):
             raise ValueError("Choose either --entity-id or --evidence-id, not both.")
@@ -153,9 +153,8 @@ def main() -> None:
                     "live-opportunities requires --confirm-paid-provider-call; no call was made"
                 )
             provider = provider_from_environment(allow_live=True)
-            opportunities = GovernedIntelligenceService(session, provider).generate_opportunities(
-                packet
-            )
+            service = GovernedIntelligenceService(session, provider)
+            opportunities = service.generate_opportunities(packet)
             session.commit()
             print(json.dumps({
                 "provider": provider.key,
@@ -165,6 +164,7 @@ def main() -> None:
                     for item in opportunities
                 ],
                 "human_review_required": True,
+                "reused_existing_artifact": service.last_run_reused,
             }, indent=2))
             return
         evidence_id = packet.evidence[0].evidence_id
