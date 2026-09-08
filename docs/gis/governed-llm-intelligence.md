@@ -44,6 +44,24 @@ it enables no tools and asks the provider not to store the response. The three v
 validation outcome/errors, request fingerprint, and optional token/cost metadata. It never stores
 hidden chain-of-thought.
 
+The request fingerprint identifies a logical governed request, not a unique execution row:
+
+```text
+logical governed request
+  -> immutable attempt 1 (for example INVALID)
+  -> immutable attempt 2 (explicitly authorized retry, for example VALID)
+  -> at most one reusable valid downstream artifact
+```
+
+Before invoking any provider, GIS takes a transaction-scoped lock for the fingerprint and inspects
+the ordered attempt history. A valid attempt is reused only when its downstream artifact exists; a
+pending attempt refuses duplication; an invalid attempt permits another attempt through the same
+provider and paid-execution gates. A successful retry retains the same fingerprint, receives the
+next attempt number and a `retry_of_run_id`, and never overwrites the failed attempt. Subsequent
+identical commands reuse the valid artifact and report `reused_existing_artifact: true` without a
+provider call. Workbench audit summaries show the abbreviated logical request, current attempt,
+retry link, and prior attempts while leaving raw responses collapsed.
+
 Normalized links make the lineage traversable:
 
 ```text

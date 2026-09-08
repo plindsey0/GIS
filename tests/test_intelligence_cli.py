@@ -135,6 +135,7 @@ def test_live_experiment_proposals_uses_governed_service_without_intervention(
             "status": "READY_FOR_REVIEW",
         },
         "human_review_required": True,
+        "reused_existing_artifact": False,
     }
     assert len(provider.calls) == 1
     assert provider.calls[0]["task"] == "experiment_proposal"
@@ -142,3 +143,12 @@ def test_live_experiment_proposals_uses_governed_service_without_intervention(
     assert "Preserve review constraint" in provider.calls[0]["user_prompt"]
     assert session.scalar(select(func.count()).select_from(Recommendation)) == 1
     assert session.scalar(select(func.count()).select_from(Intervention)) == 0
+
+    no_call_provider = ReplayLLMProvider({})
+    monkeypatch.setattr(cli, "provider_from_environment", lambda **_: no_call_provider)
+    reused = cli._generate_live_experiment_proposal(
+        session, proposal_args(recommendation.id), tenant, site
+    )
+    assert reused["proposal"] == result["proposal"]
+    assert reused["reused_existing_artifact"] is True
+    assert no_call_provider.calls == []

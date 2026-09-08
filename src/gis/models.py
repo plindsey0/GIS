@@ -5068,7 +5068,10 @@ class LLMRun(Base):
         ForeignKeyConstraint(
             ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
         ),
-        UniqueConstraint("request_fingerprint", name="uq_llm_run_request_fingerprint"),
+        UniqueConstraint(
+            "request_fingerprint", "attempt_number", name="uq_llm_run_fingerprint_attempt"
+        ),
+        Index("ix_llm_run_request_fingerprint", "request_fingerprint"),
         Index("ix_llm_run_scope", "tenant_id", "site_id", "created_at"),
         {"schema": SCHEMA},
     )
@@ -5080,6 +5083,10 @@ class LLMRun(Base):
     model_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    retry_of_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.llm_run.id", ondelete="SET NULL")
+    )
     input_evidence_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     input_opportunity_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     input_recommendation_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)

@@ -95,6 +95,25 @@ class WorkbenchQueries:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def _llm_attempt_summary(self, run: LLMRun | None) -> dict[str, Any] | None:
+        if not run:
+            return None
+        attempts = list(self.session.scalars(select(LLMRun).where(
+            LLMRun.request_fingerprint == run.request_fingerprint
+        ).order_by(LLMRun.attempt_number, LLMRun.created_at, LLMRun.id)))
+        return {
+            **row_data(run, exclude={"response_snapshot_json", "request_fingerprint"}),
+            "logical_request": run.request_fingerprint[:12],
+            "attempt_number": run.attempt_number,
+            "retry_of_run_id": str(run.retry_of_run_id) if run.retry_of_run_id else None,
+            "prior_attempts": [{
+                "id": str(item.id),
+                "attempt_number": item.attempt_number,
+                "validation_status": item.validation_status,
+                "created_at": str(item.created_at),
+            } for item in attempts if item.id != run.id],
+        }
+
     def site(self, tenant_id: uuid.UUID, site_id: uuid.UUID) -> Site:
         row = self.session.scalar(
             select(Site).where(Site.id == site_id, Site.tenant_id == tenant_id)
@@ -345,7 +364,7 @@ class WorkbenchQueries:
                 "generation_provider": "replay",
                 "paid_provider_calls": 0,
             },
-            "llm_run": row_data(run, exclude={"response_snapshot_json", "request_fingerprint"}) if run else None,
+            "llm_run": self._llm_attempt_summary(run),
         }
 
     def _intelligence_recommendation(self, recommendation: Recommendation) -> dict[str, Any]:
@@ -399,7 +418,7 @@ class WorkbenchQueries:
             "actions": {"can_select": recommendation.status.value == "READY_FOR_REVIEW",
                         "can_generate_proposal": recommendation.status.value == "ACCEPTED" and not proposals,
                         "generation_provider": "replay", "paid_provider_calls": 0},
-            "llm_run": row_data(run, exclude={"response_snapshot_json", "request_fingerprint"}) if run else None}
+            "llm_run": self._llm_attempt_summary(run)}
 
     def intelligence_recommendations(self, tenant_id: uuid.UUID, site_id: uuid.UUID,
                                      page: int, limit: int) -> dict[str, Any]:
@@ -438,6 +457,7 @@ class WorkbenchQueries:
                 "prompt_version": run.prompt_version if run else None,
                 "analytical_subject": linked.get("analytical_subject") if linked else None,
                 "evidence_reference_count": len(proposal.evidence_references_json),
+                "llm_run": self._llm_attempt_summary(run),
                 "actions": {"can_review": proposal.status in {"READY_FOR_REVIEW", "NEEDS_REVIEW"},
                             "can_regenerate_replay": proposal.status == "NEEDS_REVIEW"},
                 "lineage": {"evidence_ids": evidence,
