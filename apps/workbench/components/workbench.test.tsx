@@ -7,7 +7,7 @@ import {OverviewPage} from "./overview";
 import {SystemPage} from "./system";
 import {GoalCreate, GoalMap, GoalsExplorer} from "./goals";
 import {ProviderDetail, ProvidersPage} from "./providers";
-import {InterventionInbox, OpportunityDecisionDetail, ProposalInbox, RecommendationDecisionDetail} from "./intelligence-workbench";
+import {InterventionInbox, OpportunityDecisionDetail, ProposalDetail, ProposalInbox, RecommendationDecisionDetail} from "./intelligence-workbench";
 
 vi.mock("next/navigation", () => ({useRouter: () => ({push: vi.fn()})}));
 
@@ -102,6 +102,15 @@ describe("GIS Workbench", () => {
     vi.stubGlobal("fetch", vi.fn(() => answer({items:[{id:"p1",title:"Revise test",objective:"Correct direction",status:"NEEDS_REVIEW",provider:"replay",model:"fixture-v1",prompt_version:"experiment_proposal_v2",created_at:"2026-09-07",actions:{can_regenerate_replay:true}}],page:1,limit:25,total:1})));
     render(<ProposalInbox/>);
     expect(await screen.findByRole("button",{name:"Regenerate with Replay (free)"})).toBeInTheDocument();
+  });
+
+  it("renders investigation requirements without implying execution", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => answer({id:"p1",data:{id:"p1",proposal_type:"INVESTIGATION",title:"Evidence-first audit",objective:"Reduce uncertainty",hypothesis:"Observe before treatment",analytical_subject:"va down payment calculator",target_url_or_resource:"https://www.vahomemath.com/va-entitlement-calculator/",instrumentation_requirements_json:["Exact-query SERP"],dependencies_json:[],risks_json:[],human_decisions:[],collection_requirements:[{id:"cr1",capability:"EXACT_QUERY_SERP",target_value:"va down payment calculator",status:"REQUESTED",cost_class:"UNKNOWN"}],recommendation:{model_recommendation:{title:"Investigate coverage"},supporting_opportunities:[],supporting_evidence:[]},lineage:{}}})));
+    render(<ProposalDetail id="p1"/>);
+    expect(await screen.findByText("Investigation proposal — not execution")).toBeInTheDocument();
+    expect(screen.getByRole("link", {name:/EXACT_QUERY_SERP/})).toHaveAttribute("href", "/collection/requirements/cr1");
+    expect(screen.getByRole("button", {name:"Approve investigation"})).toBeInTheDocument();
+    expect(screen.getByText(/Collection requires separate promotion and authorization/)).toBeInTheDocument();
   });
 
   it("renders gate-aware sufficiency without authorizing collection", async () => {

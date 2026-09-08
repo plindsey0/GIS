@@ -14,6 +14,7 @@ from gis.models import (
     AnalyticalEntity,
     CollectionPlanItem,
     CollectionPlanningDecision,
+    CollectionRequirement,
     CollectionTarget,
     CompetitiveContentObservation,
     CompetitiveEvent,
@@ -450,6 +451,9 @@ class WorkbenchQueries:
         recommendation = self.session.get(Recommendation, proposal.recommendation_id)
         linked = self._intelligence_recommendation(recommendation) if recommendation else None
         run = self.session.get(LLMRun, proposal.llm_run_id)
+        requirements = list(self.session.scalars(select(CollectionRequirement).where(
+            CollectionRequirement.proposal_id == proposal.id
+        ).order_by(CollectionRequirement.created_at, CollectionRequirement.id)))
         return {**row_data(proposal), "human_decisions": [row_data(item) for item in reviews],
                 "evidence_ids": evidence, "recommendation": linked,
                 "provider": run.provider_key if run else None,
@@ -457,6 +461,8 @@ class WorkbenchQueries:
                 "prompt_version": run.prompt_version if run else None,
                 "analytical_subject": linked.get("analytical_subject") if linked else None,
                 "evidence_reference_count": len(proposal.evidence_references_json),
+                "collection_requirements": [self.collection_requirement(item)
+                                            for item in requirements],
                 "llm_run": self._llm_attempt_summary(run),
                 "actions": {"can_review": proposal.status in {"READY_FOR_REVIEW", "NEEDS_REVIEW"},
                             "can_regenerate_replay": proposal.status == "NEEDS_REVIEW"},
@@ -464,6 +470,54 @@ class WorkbenchQueries:
                             "opportunity_ids": linked.get("opportunity_ids", []) if linked else [],
                             "recommendation_id": proposal.recommendation_id,
                             "experiment_proposal_id": proposal.id}}
+
+    def collection_requirement(self, requirement: CollectionRequirement) -> dict[str, Any]:
+        proposal = self.session.get(ExperimentProposal, requirement.proposal_id)
+        gap = (self.session.get(EvidenceGap, requirement.evidence_gap_id)
+               if requirement.evidence_gap_id else None)
+        plan_item = (self.session.get(CollectionPlanItem, requirement.collection_plan_item_id)
+                     if requirement.collection_plan_item_id else None)
+        return {
+            **row_data(requirement),
+            "resource_type": "collection_requirement",
+            "label": requirement.target_value,
+            "origin": "INTELLIGENCE_REQUESTED",
+            "type": requirement.capability.value,
+            "proposal": {
+                "id": str(proposal.id),
+                "title": proposal.title,
+                "href": f"/experiment-proposals/{proposal.id}",
+            } if proposal else None,
+            "evidence_gap": {
+                "id": str(requirement.gap_reference_id),
+                "type": requirement.gap_type,
+                "description": gap.description if gap else requirement.rationale,
+                "href": f"/evidence/gaps/{gap.id}" if gap else None,
+            },
+            "collection_target_href": (
+                f"/collection/{requirement.collection_target_id}"
+                if requirement.collection_target_id else None
+            ),
+            "collection_plan": row_data(plan_item) if plan_item else None,
+            "status_explanation": (
+                "Requested by an approved investigation; collection remains separately governed."
+            ),
+            "href": f"/collection/requirements/{requirement.id}",
+            "lineage": {
+                "proposal_id": str(requirement.proposal_id),
+                "recommendation_id": str(requirement.recommendation_id),
+                "opportunity_id": str(requirement.opportunity_id),
+                "analytical_entity_id": str(requirement.analytical_entity_id),
+                "evidence_gap_id": str(requirement.gap_reference_id),
+                "satisfying_evidence_package_id": encoded(
+                    requirement.satisfying_evidence_package_id
+                ),
+            },
+            "execution": {
+                "collection_executed": False,
+                "intervention_created": False,
+            },
+        }
 
     def overview(self, tenant_id: uuid.UUID, site_id: uuid.UUID) -> dict[str, Any]:
         self.site(tenant_id, site_id)
