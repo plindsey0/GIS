@@ -6,6 +6,7 @@ PROMPT_VERSIONS = {
     "candidate_opportunity": "opportunity_generation_v2",
     "candidate_recommendation": "recommendation_generation_v2",
     "experiment_proposal": "experiment_proposal_v2",
+    "query_page_intent_resolution": "query_page_intent_resolution_v1",
 }
 
 

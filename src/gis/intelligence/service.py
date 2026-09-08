@@ -52,6 +52,8 @@ from gis.models import (
     OpportunityReview,
     OpportunityStatus,
     PermittedUse,
+    QueryPageIntentAssessment,
+    QueryPageIntentEvidence,
     Recommendation,
     RecommendationEvidence,
     RecommendationOpportunity,
@@ -535,6 +537,40 @@ class EvidencePacketService:
             )
             surface["reference_id"] = str(surface_id)
             reference(surface_id, "OBSERVED_QUERY_PAGE_ASSOCIATION", "owned_surfaces")
+        assessments = list(self.session.scalars(select(QueryPageIntentAssessment).where(
+            QueryPageIntentAssessment.tenant_id == tenant_id,
+            QueryPageIntentAssessment.site_id == site_id,
+            QueryPageIntentAssessment.query_entity_id == analytical_entity_id,
+            QueryPageIntentAssessment.is_current.is_(True),
+        ).order_by(QueryPageIntentAssessment.evaluated_at.desc()).limit(5)))
+        for assessment in assessments:
+            assessment_package_ids = list(self.session.scalars(
+                select(QueryPageIntentEvidence.evidence_package_id).where(
+                    QueryPageIntentEvidence.assessment_id == assessment.id,
+                    QueryPageIntentEvidence.evidence_package_id.in_(package_ids),
+                )
+            ))
+            if not assessment_package_ids:
+                continue
+            packet.query_page_relationships.append({
+                "assessment_id": str(assessment.id),
+                "query": assessment.query_text,
+                "candidate_url": assessment.page_url,
+                "association": assessment.association_state,
+                "targeting": assessment.targeting_state,
+                "intent_satisfaction": assessment.intent_satisfaction_state,
+                "interpreted_user_need": assessment.interpreted_user_need,
+                "evaluated_at": assessment.evaluated_at.isoformat(),
+                "method_version": assessment.method_version,
+                "limitations": assessment.limitations_json[:5],
+                "reassessment_needed": assessment.reassessment_needed,
+            })
+            reference(
+                assessment.id,
+                "QUERY_PAGE_INTENT_ASSERTION",
+                "query_page_relationships",
+                assessment_package_ids,
+            )
         for dimension in dimensions:
             reference(
                 dimension.id, "EVIDENCE_QUALITY_DIMENSION", "quality",
