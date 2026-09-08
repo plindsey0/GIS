@@ -2182,6 +2182,56 @@ class SerpResult(Base):
     )
 
 
+class ExactQuerySerpSnapshotDetail(Base):
+    """Governed scope, deterministic summary, and evidence lineage for a SERP snapshot."""
+
+    __tablename__ = "exact_query_serp_snapshot_detail"
+    __table_args__ = (
+        Index("ix_exact_serp_entity_time", "analytical_entity_id", "observed_at"),
+        Index("ix_exact_serp_target_time", "collection_target_id", "observed_at"),
+        {"schema": SCHEMA},
+    )
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.serp_observation.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False
+    )
+    collection_target_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_target.id"), nullable=False
+    )
+    market_definition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"), nullable=False
+    )
+    previous_observation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{RAW_SCHEMA}.serp_observation.id")
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    returned_depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    change_classification: Mapped[str] = mapped_column(String(50), nullable=False)
+    owned_presence_state: Mapped[str] = mapped_column(String(64), nullable=False)
+    owned_best_position: Mapped[Optional[int]] = mapped_column(Integer)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    comparison_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    quality_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    reassessment_ready: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    evidence_package_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ExternalSearchObservation(Base):
     __tablename__ = "external_search_observation"
     __table_args__ = (

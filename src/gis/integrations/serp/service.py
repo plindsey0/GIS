@@ -166,6 +166,22 @@ class SerpCollector:
             if not isinstance(results, list):
                 raise ValueError("SERP provider task result must be an array")
             if not results:
+                # Preserve a governed zero-result snapshot rather than treating an
+                # empty provider result as absence of an observation.
+                results = [{"datetime": now.isoformat(), "items": []}]
+            result = results[0]
+            if not isinstance(result, dict):
+                raise ValueError("SERP provider result must be an object")
+            observed_at = datetime.fromisoformat(
+                result.get("datetime", now.isoformat()).replace("Z", "+00:00")
+            )
+            existing_provider_observation = (
+                self.session.scalar(select(SerpObservation).where(
+                    SerpObservation.tracked_query_id == tracked_query.id,
+                    SerpObservation.provider_task_id == task.get("id"),
+                )) if task.get("id") else None
+            )
+            if existing_provider_observation:
                 run.records_received = 0
                 run.records_inserted = 0
                 run.status = IngestionStatus.SUCCEEDED
@@ -174,18 +190,12 @@ class SerpCollector:
                     **run.source_metadata,
                     "provider_task_id": task.get("id"),
                     "provider_cost": task.get("cost"),
+                    "idempotent_replay": True,
+                    "reused_observation_id": str(existing_provider_observation.id),
                 }
-                connection.status = ConnectionStatus.ACTIVE
-                connection.last_successful_sync_at = run.completed_at
                 connection.last_attempted_sync_at = run.completed_at
                 self.session.commit()
                 return run
-            result = results[0]
-            if not isinstance(result, dict):
-                raise ValueError("SERP provider result must be an object")
-            observed_at = datetime.fromisoformat(
-                result.get("datetime", now.isoformat()).replace("Z", "+00:00")
-            )
             identity = [
                 str(tracked_query.id),
                 observed_at.date().isoformat(),
@@ -226,10 +236,20 @@ class SerpCollector:
             self.session.add(observation)
             self.session.flush()
             received = 0
-            for item in result.get("items", []):
+            malformed = 0
+            duplicates = 0
+            seen: set[tuple[int, str, str | None]] = set()
+            items = result.get("items", [])
+            if not isinstance(items, list):
+                raise ValueError("SERP provider items must be an array")
+            for item in items:
+                if not isinstance(item, dict):
+                    malformed += 1
+                    continue
                 rank = item.get("rank_absolute")
                 provider_type = str(item.get("type", ""))
                 if not isinstance(rank, int) or rank < 1:
+                    malformed += 1
                     continue
                 url = item.get("url")
                 normalized = host = None
@@ -237,7 +257,13 @@ class SerpCollector:
                     try:
                         normalized, host = normalize_url(str(url))
                     except ValueError:
+                        malformed += 1
                         continue
+                duplicate_key = (rank, provider_type or "unknown", normalized)
+                if duplicate_key in seen:
+                    duplicates += 1
+                    continue
+                seen.add(duplicate_key)
                 feature = map_feature(provider_type)
                 self.session.add(
                     SerpResult(
@@ -268,6 +294,9 @@ class SerpCollector:
                 **run.source_metadata,
                 "provider_task_id": task.get("id"),
                 "provider_cost": task.get("cost"),
+                "provider_items_returned": len(items),
+                "malformed_items": malformed,
+                "duplicate_items": duplicates,
             }
             connection.status = ConnectionStatus.ACTIVE
             connection.last_successful_sync_at = run.completed_at

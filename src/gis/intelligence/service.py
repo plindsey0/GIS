@@ -32,6 +32,7 @@ from gis.models import (
     EvidencePackage,
     EvidencePackageItem,
     EvidenceQualityDimension,
+    ExactQuerySerpSnapshotDetail,
     ExperimentProposal,
     ExperimentProposalEvidence,
     ExperimentProposalReview,
@@ -62,6 +63,7 @@ from gis.models import (
     RecommendationRunStatus,
     RecommendationStatus,
     RightsStatus,
+    SerpObservation,
     Site,
 )
 from gis.provenance.service import evaluate_policy_use
@@ -458,6 +460,36 @@ class EvidencePacketService:
                 })
 
         package_ids = [row.id for row in selected]
+        serp_details = list(self.session.scalars(select(ExactQuerySerpSnapshotDetail).where(
+            ExactQuerySerpSnapshotDetail.evidence_package_id.in_(package_ids),
+            ExactQuerySerpSnapshotDetail.reassessment_ready.is_(True),
+        ).order_by(ExactQuerySerpSnapshotDetail.observed_at.desc()).limit(3)))
+        for detail in serp_details:
+            serp_observation = self.session.get(SerpObservation, detail.observation_id)
+            if not serp_observation:
+                continue
+            packet.serp_intelligence.append({
+                "snapshot_id": str(detail.observation_id),
+                "evidence_package_id": str(detail.evidence_package_id),
+                "exact_query": serp_observation.normalized_query,
+                "country": serp_observation.country_code,
+                "language": serp_observation.language_code,
+                "device": serp_observation.device,
+                "search_engine": serp_observation.search_engine,
+                "provider": detail.provider,
+                "observed_at": detail.observed_at.isoformat(),
+                "requested_depth": serp_observation.requested_depth,
+                "returned_depth": detail.returned_depth,
+                "result_count": detail.result_count,
+                "owned_presence_state": detail.owned_presence_state,
+                "owned_best_position": detail.owned_best_position,
+                "result_type_counts": detail.summary_json.get("result_type_counts", {}),
+                "top_domains": detail.summary_json.get("top_domains", [])[:10],
+                "top_results": detail.summary_json.get("top_results", [])[:20],
+                "comparison": detail.comparison_json,
+                "quality_state": detail.quality_state,
+                "limitations": detail.limitations_json,
+            })
         dimensions = list(self.session.scalars(select(EvidenceQualityDimension).where(
             EvidenceQualityDimension.evidence_package_id.in_(package_ids)
         ).order_by(EvidenceQualityDimension.evidence_package_id, EvidenceQualityDimension.dimension)))
@@ -476,7 +508,9 @@ class EvidencePacketService:
             "requested_capability": row.desired_evidence_capability,
             "description": row.description, "urgency": row.urgency.value,
         } for row in gaps]
-        if not any("SERP" in str(row["gap_type"]).upper() for row in packet.evidence_gaps):
+        if not packet.serp_intelligence and not any(
+            "SERP" in str(row["gap_type"]).upper() for row in packet.evidence_gaps
+        ):
             packet.evidence_gaps.append({
                 "gap_type": "EXACT_QUERY_SERP_COMPETITOR_EVIDENCE", "status": "UNRESOLVED",
                 "description": "No governed exact-query SERP or competitor evidence was selected.",
@@ -524,6 +558,18 @@ class EvidencePacketService:
         for ranking, observation in rankings:
             reference(observation.id, "EXTERNAL_SEARCH_OBSERVATION", "organic_visibility")
             reference(ranking.id, "EXTERNAL_KEYWORD_RANKING", "organic_visibility")
+        for serp_snapshot in packet.serp_intelligence:
+            snapshot_id = uuid.UUID(str(serp_snapshot["snapshot_id"]))
+            backing = [uuid.UUID(str(serp_snapshot["evidence_package_id"]))]
+            reference(snapshot_id, "EXACT_QUERY_SERP_SNAPSHOT", "serp_intelligence", backing)
+            top_results = serp_snapshot.get("top_results", [])
+            result_ids: set[uuid.UUID] = set()
+            if isinstance(top_results, list):
+                for item in top_results:
+                    if isinstance(item, dict) and item.get("result_id"):
+                        result_ids.add(uuid.UUID(str(item["result_id"])))
+            for result_id in result_ids:
+                reference(result_id, "SERP_RESULT", "serp_intelligence", backing)
         for gsc_observation in gsc_rows:
             reference(gsc_observation.id, "GSC_SEARCH_OBSERVATION", "search_console")
         for ga4_observation in ga4_rows:

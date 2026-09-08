@@ -287,16 +287,13 @@ def test_serp_collection_provenance_ownership_and_revisions(session: Session) ->
     observations = session.scalars(
         select(SerpObservation).order_by(SerpObservation.created_at)
     ).all()
-    assert (
-        len(observations) == 2
-        and observations[0].effective_end is not None
-        and observations[1].effective_end is None
-    )
+    assert len(observations) == 1 and observations[0].effective_end is None
+    assert second.source_metadata["idempotent_replay"] is True
     results = session.scalars(
-        select(SerpResult).where(SerpResult.serp_observation_id == observations[1].id)
+        select(SerpResult).where(SerpResult.serp_observation_id == observations[0].id)
     ).all()
     assert results[0].ownership.value == "OWN_SITE" and results[0].is_organic
-    assert observations[1].rights_policy_id == source_policy_id(session, connection.data_source_id)
+    assert observations[0].rights_policy_id == source_policy_id(session, connection.data_source_id)
 
 
 def test_failed_provider_run_never_leaks_secret(session: Session) -> None:

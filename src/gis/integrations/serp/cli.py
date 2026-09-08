@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from gis.db import session_factory
 from gis.integrations.serp.dataforseo import DataForSEOProvider
 from gis.integrations.serp.service import SerpCollector, estimate_cost, normalize_query
+from gis.integrations.serp_intelligence.service import ExactQuerySerpService
 from gis.models import (
     ConnectionStatus,
     ConnectionType,
@@ -142,6 +143,11 @@ def parser() -> argparse.ArgumentParser:
     sync = commands.add_parser("sync")
     sync.add_argument("--connection", type=uuid.UUID, required=True)
     sync.add_argument("--query-id", type=uuid.UUID, required=True)
+    exact = commands.add_parser("sync-exact")
+    exact.add_argument("--connection", type=uuid.UUID, required=True)
+    exact.add_argument("--query-id", type=uuid.UUID, required=True)
+    exact.add_argument("--collection-target", type=uuid.UUID, required=True)
+    exact.add_argument("--analytical-entity", type=uuid.UUID, required=True)
     inspect = commands.add_parser("inspect")
     inspect.add_argument("--limit", type=int, default=20)
     return root
@@ -211,7 +217,7 @@ def run(arguments: list[str] | None = None) -> int:
                 output = {"query_id": str(row.id), "active": False}
             elif args.command == "estimate":
                 output = estimate_cost(args.queries, args.cadence, args.unit_cost).to_dict()
-            elif args.command == "sync":
+            elif args.command in {"sync", "sync-exact"}:
                 connection = session.get(DataSourceConnection, args.connection)
                 query = session.get(TrackedQuery, args.query_id)
                 if connection is None or query is None:
@@ -242,8 +248,14 @@ def run(arguments: list[str] | None = None) -> int:
                     )
                 login, password = _credentials(connection.credential_reference)
                 session.commit()  # Durable reservation before the external API call.
-                run = SerpCollector(session, DataForSEOProvider(login, password)).sync(
-                    connection.id, query
+                provider = DataForSEOProvider(login, password)
+                run = (
+                    ExactQuerySerpService(session, provider).collect(
+                        connection.id, query.id, args.collection_target,
+                        args.analytical_entity,
+                    )
+                    if args.command == "sync-exact"
+                    else SerpCollector(session, provider).sync(connection.id, query)
                 )
                 cost = run.source_metadata.get("provider_cost")
                 control.reconcile(

@@ -21,11 +21,14 @@ from gis.models import (
     EvidencePackage,
     EvidencePackageItem,
     EvidenceQualityDimension,
+    ExactQuerySerpSnapshotDetail,
     MarketDefinition,
     MarketDefinitionMember,
     MarketMetricObservation,
     MarketObservation,
     MarketParticipantObservation,
+    SerpObservation,
+    SerpResult,
 )
 from gis.opportunities.sufficiency import diagnose
 
@@ -410,6 +413,28 @@ def collection_detail(
     gaps = list(
         session.scalars(select(EvidenceGap).where(EvidenceGap.collection_target_id == target.id))
     )
+    serp_rows = list(session.execute(
+        select(ExactQuerySerpSnapshotDetail, SerpObservation)
+        .join(SerpObservation,
+              SerpObservation.id == ExactQuerySerpSnapshotDetail.observation_id)
+        .where(ExactQuerySerpSnapshotDetail.collection_target_id == target.id)
+        .order_by(ExactQuerySerpSnapshotDetail.observed_at.desc())
+        .limit(20)
+    ))
+    serp_ids = [detail.observation_id for detail, _ in serp_rows]
+    results_by_snapshot: dict[uuid.UUID, list[dict[str, Any]]] = {
+        snapshot_id: [] for snapshot_id in serp_ids
+    }
+    for result in session.scalars(select(SerpResult).where(
+        SerpResult.serp_observation_id.in_(serp_ids)
+    ).order_by(SerpResult.serp_observation_id, SerpResult.rank_absolute)):
+        results_by_snapshot[result.serp_observation_id].append({
+            "id": str(result.id), "position": result.rank_absolute,
+            "group_position": result.rank_group, "result_type": result.feature_type.value,
+            "provider_type": result.provider_type, "domain": result.hostname,
+            "title": result.title, "description": result.snippet,
+            "url": result.normalized_url, "owned_site": result.ownership.value == "OWN_SITE",
+        })
     return {
         "id": str(target.id),
         "resource_type": "collection_target",
@@ -432,6 +457,36 @@ def collection_detail(
         ],
         "demand_signals": [row_data(item) for item in signals],
         "evidence_gaps": [{**row_data(item), "href": f"/evidence/gaps/{item.id}"} for item in gaps],
+        "exact_query_serp_observations": [
+            {
+                "id": str(detail.observation_id), "exact_query": observation.query_text,
+                "normalized_query": observation.normalized_query,
+                "country": observation.country_code, "location_code": observation.location_code,
+                "location": observation.location_name, "language": observation.language_code,
+                "device": observation.device, "search_engine": observation.search_engine,
+                "provider": detail.provider, "observed_at": encoded(detail.observed_at),
+                "requested_depth": observation.requested_depth,
+                "returned_depth": detail.returned_depth, "result_count": detail.result_count,
+                "owned_presence": detail.owned_presence_state,
+                "owned_best_position": detail.owned_best_position,
+                "overview": detail.summary_json,
+                "results": results_by_snapshot[detail.observation_id],
+                "historical_comparison": detail.comparison_json,
+                "quality_state": detail.quality_state,
+                "limitations": detail.limitations_json,
+                "reassessment_ready": detail.reassessment_ready,
+                "technical": {
+                    "snapshot_hash": detail.snapshot_hash,
+                    "change_classification": detail.change_classification,
+                    "previous_observation_id": encoded(detail.previous_observation_id),
+                    "ingestion_run_id": str(observation.ingestion_run_id),
+                    "provider_task_id": observation.provider_task_id,
+                    "rights_policy_id": str(observation.rights_policy_id),
+                    "evidence_package_id": encoded(detail.evidence_package_id),
+                },
+            }
+            for detail, observation in serp_rows
+        ],
         "relationships": {"market": f"/markets/{target.market_definition_id}"},
         "technical_id": str(target.id),
     }
