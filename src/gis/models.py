@@ -5234,6 +5234,109 @@ class LLMRun(Base):
     )
 
 
+class QueryPageIntentAssessment(Base):
+    """Immutable governed interpretation of one exact-query/page relationship."""
+
+    __tablename__ = "query_page_intent_assessment"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("input_fingerprint", name="uq_query_page_intent_input"),
+        Index(
+            "ix_query_page_intent_current",
+            "tenant_id",
+            "site_id",
+            "query_entity_id",
+            "page_entity_id",
+            "is_current",
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    query_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False
+    )
+    page_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False
+    )
+    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id")
+    )
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    page_url: Mapped[str] = mapped_column(Text, nullable=False)
+    association_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    targeting_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    intent_satisfaction_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    interpreted_user_need: Mapped[str] = mapped_column(Text, nullable=False)
+    origin: Mapped[str] = mapped_column(String(32), nullable=False)
+    method_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    prompt_version: Mapped[Optional[str]] = mapped_column(String(100))
+    llm_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.llm_run.id")
+    )
+    previous_assessment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.query_page_intent_assessment.id")
+    )
+    input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    page_content_fingerprint: Mapped[Optional[str]] = mapped_column(String(64))
+    serp_fingerprint: Mapped[Optional[str]] = mapped_column(String(64))
+    supporting_references_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    conflicting_references_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    assumptions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    evidence_gaps_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    quality_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    reassessment_needed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reassessment_reasons_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class QueryPageIntentEvidence(Base):
+    __tablename__ = "query_page_intent_evidence"
+    __table_args__ = (
+        UniqueConstraint(
+            "assessment_id", "evidence_package_id", name="uq_query_page_intent_evidence"
+        ),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assessment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.query_page_intent_assessment.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evidence_package_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id"), nullable=False
+    )
+
+
+class QueryPageIntentReview(Base):
+    __tablename__ = "query_page_intent_review"
+    __table_args__ = (
+        Index("ix_query_page_intent_review_history", "assessment_id", "reviewed_at"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assessment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.query_page_intent_assessment.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(255), nullable=False)
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class LLMOpportunityDetail(Base, TimestampMixin):
     __tablename__ = "llm_opportunity_detail"
     __table_args__ = (

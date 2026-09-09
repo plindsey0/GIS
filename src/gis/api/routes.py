@@ -129,6 +129,7 @@ from gis.provider_control.manual import ManualRequest, manual_run
 from gis.provider_control.recovery import recovery_preview
 from gis.provider_control.runtime import readiness
 from gis.provider_control.service import ProviderControlService
+from gis.query_page_intent.service import IntentResolutionError, QueryPageIntentService
 from gis.recommendations.provider import FixtureRecommendationProvider
 from gis.recommendations.service import RecommendationService
 
@@ -139,6 +140,12 @@ def database() -> Session:  # type: ignore[misc]
 
 
 router = APIRouter(prefix="/api/v1")
+
+
+class QueryPageIntentReviewInput(BaseModel):
+    decision: str = Field(pattern="^(CONFIRM|DISAGREE|NEEDS_MORE_EVIDENCE)$")
+    reviewer: str = Field(min_length=1, max_length=255)
+    comment: Optional[str] = None
 
 
 @router.get("/connections/{connection_id}/rights", dependencies=[Depends(require_role(Role.READ))])
@@ -1992,6 +1999,52 @@ def evidence_gap(
 ) -> dict[str, Any]:
     WorkbenchQueries(session).site(tenant_id, site_id)
     return evidence_gap_detail(session, resource_id, tenant_id, site_id)
+
+
+@router.get(
+    "/query-page-intent/{resource_id}", dependencies=[Depends(require_role(Role.READ))]
+)
+def query_page_intent_detail(
+    resource_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        return QueryPageIntentService(session, ReplayLLMProvider({})).read_model(
+            resource_id, tenant_id, site_id
+        )
+    except IntentResolutionError as exc:
+        raise ApiError(404, "QUERY_PAGE_INTENT_NOT_FOUND", str(exc)) from exc
+
+
+@router.post(
+    "/query-page-intent/{resource_id}/reviews",
+    dependencies=[Depends(require_role(Role.REVIEW))],
+    status_code=201,
+)
+def review_query_page_intent(
+    resource_id: uuid.UUID,
+    payload: QueryPageIntentReviewInput,
+    tenant_id: uuid.UUID,
+    site_id: uuid.UUID,
+    session: Session = Depends(database),
+) -> dict[str, Any]:
+    try:
+        service = QueryPageIntentService(session, ReplayLLMProvider({}))
+        service.review(
+            resource_id,
+            tenant_id=tenant_id,
+            site_id=site_id,
+            decision=payload.decision,  # type: ignore[arg-type]
+            reviewer=payload.reviewer,
+            comment=payload.comment,
+        )
+        session.commit()
+        return service.read_model(resource_id, tenant_id, site_id)
+    except IntentResolutionError as exc:
+        session.rollback()
+        raise ApiError(404, "QUERY_PAGE_INTENT_NOT_FOUND", str(exc)) from exc
 
 
 @router.get("/markets", dependencies=[Depends(require_role(Role.READ))])

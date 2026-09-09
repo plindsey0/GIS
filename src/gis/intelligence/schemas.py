@@ -73,6 +73,7 @@ class EvidencePacket(BaseModel):
     engagement: list[dict[str, object]] = Field(default_factory=list, max_length=20)
     owned_surfaces: list[dict[str, object]] = Field(default_factory=list, max_length=5)
     owned_surface_observations: list[dict[str, object]] = Field(default_factory=list, max_length=5)
+    query_page_relationships: list[dict[str, object]] = Field(default_factory=list, max_length=5)
     quality: list[dict[str, object]] = Field(default_factory=list, max_length=50)
     evidence_gaps: list[dict[str, object]] = Field(default_factory=list, max_length=25)
     referenceable_evidence: list[EvidenceReference] = Field(default_factory=list, max_length=160)
@@ -166,3 +167,27 @@ class ExperimentProposalOutput(BaseModel):
         if any(not item.strip() for item in value):
             raise ValueError("items must not be blank")
         return value
+
+
+class QueryPageIntentOutput(BaseModel):
+    """Untrusted structured semantic interpretation; association is resolved by GIS."""
+
+    query: str = Field(min_length=1)
+    candidate_url: str = Field(min_length=1)
+    interpreted_user_need: str = Field(min_length=3)
+    targeting_state: str = Field(
+        pattern="^(SUPPORTED|PARTIAL|NOT_SUPPORTED|UNRESOLVED|INSUFFICIENT_EVIDENCE|CONFLICTING_EVIDENCE)$"
+    )
+    intent_satisfaction_state: str = Field(
+        pattern="^(SUPPORTED|PARTIAL|NOT_SUPPORTED|UNRESOLVED|INSUFFICIENT_EVIDENCE|CONFLICTING_EVIDENCE)$"
+    )
+    supporting_evidence_ids: list[uuid.UUID]
+    conflicting_evidence_ids: list[uuid.UUID]
+    page_content_claims: list[str]
+    serp_claims: list[str]
+    reasoning_summary: str = Field(min_length=3)
+    assumptions: list[str]
+    limitations: list[str]
+    confidence_metadata: str = Field(min_length=1)
+    evidence_gap_types: list[str]
+    suggested_next_resolution_action: str = Field(min_length=3)

@@ -404,6 +404,8 @@ def test_migration_upgrades_pre_epic_27_schema_without_rebuilding_existing_table
         )
         for table in (
             "collection_requirement", "owned_surface_observation_detail", "exact_query_serp_snapshot_detail",
+            "query_page_intent_review", "query_page_intent_evidence",
+            "query_page_intent_assessment",
             "experiment_proposal_review", "experiment_proposal_evidence", "experiment_proposal",
             "recommendation_opportunity", "llm_recommendation_detail", "opportunity_review",
             "llm_opportunity_detail", "llm_run",
