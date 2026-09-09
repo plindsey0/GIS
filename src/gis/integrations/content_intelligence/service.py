@@ -229,6 +229,8 @@ class CompetitiveContentCollector:
                     "raw_retention": "HASH_AND_EXTRACTED_FEATURES_ONLY",
                     "javascript_rendered": False,
                     "http_last_modified": retrieved.headers.get("Last-Modified"),
+                    "x_robots_tag": retrieved.headers.get("X-Robots-Tag"),
+                    "redirect_chain": list(retrieved.redirect_chain),
                 },
                 effective_start=now,
             )

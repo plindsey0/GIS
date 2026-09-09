@@ -71,6 +71,7 @@ class EvidencePacket(BaseModel):
     search_console: list[dict[str, object]] = Field(default_factory=list, max_length=10)
     engagement: list[dict[str, object]] = Field(default_factory=list, max_length=20)
     owned_surfaces: list[dict[str, object]] = Field(default_factory=list, max_length=5)
+    owned_surface_observations: list[dict[str, object]] = Field(default_factory=list, max_length=5)
     quality: list[dict[str, object]] = Field(default_factory=list, max_length=50)
     evidence_gaps: list[dict[str, object]] = Field(default_factory=list, max_length=25)
     referenceable_evidence: list[EvidenceReference] = Field(default_factory=list, max_length=160)

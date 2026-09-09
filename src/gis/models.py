@@ -2447,6 +2447,57 @@ class CompetitiveContentObservation(Base):
     )
 
 
+class OwnedSurfaceObservationDetail(Base):
+    """Bounded owned-surface facts and deterministic assessments for a content observation."""
+
+    __tablename__ = "owned_surface_observation_detail"
+    __table_args__ = (
+        Index("ix_owned_surface_detail_site_time", "tenant_id", "site_id", "observed_at"),
+        Index("ix_owned_surface_detail_target", "collection_target_id", "observed_at"),
+        {"schema": SCHEMA},
+    )
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{RAW_SCHEMA}.competitive_content_observation.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    collection_target_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_target.id"), nullable=False
+    )
+    previous_observation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{RAW_SCHEMA}.competitive_content_observation.id")
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    retrieval_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    render_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    canonical_assessment: Mapped[str] = mapped_column(String(50), nullable=False)
+    indexability_assessment: Mapped[str] = mapped_column(String(50), nullable=False)
+    raw_response_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    normalized_content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    structure_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    change_classification: Mapped[str] = mapped_column(String(150), nullable=False)
+    visible_text_preview: Mapped[str] = mapped_column(Text, nullable=False)
+    controls_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    images_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    landmarks_json: Mapped[dict[str, int]] = mapped_column(JSONB, nullable=False, default=dict)
+    instrumentation_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    quality_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    reassessment_ready: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    evidence_package_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class CompetitiveContentDocument(Base):
     __tablename__ = "competitive_content_document"
     __table_args__ = ({"schema": RAW_SCHEMA},)

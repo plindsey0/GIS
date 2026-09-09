@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>VA Entitlement Calculator Fixture</title>
+  <meta name="description" content="Fixture content for deterministic GIS tests only.">
+  <meta name="robots" content="index,follow">
+  <link rel="canonical" href="https://vahomemath.test/va-entitlement-calculator/">
+  <script src="https://www.googletagmanager.com/gtag/js?id=G-TEST"></script>
+  <script type="application/ld+json">{"@type":"WebApplication"}</script>
+</head>
+<body>
+  <header><nav><a href="/">Home</a></nav></header>
+  <main>
+    <h1>VA Entitlement Calculator</h1>
+    <p>Estimate representative entitlement inputs with this provider-free test fixture.</p>
+    <form aria-label="VA entitlement calculator">
+      <label for="loan-amount">Loan amount</label>
+      <input id="loan-amount" name="loan_amount" type="number" data-event-name="calculator_started">
+      <label for="entitlement-used">Entitlement already used</label>
+      <input id="entitlement-used" name="entitlement_used" type="number">
+      <button type="submit" data-event="calculator_completed">Calculate entitlement</button>
+      <output id="result" aria-label="Estimated entitlement"></output>
+    </form>
+    <h2>How the estimate works</h2>
+    <p>This static fixture does not establish calculation correctness.</p>
+    <a href="/va-loan-calculator/">VA loan calculator</a>
+    <a href="https://www.va.gov/">External VA resource</a>
+    <img src="/illustration.png" alt="">
+  </main>
+  <footer>Fixture footer</footer>
+</body>
+</html>
