@@ -1,0 +1,23 @@
+{
+  "status_code": 20000,
+  "tasks": [{
+    "id": "fixture-serp-us-en-desktop-001",
+    "status_code": 20000,
+    "cost": 0.002,
+    "result": [{
+      "keyword": "va down payment calculator",
+      "country_code": "US",
+      "language_code": "en",
+      "device": "desktop",
+      "datetime": "2026-09-08T12:00:00Z",
+      "items": [
+        {"type": "organic", "rank_absolute": 1, "rank_group": 1, "url": "https://benefits.va.gov/homeloans/calculator/", "title": "VA home loan calculator", "description": "Estimate a loan scenario.", "breadcrumb": "benefits.va.gov"},
+        {"type": "organic", "rank_absolute": 2, "rank_group": 2, "url": "https://example-lender.test/va/calculator?ref=serp", "title": "VA down payment calculator", "description": null},
+        {"type": "people_also_ask", "rank_absolute": 3, "rank_group": 1, "title": "How much is a VA down payment?"},
+        {"type": "organic", "rank_absolute": 4, "rank_group": 3, "url": "https://example-lender.test/guides/va-down-payments", "title": "Guide to VA down payments", "description": "Informational guide."},
+        {"type": "new_provider_widget", "rank_absolute": 5, "title": null},
+        {"type": "organic", "rank_absolute": 25, "rank_group": 24, "url": "https://www.vahomemath.com/va-entitlement-calculator/", "title": "VA Entitlement Calculator", "description": "Fixture-owned result."}
+      ]
+    }]
+  }]
+}

@@ -97,4 +97,54 @@ describe("entity-centered evidence", () => {
     const technical = screen.getByText("Technical details").closest("details");
     expect(technical).not.toHaveAttribute("open");
   });
+  it("renders exact-query SERP scope, results, and collapsed technical lineage", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => answer({
+      label: "va down payment calculator",
+      description: "Governed collection target.",
+      exact_query_serp_observations: [{
+        id: "snapshot-1",
+        exact_query: "va down payment calculator",
+        country: "US",
+        language: "en",
+        device: "desktop",
+        provider: "dataforseo",
+        requested_depth: 100,
+        returned_depth: 25,
+        owned_presence: "OBSERVED_WITHIN_COLLECTED_DEPTH",
+        owned_best_position: 25,
+        results: [{
+          position: 25,
+          result_type: "ORGANIC",
+          domain: "vahomemath.com",
+          title: "VA Entitlement Calculator",
+          url: "https://www.vahomemath.com/va-entitlement-calculator/",
+          owned_site: true,
+        }],
+        limitations: ["Observed query-page result does not establish intent satisfaction."],
+        technical: {
+          snapshot_hash: "hash",
+          provider_task_id: "fixture",
+        },
+      }],
+    })));
+
+    render(
+      <SemanticDetail
+        endpoint="/api/v1/collection/snapshot-1"
+        eyebrow="Collection target"
+        fallback="Target"
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", {name: "va down payment calculator"}),
+    ).toBeInTheDocument();
+    expect(screen.getByText("VA Entitlement Calculator")).toBeInTheDocument();
+    expect(
+      screen.getByText("OBSERVED_WITHIN_COLLECTED_DEPTH"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Technical details").closest("details"),
+    ).not.toHaveAttribute("open");
+  });
 });
