@@ -531,6 +531,32 @@ class CollectionBlocker(str, enum.Enum):
     OPERATOR_PAUSED = "OPERATOR_PAUSED"
 
 
+class CollectionRequirementCapability(str, enum.Enum):
+    OWNED_PAGE_CONTENT = "OWNED_PAGE_CONTENT"
+    EXACT_QUERY_SERP = "EXACT_QUERY_SERP"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
+class CollectionRequirementStatus(str, enum.Enum):
+    REQUESTED = "REQUESTED"
+    BLOCKED = "BLOCKED"
+    CANDIDATE = "CANDIDATE"
+    APPLIED = "APPLIED"
+    COLLECTING = "COLLECTING"
+    SATISFIED = "SATISFIED"
+    FAILED = "FAILED"
+    UNSUPPORTED = "UNSUPPORTED"
+    CANCELLED = "CANCELLED"
+
+
+class EvidenceReassessmentStatus(str, enum.Enum):
+    NOT_REASSESSED = "NOT_REASSESSED"
+    SATISFIED = "SATISFIED"
+    STILL_INSUFFICIENT = "STILL_INSUFFICIENT"
+    FAILED = "FAILED"
+    INCONCLUSIVE = "INCONCLUSIVE"
+
+
 class CollectionOverrideType(str, enum.Enum):
     FORCE_ACTIVE = "FORCE_ACTIVE"
     FORCE_PAUSED = "FORCE_PAUSED"
@@ -788,6 +814,11 @@ class ExperimentStatus(str, enum.Enum):
     COMPLETED = "COMPLETED"
     INVALIDATED = "INVALIDATED"
     CANCELLED = "CANCELLED"
+
+
+class ProposalArtifactType(str, enum.Enum):
+    INVESTIGATION = "INVESTIGATION"
+    EXPERIMENT = "EXPERIMENT"
 
 
 class OutcomeState(str, enum.Enum):
@@ -5196,6 +5227,11 @@ class ExperimentProposal(Base, TimestampMixin):
     llm_run_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.llm_run.id"), nullable=False
     )
+    proposal_type: Mapped[ProposalArtifactType] = mapped_column(
+        enum_type(ProposalArtifactType, "proposal_artifact_type"),
+        nullable=False,
+        default=ProposalArtifactType.EXPERIMENT,
+    )
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     objective: Mapped[str] = mapped_column(Text, nullable=False)
@@ -5257,6 +5293,91 @@ class ExperimentProposalReview(Base):
     reviewer: Mapped[str] = mapped_column(String(255), nullable=False)
     comment: Mapped[Optional[str]] = mapped_column(Text)
     reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CollectionRequirement(Base, TimestampMixin):
+    __tablename__ = "collection_requirement"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("identity_hash", name="uq_collection_requirement_identity"),
+        Index("ix_collection_requirement_scope", "tenant_id", "site_id", "status"),
+        Index("ix_collection_requirement_proposal", "proposal_id", "created_at"),
+        Index("ix_collection_requirement_target", "collection_target_id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.experiment_proposal.id"), nullable=False
+    )
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation.id"), nullable=False
+    )
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.opportunity.id"), nullable=False
+    )
+    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False
+    )
+    evidence_gap_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_gap.id")
+    )
+    gap_reference_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    gap_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    capability: Mapped[CollectionRequirementCapability] = mapped_column(
+        enum_type(CollectionRequirementCapability, "collection_requirement_capability"),
+        nullable=False,
+    )
+    target_type: Mapped[CollectionTargetType] = mapped_column(
+        enum_type(CollectionTargetType, "collection_target_type"), nullable=False
+    )
+    target_value: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_target: Mapped[str] = mapped_column(Text, nullable=False)
+    country_code: Mapped[Optional[str]] = mapped_column(String(2))
+    language_code: Mapped[Optional[str]] = mapped_column(String(16))
+    device: Mapped[Optional[str]] = mapped_column(String(32))
+    requested_characteristics_json: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    unsupported_characteristics_json: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    rights_constraints_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    human_constraints_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    priority: Mapped[CollectionPriorityTier] = mapped_column(
+        enum_type(CollectionPriorityTier, "collection_priority_tier"), nullable=False
+    )
+    freshness_expectation: Mapped[CollectionCadence] = mapped_column(
+        enum_type(CollectionCadence, "collection_cadence"), nullable=False
+    )
+    status: Mapped[CollectionRequirementStatus] = mapped_column(
+        enum_type(CollectionRequirementStatus, "collection_requirement_status"), nullable=False
+    )
+    blocker: Mapped[Optional[str]] = mapped_column(String(255))
+    cost_class: Mapped[str] = mapped_column(String(32), nullable=False, default="UNKNOWN")
+    provider_key: Mapped[Optional[str]] = mapped_column(String(100))
+    collection_target_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_target.id")
+    )
+    collection_plan_item_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_plan_item.id")
+    )
+    satisfying_evidence_package_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id")
+    )
+    reassessment_status: Mapped[EvidenceReassessmentStatus] = mapped_column(
+        enum_type(EvidenceReassessmentStatus, "evidence_reassessment_status"), nullable=False
+    )
+    reassessed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    reassessment_notes: Mapped[Optional[str]] = mapped_column(Text)
+    intelligence_reassessment_eligible_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class CompetitiveEventPolicy(Base, TimestampMixin):

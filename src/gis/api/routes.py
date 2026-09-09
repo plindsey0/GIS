@@ -63,7 +63,9 @@ from gis.intelligence.provider import ReplayLLMProvider
 from gis.intelligence.replay import replay_responses
 from gis.intelligence.service import GovernedIntelligenceService, IntelligenceValidationError
 from gis.interventions.service import InterventionService
+from gis.investigations.service import InvestigationHandoffService
 from gis.models import (
+    CollectionRequirement,
     DecompositionPlan,
     EvidencePackage,
     Experiment,
@@ -88,6 +90,7 @@ from gis.models import (
     Opportunity,
     OpportunityEvaluation,
     OpportunityEvidence,
+    ProposalArtifactType,
     Recommendation,
     RecommendationCandidate,
     RecommendationEvidence,
@@ -1593,15 +1596,104 @@ def experiment_proposal_detail(resource_id: uuid.UUID, tenant_id: uuid.UUID, sit
              dependencies=[Depends(require_role(Role.REVIEW))])
 def review_experiment_proposal(resource_id: uuid.UUID, tenant_id: uuid.UUID, site_id: uuid.UUID,
     body: IntelligenceDecisionInput, session: Session = Depends(database)) -> dict[str, Any]:
-    scoped(ExperimentProposal, resource_id, tenant_id, site_id, session)
+    proposal = scoped(ExperimentProposal, resource_id, tenant_id, site_id, session)
     try:
+        decision = body.decision
+        if decision == "APPROVE_INVESTIGATION":
+            proposal.proposal_type = ProposalArtifactType.INVESTIGATION
+            decision = "APPROVED"
         row = _replay_service(session, {}).review_experiment_proposal(
-            resource_id, body.decision, body.actor, body.comment)
+            resource_id, decision, body.actor, body.comment)
+        requirements = (
+            InvestigationHandoffService(session).derive_requirements(row.id)
+            if row.status == "APPROVED"
+            and row.proposal_type is ProposalArtifactType.INVESTIGATION
+            else []
+        )
         session.commit()
-        return {"id": row.id, "status": row.status, "intervention_created": False}
+        return {"id": row.id, "status": row.status,
+                "proposal_type": row.proposal_type.value,
+                "collection_requirement_ids": [item.id for item in requirements],
+                "provider_calls": 0, "collection_executed": False,
+                "intervention_created": False}
     except IntelligenceValidationError as error:
         session.rollback()
         raise ApiError(422, "EXPERIMENT_PROPOSAL_REVIEW_INVALID", str(error)) from error
+
+
+class RequirementPromotionInput(BaseModel):
+    actor: str = Field(min_length=1, max_length=255)
+
+
+class RequirementReassessmentInput(BaseModel):
+    evidence_package_id: Optional[uuid.UUID] = None
+    collection_failed: bool = False
+
+
+@router.post("/experiment-proposals/{resource_id}/collection-requirements",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def derive_collection_requirements(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    scoped(ExperimentProposal, resource_id, tenant_id, site_id, session)
+    try:
+        rows = InvestigationHandoffService(session).derive_requirements(resource_id)
+        session.commit()
+        return {"items": [row.id for row in rows], "provider_calls": 0,
+                "collection_executed": False, "intervention_created": False}
+    except IntelligenceValidationError as error:
+        session.rollback()
+        raise ApiError(422, "COLLECTION_REQUIREMENT_DERIVATION_INVALID", str(error)) from error
+
+
+@router.get("/collection-requirements/{resource_id}",
+            dependencies=[Depends(require_role(Role.READ))])
+def collection_requirement_detail(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    requirement = scoped(CollectionRequirement, resource_id, tenant_id, site_id, session)
+    return {"id": requirement.id, "tenant_id": tenant_id, "site_id": site_id,
+            "resource_type": "collection_requirement",
+            "data": WorkbenchQueries(session).collection_requirement(requirement)}
+
+
+@router.post("/collection-requirements/{resource_id}/promote",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def promote_collection_requirement(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, body: RequirementPromotionInput,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    scoped(CollectionRequirement, resource_id, tenant_id, site_id, session)
+    try:
+        row = InvestigationHandoffService(session).promote_to_candidate_plan(
+            resource_id, body.actor
+        )
+        session.commit()
+        return {"id": row.id, "status": row.status.value,
+                "collection_target_id": row.collection_target_id,
+                "collection_plan_item_id": row.collection_plan_item_id,
+                "collection_executed": False, "provider_calls": 0,
+                "intervention_created": False}
+    except IntelligenceValidationError as error:
+        session.rollback()
+        raise ApiError(422, "COLLECTION_REQUIREMENT_PROMOTION_INVALID", str(error)) from error
+
+
+@router.post("/collection-requirements/{resource_id}/reassess",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def reassess_collection_requirement(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, body: RequirementReassessmentInput,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    scoped(CollectionRequirement, resource_id, tenant_id, site_id, session)
+    try:
+        row = InvestigationHandoffService(session).reassess(
+            resource_id, body.evidence_package_id, collection_failed=body.collection_failed
+        )
+        session.commit()
+        return {"id": row.id, "status": row.status.value,
+                "reassessment_status": row.reassessment_status.value,
+                "intelligence_reassessment_eligible_at": row.intelligence_reassessment_eligible_at,
+                "llm_invoked": False, "intervention_created": False}
+    except IntelligenceValidationError as error:
+        session.rollback()
+        raise ApiError(422, "COLLECTION_REQUIREMENT_REASSESSMENT_INVALID", str(error)) from error
 
 
 @router.post("/experiment-proposals/{resource_id}/replay-regenerate",
@@ -1951,6 +2043,11 @@ def collection(
     search: Optional[str] = Query(default=None, max_length=200),
     target_type: Optional[str] = None,
     status: Optional[str] = None,
+    origin: Optional[str] = None,
+    capability: Optional[str] = None,
+    priority: Optional[str] = None,
+    blocker: Optional[str] = None,
+    proposal_id: Optional[uuid.UUID] = None,
     sort: str = Query("updated", pattern="^(name|updated|status|type)$"),
     order: str = Query("desc", pattern="^(asc|desc)$"),
     session: Session = Depends(database),
@@ -1965,6 +2062,11 @@ def collection(
         search=search,
         target_type=target_type,
         status=status,
+        origin=origin,
+        capability=capability,
+        priority=priority,
+        blocker=blocker,
+        proposal_id=proposal_id,
         sort=sort,
         order=order,
     )

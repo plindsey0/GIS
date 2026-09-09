@@ -12,6 +12,7 @@ from gis.models import (
     AnalyticalEntity,
     CollectionPlanItem,
     CollectionPlanningDecision,
+    CollectionRequirement,
     CollectionTarget,
     CollectionTargetEvidence,
     CollectorCapability,
@@ -21,6 +22,7 @@ from gis.models import (
     EvidencePackage,
     EvidencePackageItem,
     EvidenceQualityDimension,
+    ExperimentProposal,
     MarketDefinition,
     MarketDefinitionMember,
     MarketMetricObservation,
@@ -281,6 +283,11 @@ def collection_inventory(
     search: Optional[str] = None,
     target_type: Optional[str] = None,
     status: Optional[str] = None,
+    origin: Optional[str] = None,
+    capability: Optional[str] = None,
+    priority: Optional[str] = None,
+    blocker: Optional[str] = None,
+    proposal_id: Optional[uuid.UUID] = None,
     sort: str = "updated",
     order: str = "desc",
 ) -> dict[str, Any]:
@@ -299,7 +306,6 @@ def collection_inventory(
         filters.append(CollectionTarget.target_type == target_type)
     if status:
         filters.append(CollectionTarget.status == status)
-    total = session.scalar(select(func.count()).select_from(CollectionTarget).where(*filters)) or 0
     sort_columns = {
         "name": CollectionTarget.display_value,
         "updated": CollectionTarget.updated_at,
@@ -313,37 +319,98 @@ def collection_inventory(
             select(CollectionTarget)
             .where(*filters)
             .order_by(ordering, CollectionTarget.id)
-            .offset((page - 1) * limit)
-            .limit(limit)
         )
-    )
-    decisions = {}
-    for target in targets:
-        decisions[target.id] = session.scalar(
-            select(CollectionPlanningDecision)
-            .where(CollectionPlanningDecision.target_id == target.id)
-            .order_by(CollectionPlanningDecision.evaluated_at.desc())
-            .limit(1)
-        )
+    ) if (
+        origin != "INTELLIGENCE_REQUESTED"
+        and not capability
+        and not priority
+        and not blocker
+        and not proposal_id
+    ) else []
+    target_ids = [target.id for target in targets]
+    decision_rows = list(session.scalars(
+        select(CollectionPlanningDecision)
+        .where(CollectionPlanningDecision.target_id.in_(target_ids))
+        .order_by(CollectionPlanningDecision.target_id,
+                  CollectionPlanningDecision.evaluated_at.desc())
+    )) if target_ids else []
+    decisions: dict[uuid.UUID, CollectionPlanningDecision] = {}
+    for decision in decision_rows:
+        decisions.setdefault(decision.target_id, decision)
     items = []
     for target in targets:
-        decision = decisions[target.id]
+        latest_decision = decisions.get(target.id)
         items.append(
             {
                 "id": str(target.id),
+                "origin": "DISCOVERED",
                 "label": target.display_value,
                 "normalized_identity": target.normalized_identity,
                 "type": target.target_type.value,
                 "status": target.status.value,
                 "status_explanation": COLLECTION_STATUS_HELP[target.status.value],
-                "priority": decision.priority_tier.value if decision else "NOT_EVALUATED",
-                "priority_score": encoded(decision.priority_score) if decision else None,
-                "blocker": decision.primary_blocker.value if decision else "UNKNOWN",
-                "cadence": decision.effective_cadence.value if decision else None,
+                "priority": latest_decision.priority_tier.value if latest_decision else "NOT_EVALUATED",
+                "priority_score": encoded(latest_decision.priority_score) if latest_decision else None,
+                "blocker": latest_decision.primary_blocker.value if latest_decision else "UNKNOWN",
+                "cadence": latest_decision.effective_cadence.value if latest_decision else None,
                 "updated_at": encoded(target.updated_at),
                 "href": f"/collection/{target.id}",
             }
         )
+    requirement_filters: list[Any] = [
+        CollectionRequirement.tenant_id == tenant_id,
+        CollectionRequirement.site_id == site_id,
+    ]
+    if search:
+        requirement_filters.append(or_(
+            CollectionRequirement.target_value.ilike(f"%{search}%"),
+            CollectionRequirement.normalized_target.ilike(f"%{search}%"),
+            CollectionRequirement.rationale.ilike(f"%{search}%"),
+        ))
+    if target_type:
+        requirement_filters.append(CollectionRequirement.target_type == target_type)
+    if status:
+        requirement_filters.append(CollectionRequirement.status == status)
+    if capability:
+        requirement_filters.append(CollectionRequirement.capability == capability)
+    if priority:
+        requirement_filters.append(CollectionRequirement.priority == priority)
+    if blocker:
+        requirement_filters.append(CollectionRequirement.blocker.ilike(f"%{blocker}%"))
+    if proposal_id:
+        requirement_filters.append(CollectionRequirement.proposal_id == proposal_id)
+    requirements = session.execute(
+        select(CollectionRequirement, ExperimentProposal)
+        .join(ExperimentProposal, ExperimentProposal.id == CollectionRequirement.proposal_id)
+        .where(*requirement_filters)
+    ).all() if origin != "DISCOVERED" else []
+    for requirement, proposal in requirements:
+        items.append({
+            "id": str(requirement.id),
+            "label": requirement.target_value,
+            "normalized_identity": requirement.normalized_target,
+            "origin": "INTELLIGENCE_REQUESTED",
+            "type": requirement.capability.value,
+            "status": requirement.status.value,
+            "status_explanation": (
+                "Approved investigation evidence need; execution requires separate promotion."
+            ),
+            "priority": requirement.priority.value,
+            "blocker": requirement.blocker or "NONE",
+            "cadence": requirement.freshness_expectation.value,
+            "cost_class": requirement.cost_class,
+            "provider": requirement.provider_key,
+            "proposal_title": proposal.title,
+            "proposal_id": str(proposal.id),
+            "gap_type": requirement.gap_type,
+            "updated_at": encoded(requirement.updated_at),
+            "href": f"/collection/requirements/{requirement.id}",
+        })
+    reverse = order == "desc"
+    key_name = {"name": "label", "status": "status", "type": "type"}.get(sort, "updated_at")
+    items.sort(key=lambda item: str(item.get(key_name) or ""), reverse=reverse)
+    total = len(items)
+    items = items[(page - 1) * limit:page * limit]
     counts = {
         f"{kind.value}:{state.value}": count
         for kind, state, count in session.execute(
