@@ -58,6 +58,10 @@ from gis.api.semantics import (
 from gis.api.system import SystemQueries
 from gis.api.workbench import WorkbenchQueries, row_data
 from gis.db import session_factory
+from gis.evidence_gap_adjudication.service import (
+    EvidenceGapAdjudicationError,
+    EvidenceGapAdjudicationService,
+)
 from gis.goals.service import GoalService
 from gis.intelligence.provider import ReplayLLMProvider
 from gis.intelligence.replay import replay_responses
@@ -67,6 +71,7 @@ from gis.investigations.service import InvestigationHandoffService
 from gis.models import (
     CollectionRequirement,
     DecompositionPlan,
+    EvidenceGapAdjudication,
     EvidencePackage,
     Experiment,
     ExperimentProposal,
@@ -143,6 +148,17 @@ router = APIRouter(prefix="/api/v1")
 
 
 class QueryPageIntentReviewInput(BaseModel):
+    decision: str = Field(pattern="^(CONFIRM|DISAGREE|NEEDS_MORE_EVIDENCE)$")
+    reviewer: str = Field(min_length=1, max_length=255)
+    comment: Optional[str] = None
+
+
+class EvidenceGapAdjudicationInput(BaseModel):
+    evidence_package_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)
+    evidence_reference_ids: list[uuid.UUID] = Field(default_factory=list, max_length=160)
+
+
+class EvidenceGapAdjudicationReviewInput(BaseModel):
     decision: str = Field(pattern="^(CONFIRM|DISAGREE|NEEDS_MORE_EVIDENCE)$")
     reviewer: str = Field(min_length=1, max_length=255)
     comment: Optional[str] = None
@@ -1999,6 +2015,91 @@ def evidence_gap(
 ) -> dict[str, Any]:
     WorkbenchQueries(session).site(tenant_id, site_id)
     return evidence_gap_detail(session, resource_id, tenant_id, site_id)
+
+
+@router.post("/evidence/gaps/{resource_id}/adjudications",
+             dependencies=[Depends(require_role(Role.REVIEW))], status_code=201)
+def adjudicate_evidence_gap(resource_id: uuid.UUID, payload: EvidenceGapAdjudicationInput,
+    tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    service = EvidenceGapAdjudicationService(session)
+    try:
+        adjudication = service.adjudicate(
+            resource_id, tenant_id=tenant_id, site_id=site_id,
+            evidence_package_ids=payload.evidence_package_ids,
+            evidence_reference_ids=payload.evidence_reference_ids,
+        )
+        session.commit()
+        return service.read_model(adjudication)
+    except EvidenceGapAdjudicationError as exc:
+        session.rollback()
+        raise ApiError(409, "EVIDENCE_GAP_ADJUDICATION_BLOCKED", str(exc)) from exc
+
+
+@router.get("/evidence/gaps/{resource_id}/adjudications",
+            dependencies=[Depends(require_role(Role.READ))])
+def evidence_gap_adjudication_history(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    service = EvidenceGapAdjudicationService(session)
+    rows = service.history(resource_id, tenant_id, site_id)
+    return {"items": service.read_models(rows), "total": len(rows)}
+
+
+@router.get("/evidence/gaps/{resource_id}/current-adjudication",
+            dependencies=[Depends(require_role(Role.READ))])
+def current_evidence_gap_adjudication(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    service = EvidenceGapAdjudicationService(session)
+    current = next((row for row in service.history(resource_id, tenant_id, site_id)
+                    if row.is_current), None)
+    if not current:
+        raise ApiError(404, "EVIDENCE_GAP_ADJUDICATION_NOT_FOUND",
+                       "No current adjudication exists for this evidence gap.")
+    return service.read_model(current)
+
+
+@router.post("/evidence/gap-adjudications/{resource_id}/reviews",
+             dependencies=[Depends(require_role(Role.REVIEW))], status_code=201)
+def review_evidence_gap_adjudication(resource_id: uuid.UUID,
+    payload: EvidenceGapAdjudicationReviewInput, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    service = EvidenceGapAdjudicationService(session)
+    try:
+        service.review(resource_id, tenant_id=tenant_id, site_id=site_id,
+            decision=payload.decision, reviewer=payload.reviewer, comment=payload.comment)  # type: ignore[arg-type]
+        session.commit()
+        return service.read_model(session.get_one(EvidenceGapAdjudication, resource_id))
+    except EvidenceGapAdjudicationError as exc:
+        session.rollback()
+        raise ApiError(404, "EVIDENCE_GAP_ADJUDICATION_NOT_FOUND", str(exc)) from exc
+
+
+@router.get("/evidence/gap-adjudications", dependencies=[Depends(require_role(Role.READ))])
+def evidence_gap_adjudications(tenant_id: uuid.UUID, site_id: uuid.UUID,
+    outcome: Optional[str] = None, capability: Optional[str] = None,
+    entity_id: Optional[uuid.UUID] = None, market_id: Optional[uuid.UUID] = None,
+    review_state: Optional[str] = None, reassessment_eligible: Optional[bool] = None,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    filters: list[Any] = [EvidenceGapAdjudication.tenant_id == tenant_id,
+        EvidenceGapAdjudication.site_id == site_id, EvidenceGapAdjudication.is_current.is_(True)]
+    if outcome:
+        filters.append(EvidenceGapAdjudication.outcome == outcome)
+    if capability:
+        filters.append(EvidenceGapAdjudication.required_capability == capability)
+    if entity_id:
+        filters.append(EvidenceGapAdjudication.analytical_entity_id == entity_id)
+    if market_id:
+        filters.append(EvidenceGapAdjudication.market_definition_id == market_id)
+    rows = list(session.scalars(select(EvidenceGapAdjudication).where(*filters).order_by(
+        EvidenceGapAdjudication.evaluated_at.desc(), EvidenceGapAdjudication.created_at.desc(),
+        EvidenceGapAdjudication.id.desc())))
+    items = EvidenceGapAdjudicationService(session).read_models(rows)
+    if review_state:
+        items = [item for item in items if item["human_review"]["state"] == review_state]
+    if reassessment_eligible is not None:
+        items = [item for item in items
+                 if item["reassessment"]["eligible"] is reassessment_eligible]
+    return {"items": items, "total": len(items)}
 
 
 @router.get(

@@ -147,4 +147,31 @@ describe("entity-centered evidence", () => {
       screen.getByText("Technical details").closest("details"),
     ).not.toHaveAttribute("open");
   });
+
+  it("renders governed gap adjudication for operators with technical lineage collapsed", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => answer({
+      label: "Target Page Content Observation · va down payment calculator",
+      description: "Missing governed target-page content observation.",
+      status: "OPEN",
+      current_adjudication: {
+        current_status: "Partially Satisfied",
+        why: ["Owned-page evidence is usable but quality-limited."],
+        evidence_considered: ["package-1"],
+        evidence_rejected: [],
+        checks: {scope: "COMPATIBLE", freshness: "CURRENT", rights: "USABLE", sufficiency: "LIMITED"},
+        remaining_requirements: ["Obtain evidence with SUPPORTED sufficiency; LIMITED is not promoted."],
+        limitations: ["Static HTTP observation; scripts were not executed."],
+        recommended_next_action: "Address the remaining evidence requirements before reassessment.",
+        human_review: {required: false, state: "UNREVIEWED", history: []},
+        technical: {gap_id: "gap-1", input_fingerprint: "fingerprint-1", method_version: "1.0"},
+      },
+    })));
+
+    render(<SemanticDetail endpoint="/api/v1/evidence/gaps/gap-1" eyebrow="Evidence gap" fallback="Gap" />);
+
+    expect(await screen.findByText("Partially Satisfied")).toBeInTheDocument();
+    expect(screen.getByText("Owned-page evidence is usable but quality-limited.")).toBeInTheDocument();
+    expect(screen.getByText("Address the remaining evidence requirements before reassessment.")).toBeInTheDocument();
+    expect(screen.getAllByText("Technical")[0].closest("details")).not.toHaveAttribute("open");
+  });
 });

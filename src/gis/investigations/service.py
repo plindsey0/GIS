@@ -10,6 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gis.collection_planning.service import CollectionPlanningService, normalize_target
+from gis.evidence_gap_adjudication.service import (
+    EvidenceGapAdjudicationError,
+    EvidenceGapAdjudicationService,
+)
 from gis.intelligence.service import EvidencePacketService, IntelligenceValidationError
 from gis.models import (
     CollectionCadence,
@@ -268,6 +272,20 @@ class InvestigationHandoffService:
             requirement.status = CollectionRequirementStatus.FAILED
             requirement.reassessment_status = EvidenceReassessmentStatus.FAILED
             requirement.reassessment_notes = "Collection failed; the evidence gap remains open."
+            return requirement
+        if requirement.evidence_gap_id:
+            try:
+                EvidenceGapAdjudicationService(self.session).adjudicate(
+                    requirement.evidence_gap_id,
+                    tenant_id=requirement.tenant_id,
+                    site_id=requirement.site_id,
+                    evidence_package_ids=[evidence_package_id] if evidence_package_id else [],
+                )
+            except EvidenceGapAdjudicationError as exc:
+                message = str(exc)
+                if "scope" in message:
+                    message = "Evidence package is outside requirement scope."
+                raise IntelligenceValidationError(message) from exc
             return requirement
         package = self.session.get(EvidencePackage, evidence_package_id) if evidence_package_id else None
         if not package:

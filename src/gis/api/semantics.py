@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from gis.api.errors import ApiError
 from gis.api.workbench import encoded, row_data
+from gis.evidence_gap_adjudication.service import EvidenceGapAdjudicationService
 from gis.models import (
     AnalyticalEntity,
     CollectionPlanItem,
@@ -24,6 +25,7 @@ from gis.models import (
     DemandSignal,
     EvidenceContract,
     EvidenceGap,
+    EvidenceGapAdjudication,
     EvidencePackage,
     EvidencePackageItem,
     EvidenceQualityDimension,
@@ -262,6 +264,16 @@ def evidence_gap_detail(
     if not row:
         raise ApiError(404, "EVIDENCE_GAP_NOT_FOUND", "Evidence gap not found in site scope.")
     gap, package, entity = row
+    adjudications = list(session.scalars(select(EvidenceGapAdjudication).where(
+        EvidenceGapAdjudication.evidence_gap_id == gap.id,
+        EvidenceGapAdjudication.tenant_id == tenant_id,
+        EvidenceGapAdjudication.site_id == site_id,
+    ).order_by(
+        EvidenceGapAdjudication.evaluated_at.desc(),
+        EvidenceGapAdjudication.created_at.desc(),
+        EvidenceGapAdjudication.id.desc(),
+    )))
+    adjudication_models = EvidenceGapAdjudicationService(session).read_models(adjudications)
     return {
         "id": str(gap.id),
         "resource_type": "evidence_gap",
@@ -278,6 +290,16 @@ def evidence_gap_detail(
             else None,
         },
         "provenance": gap.provenance_metadata,
+        "current_adjudication": adjudication_models[0] if adjudication_models else None,
+        "adjudication_history": [
+            {
+                "id": str(item.id),
+                "outcome": item.outcome,
+                "evaluated_at": item.evaluated_at.isoformat(),
+                "is_current": item.is_current,
+            }
+            for item in adjudications
+        ],
         "technical_id": str(gap.id),
     }
 

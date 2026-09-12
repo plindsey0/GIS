@@ -4252,6 +4252,80 @@ class EvidenceGap(Base, TimestampMixin):
     provenance_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
+class EvidenceGapAdjudication(Base):
+    """Immutable, versioned deterministic decision about one governed evidence gap."""
+
+    __tablename__ = "evidence_gap_adjudication"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("input_fingerprint", name="uq_evidence_gap_adjudication_input"),
+        Index("ix_gap_adjudication_history", "evidence_gap_id", "evaluated_at", "id"),
+        Index("uq_gap_adjudication_current", "evidence_gap_id", unique=True,
+              postgresql_where=text("is_current")),
+        Index("ix_gap_adjudication_scope_outcome", "tenant_id", "site_id", "outcome", "is_current"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    evidence_gap_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_gap.id"), nullable=False)
+    collection_requirement_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_requirement.id"))
+    analytical_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
+    market_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"))
+    previous_adjudication_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_gap_adjudication.id"))
+    outcome: Mapped[str] = mapped_column(String(50), nullable=False)
+    method_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    required_capability: Mapped[str] = mapped_column(String(100), nullable=False)
+    observed_capabilities_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    evidence_reference_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    scope_compatibility: Mapped[str] = mapped_column(String(50), nullable=False)
+    identity_compatibility: Mapped[str] = mapped_column(String(50), nullable=False)
+    freshness_assessment: Mapped[str] = mapped_column(String(50), nullable=False)
+    rights_assessment: Mapped[str] = mapped_column(String(50), nullable=False)
+    method_compatibility: Mapped[str] = mapped_column(String(50), nullable=False)
+    evidence_sufficiency: Mapped[str] = mapped_column(String(50), nullable=False)
+    conflict_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    reasons_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    rejected_evidence_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    remaining_requirements_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    recommended_next_action: Mapped[str] = mapped_column(Text, nullable=False)
+    human_review_required: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    downstream_reassessment_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EvidenceGapAdjudicationEvidence(Base):
+    __tablename__ = "evidence_gap_adjudication_evidence"
+    __table_args__ = (
+        UniqueConstraint("adjudication_id", "evidence_package_id", name="uq_gap_adjudication_evidence"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    adjudication_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_gap_adjudication.id", ondelete="CASCADE"), nullable=False)
+    evidence_package_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_package.id"), nullable=False)
+
+
+class EvidenceGapAdjudicationReview(Base):
+    __tablename__ = "evidence_gap_adjudication_review"
+    __table_args__ = (
+        Index("ix_gap_adjudication_review_history", "adjudication_id", "reviewed_at", "id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    adjudication_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_gap_adjudication.id", ondelete="CASCADE"), nullable=False)
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(255), nullable=False)
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class OpportunityDetectorPolicy(Base, TimestampMixin):
     __tablename__ = "opportunity_detector_policy"
     __table_args__ = (
