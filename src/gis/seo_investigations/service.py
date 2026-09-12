@@ -19,6 +19,7 @@ from gis.models import (
     CollectionRequirement,
     CollectionRequirementStatus,
     CollectionTargetType,
+    ContentBrief,
     EvidenceGap,
     EvidenceGapAdjudication,
     EvidenceGapAdjudicationReview,
@@ -27,6 +28,7 @@ from gis.models import (
     ExperimentProposal,
     MarketDefinition,
     OwnedSurfaceObservationDetail,
+    PageChangeProposal,
     QueryPageIntentAssessment,
     QueryPageIntentReview,
     Recommendation,
@@ -285,6 +287,25 @@ class SEOInvestigationService:
             "CLOSED": ("REOPEN", "Reopen investigation", "The investigation is closed."),
         }
         action_type, label, explanation = mapping.get(stage, ("COMPLETE_SCOPE", "Complete investigation scope", "The bounded scope is incomplete."))
+        if stage == "READY_FOR_RECOMMENDATION":
+            brief = self.session.scalar(select(ContentBrief).where(
+                ContentBrief.investigation_id == row.id).order_by(
+                    ContentBrief.created_at.desc(), ContentBrief.id.desc()))
+            if brief is None:
+                action_type, label, explanation = (
+                    "GENERATE_CONTENT_BRIEF", "Generate evidence-backed content brief",
+                    "Eligibility gates pass; generation remains an explicit, non-publishing action.")
+            else:
+                approved = self.session.scalar(select(PageChangeProposal.id).where(
+                    PageChangeProposal.content_brief_id == brief.id,
+                    PageChangeProposal.status == "APPROVED").limit(1))
+                action_type, label, explanation = ((
+                    "MARK_READY_FOR_MEASUREMENT_PLANNING",
+                    "Plan measurement for approved proposal",
+                    "A proposal is approved but remains unimplemented; measurement planning is separate."
+                ) if approved else (
+                    "REVIEW_CONTENT_BRIEF", "Review evidence-backed content brief",
+                    "A governed draft exists and requires human review before implementation planning."))
         requirement = state["requirements"][0] if state["requirements"] else None
         return {"investigation_id": str(row.id), "title": row.title, "query": row.exact_query,
                 "candidate_page": row.normalized_candidate_url, "stage": stage,
@@ -296,7 +317,10 @@ class SEOInvestigationService:
                 if requirement else None,
                 "target": requirement.target_value if requirement else row.normalized_candidate_url,
                 "market_id": str(row.market_definition_id),
-                "destination": f"/seo-investigations/{row.id}",
+                "destination": (f"/seo-investigations/{row.id}/briefs"
+                    if action_type in {"GENERATE_CONTENT_BRIEF", "REVIEW_CONTENT_BRIEF",
+                                       "MARK_READY_FOR_MEASUREMENT_PLANNING"}
+                    else f"/seo-investigations/{row.id}"),
                 "evidence_gap_id": str(requirement.evidence_gap_id) if requirement and requirement.evidence_gap_id else None,
                 "requirement_id": str(requirement.id) if requirement else None,
                 "adjudication_id": (str(state["adjudications"][-1].id)

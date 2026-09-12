@@ -57,6 +57,7 @@ from gis.api.semantics import (
 )
 from gis.api.system import SystemQueries
 from gis.api.workbench import WorkbenchQueries, row_data
+from gis.content_briefs.service import ContentBriefError, ContentBriefService, StaleProposalError
 from gis.db import session_factory
 from gis.evidence_gap_adjudication.service import (
     EvidenceGapAdjudicationError,
@@ -185,6 +186,20 @@ class SEOInvestigationActionInput(BaseModel):
     action: str = Field(pattern="^(MARK_READY_FOR_RECOMMENDATION|CLOSE|CLOSE_NO_ACTION|REOPEN|REFRESH_READINESS)$")
     actor: str = Field(min_length=1, max_length=255)
     reason: str = Field(min_length=1, max_length=4000)
+
+
+class ContentBriefGenerateInput(BaseModel):
+    actor: str = Field(min_length=1, max_length=255)
+
+
+class ContentProposalReviewInput(BaseModel):
+    reviewer: str = Field(min_length=1, max_length=255)
+    decision: str = Field(pattern="^(APPROVE|REJECT|REQUEST_CHANGES|NEEDS_MORE_EVIDENCE)$")
+    comment: Optional[str] = Field(default=None, max_length=4000)
+
+
+class ContentProposalActionInput(BaseModel):
+    action: str = Field(pattern="^(WITHDRAW|SUPERSEDE|MARK_READY_FOR_MEASUREMENT_PLANNING)$")
 
 
 @router.get("/connections/{connection_id}/rights", dependencies=[Depends(require_role(Role.READ))])
@@ -2234,6 +2249,136 @@ def apply_seo_investigation_action(resource_id: uuid.UUID,
     except SEOInvestigationError as exc:
         session.rollback()
         raise ApiError(409, "SEO_INVESTIGATION_ACTION_REJECTED", str(exc)) from exc
+
+
+@router.get("/seo-investigations/{resource_id}/brief-eligibility",
+            dependencies=[Depends(require_role(Role.READ))])
+def content_brief_eligibility(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        return ContentBriefService(session).eligibility(resource_id, tenant_id, site_id)
+    except SEOInvestigationError as exc:
+        raise ApiError(404, "SEO_INVESTIGATION_NOT_FOUND", str(exc)) from exc
+
+
+@router.post("/seo-investigations/{resource_id}/briefs/generate",
+             dependencies=[Depends(require_role(Role.REVIEW))], status_code=201)
+def generate_content_brief(resource_id: uuid.UUID, payload: ContentBriefGenerateInput,
+    tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = ContentBriefService(session)
+        brief = service.generate(resource_id, tenant_id, site_id, actor=payload.actor)
+        session.commit()
+        return service.brief_model(brief)
+    except (ContentBriefError, SEOInvestigationError) as exc:
+        session.rollback()
+        raise ApiError(409, "CONTENT_BRIEF_REJECTED", str(exc)) from exc
+
+
+@router.get("/seo-investigations/{resource_id}/briefs",
+            dependencies=[Depends(require_role(Role.READ))])
+def content_briefs(resource_id: uuid.UUID, tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = ContentBriefService(session)
+        rows = service.briefs(resource_id, tenant_id, site_id)
+        return {"items": [service.brief_model(row) for row in rows], "total": len(rows)}
+    except (ContentBriefError, SEOInvestigationError) as exc:
+        raise ApiError(404, "SEO_INVESTIGATION_NOT_FOUND", str(exc)) from exc
+
+
+@router.get("/seo-investigations/{resource_id}/briefs/{brief_id}",
+            dependencies=[Depends(require_role(Role.READ))])
+def content_brief_detail(resource_id: uuid.UUID, brief_id: uuid.UUID,
+    tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = ContentBriefService(session)
+        brief = service.scoped_brief(brief_id, tenant_id, site_id)
+        if brief.investigation_id != resource_id:
+            raise ContentBriefError("Brief is outside the requested investigation.")
+        return service.brief_model(brief)
+    except ContentBriefError as exc:
+        raise ApiError(404, "CONTENT_BRIEF_NOT_FOUND", str(exc)) from exc
+
+
+@router.get("/seo-investigations/{resource_id}/briefs/{brief_id}/history",
+            dependencies=[Depends(require_role(Role.READ))])
+def content_brief_history(resource_id: uuid.UUID, brief_id: uuid.UUID,
+    tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = ContentBriefService(session)
+        brief = service.scoped_brief(brief_id, tenant_id, site_id)
+        if brief.investigation_id != resource_id:
+            raise ContentBriefError("Brief is outside the requested investigation.")
+        rows = service.briefs(resource_id, tenant_id, site_id)
+        return {"items": [{"id": str(row.id), "status": row.status,
+                           "previous_brief_id": str(row.previous_brief_id)
+                           if row.previous_brief_id else None,
+                           "created_at": row.created_at.isoformat()} for row in rows],
+                "total": len(rows)}
+    except ContentBriefError as exc:
+        raise ApiError(404, "CONTENT_BRIEF_NOT_FOUND", str(exc)) from exc
+
+
+@router.get("/content-briefs/{brief_id}/proposals",
+            dependencies=[Depends(require_role(Role.READ))])
+def content_brief_proposals(brief_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = ContentBriefService(session)
+        rows = service.proposals(brief_id, tenant_id, site_id)
+        return {"items": [service.proposal_model(row) for row in rows], "total": len(rows)}
+    except ContentBriefError as exc:
+        raise ApiError(404, "CONTENT_BRIEF_NOT_FOUND", str(exc)) from exc
+
+
+@router.get("/page-change-proposals/{proposal_id}",
+            dependencies=[Depends(require_role(Role.READ))])
+def page_change_proposal(proposal_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = ContentBriefService(session)
+        return service.proposal_model(service.scoped_proposal(proposal_id, tenant_id, site_id))
+    except ContentBriefError as exc:
+        raise ApiError(404, "PAGE_CHANGE_PROPOSAL_NOT_FOUND", str(exc)) from exc
+
+
+@router.post("/page-change-proposals/{proposal_id}/reviews",
+             dependencies=[Depends(require_role(Role.REVIEW))], status_code=201)
+def review_page_change_proposal(proposal_id: uuid.UUID,
+    payload: ContentProposalReviewInput, tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = ContentBriefService(session)
+        review = service.review(proposal_id, tenant_id, site_id, reviewer=payload.reviewer,
+                                decision=payload.decision, comment=payload.comment)
+        session.commit()
+        return {"id": str(review.id), "proposal": service.proposal_model(
+            service.scoped_proposal(proposal_id, tenant_id, site_id))}
+    except StaleProposalError as exc:
+        session.commit()
+        raise ApiError(409, "PAGE_CHANGE_REVIEW_REJECTED", str(exc)) from exc
+    except ContentBriefError as exc:
+        session.rollback()
+        raise ApiError(409, "PAGE_CHANGE_REVIEW_REJECTED", str(exc)) from exc
+
+
+@router.post("/page-change-proposals/{proposal_id}/actions",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def transition_page_change_proposal(proposal_id: uuid.UUID,
+    payload: ContentProposalActionInput, tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = ContentBriefService(session)
+        proposal = service.transition(proposal_id, tenant_id, site_id, payload.action)
+        session.commit()
+        return service.proposal_model(proposal)
+    except ContentBriefError as exc:
+        session.rollback()
+        raise ApiError(409, "PAGE_CHANGE_ACTION_REJECTED", str(exc)) from exc
 
 
 @router.get(

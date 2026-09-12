@@ -4386,6 +4386,108 @@ class SEOInvestigationEvent(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ContentBrief(Base):
+    """Immutable, versioned editorial artifact derived from governed investigation evidence."""
+
+    __tablename__ = "content_brief"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        UniqueConstraint("input_fingerprint", name="uq_content_brief_input"),
+        Index("ix_content_brief_scope", "tenant_id", "site_id", "status", "created_at", "id"),
+        Index("ix_content_brief_history", "investigation_id", "created_at", "id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    investigation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.seo_investigation.id"), nullable=False)
+    query_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
+    page_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
+    market_definition_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"), nullable=False)
+    exact_query: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_url: Mapped[str] = mapped_column(Text, nullable=False)
+    brief_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    method_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    method_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    prompt_version: Mapped[Optional[str]] = mapped_column(String(100))
+    llm_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.llm_run.id"))
+    previous_brief_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.content_brief.id"))
+    input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_package_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    evidence_reference_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    adjudication_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    assessment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.query_page_intent_assessment.id"), nullable=False)
+    human_review_dependencies_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    executive_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    interpreted_user_need: Mapped[str] = mapped_column(Text, nullable=False)
+    current_page_role: Mapped[str] = mapped_column(Text, nullable=False)
+    recommended_page_role: Mapped[str] = mapped_column(Text, nullable=False)
+    audience_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    recommendations_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    out_of_scope_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    prohibited_claims_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    assumptions_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    conflicts_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    limitations_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    remaining_gaps_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    recommended_next_action: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class PageChangeProposal(Base):
+    __tablename__ = "page_change_proposal"
+    __table_args__ = (
+        UniqueConstraint("identity_hash", name="uq_page_change_proposal_identity"),
+        Index("ix_page_change_proposal_brief", "content_brief_id", "status", "created_at", "id"),
+        Index("ix_page_change_proposal_investigation", "investigation_id", "created_at", "id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    content_brief_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.content_brief.id"), nullable=False)
+    investigation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.seo_investigation.id"), nullable=False)
+    target_page: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String(100), nullable=False)
+    target_region: Mapped[str] = mapped_column(String(100), nullable=False)
+    current_observed_state: Mapped[str] = mapped_column(Text, nullable=False)
+    proposed_instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    supporting_reference_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    conflicting_reference_ids_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    expected_qualitative_effect: Mapped[str] = mapped_column(Text, nullable=False)
+    measurement_signal: Mapped[str] = mapped_column(Text, nullable=False)
+    risk: Mapped[str] = mapped_column(Text, nullable=False)
+    dependencies_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    review_requirements_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    implementation_owner_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    engineering_required: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    compliance_review_required: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    analytics_instrumentation_required: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    previous_proposal_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.page_change_proposal.id"))
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ContentProposalReview(Base):
+    __tablename__ = "content_proposal_review"
+    __table_args__ = (
+        Index("ix_content_proposal_review_history", "proposal_id", "reviewed_at", "id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.page_change_proposal.id"), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(255), nullable=False)
+    decision: Mapped[str] = mapped_column(String(50), nullable=False)
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    evidence_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class OpportunityDetectorPolicy(Base, TimestampMixin):
     __tablename__ = "opportunity_detector_policy"
     __table_args__ = (

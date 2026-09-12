@@ -55,7 +55,7 @@ describe("guided SEO investigations", () => {
     render(<SEOInvestigationDetail id="1"/>);
     expect(await screen.findByRole("heading",{name:"VA calculator investigation"})).toBeInTheDocument();
     expect(screen.getByRole("heading",{name:"What should I do next?"})).toBeInTheDocument();
-    expect(screen.getByText("Intent satisfaction")).toBeInTheDocument();
+    expect(screen.getByText(/Intent satisfaction:/)).toBeInTheDocument();
     expect(screen.getByText(/Recommendation generation: Not eligible/)).toBeInTheDocument();
     expect(screen.getByText("Technical lineage").closest("details")).not.toHaveAttribute("open");
     expect(fetch).toHaveBeenCalledTimes(1);
