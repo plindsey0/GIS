@@ -32,8 +32,11 @@ from gis.models import (
     QueryPageIntentAssessment,
     QueryPageIntentReview,
     Recommendation,
+    SEOImplementationRecord,
     SEOInvestigation,
     SEOInvestigationEvent,
+    SEOMeasurementPlan,
+    SEOOutcomeAssessment,
 )
 
 ACTIVE_STATES = {
@@ -298,7 +301,7 @@ class SEOInvestigationService:
             else:
                 approved = self.session.scalar(select(PageChangeProposal.id).where(
                     PageChangeProposal.content_brief_id == brief.id,
-                    PageChangeProposal.status == "APPROVED").limit(1))
+                    PageChangeProposal.status.in_({"APPROVED", "READY_FOR_MEASUREMENT_PLANNING"})).limit(1))
                 action_type, label, explanation = ((
                     "MARK_READY_FOR_MEASUREMENT_PLANNING",
                     "Plan measurement for approved proposal",
@@ -306,6 +309,35 @@ class SEOInvestigationService:
                 ) if approved else (
                     "REVIEW_CONTENT_BRIEF", "Review evidence-backed content brief",
                     "A governed draft exists and requires human review before implementation planning."))
+                if approved:
+                    plan = self.session.scalar(select(SEOMeasurementPlan).where(
+                        SEOMeasurementPlan.proposal_id == approved).order_by(
+                        SEOMeasurementPlan.created_at.desc(), SEOMeasurementPlan.id.desc()))
+                    if plan:
+                        implementation = self.session.scalar(select(SEOImplementationRecord).where(
+                            SEOImplementationRecord.measurement_plan_id == plan.id).order_by(
+                            SEOImplementationRecord.recorded_at.desc(),
+                            SEOImplementationRecord.id.desc()))
+                        assessment = self.session.scalar(select(SEOOutcomeAssessment).where(
+                            SEOOutcomeAssessment.measurement_plan_id == plan.id).order_by(
+                            SEOOutcomeAssessment.assessed_at.desc(),
+                            SEOOutcomeAssessment.id.desc()))
+                        if plan.status == "CLOSED":
+                            action_type, label, explanation = (
+                                "REOPEN_MEASUREMENT", "Reopen measurement workflow",
+                                "The reviewed measurement workflow is explicitly closed.")
+                        elif assessment:
+                            action_type, label, explanation = (
+                                "REVIEW_OUTCOME", "Review bounded outcome",
+                                "A deterministic observational assessment requires human review.")
+                        elif implementation:
+                            action_type, label, explanation = (
+                                "GATHER_POST_CHANGE_EVIDENCE", "Continue governed observation",
+                                "Implementation is recorded; compatible post-change evidence is required.")
+                        else:
+                            action_type, label, explanation = (
+                                "CONFIRM_IMPLEMENTATION", "Record implementation explicitly",
+                                "A measurement plan exists, but implementation is never inferred.")
         requirement = state["requirements"][0] if state["requirements"] else None
         return {"investigation_id": str(row.id), "title": row.title, "query": row.exact_query,
                 "candidate_page": row.normalized_candidate_url, "stage": stage,
@@ -317,7 +349,10 @@ class SEOInvestigationService:
                 if requirement else None,
                 "target": requirement.target_value if requirement else row.normalized_candidate_url,
                 "market_id": str(row.market_definition_id),
-                "destination": (f"/seo-investigations/{row.id}/briefs"
+                "destination": (f"/seo-investigations/{row.id}/measurement"
+                    if action_type in {"REOPEN_MEASUREMENT", "REVIEW_OUTCOME",
+                                       "GATHER_POST_CHANGE_EVIDENCE", "CONFIRM_IMPLEMENTATION"}
+                    else f"/seo-investigations/{row.id}/briefs"
                     if action_type in {"GENERATE_CONTENT_BRIEF", "REVIEW_CONTENT_BRIEF",
                                        "MARK_READY_FOR_MEASUREMENT_PLANNING"}
                     else f"/seo-investigations/{row.id}"),

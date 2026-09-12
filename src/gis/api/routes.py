@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import asdict
+from datetime import date, datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -140,6 +141,7 @@ from gis.query_page_intent.service import IntentResolutionError, QueryPageIntent
 from gis.recommendations.provider import FixtureRecommendationProvider
 from gis.recommendations.service import RecommendationService
 from gis.seo_investigations.service import SEOInvestigationError, SEOInvestigationService
+from gis.seo_measurement.service import SEOMeasurementError, SEOMeasurementService
 
 
 def database() -> Session:  # type: ignore[misc]
@@ -200,6 +202,47 @@ class ContentProposalReviewInput(BaseModel):
 
 class ContentProposalActionInput(BaseModel):
     action: str = Field(pattern="^(WITHDRAW|SUPERSEDE|MARK_READY_FOR_MEASUREMENT_PLANNING)$")
+
+
+class SEOMeasurementPlanInput(BaseModel):
+    actor: str = Field(min_length=1, max_length=255)
+    baseline_start: date
+    baseline_end: date
+    observation_start: date
+    observation_end: date
+    primary_signals: list[str] = Field(default_factory=list, max_length=4)
+
+
+class SEOImplementationInput(BaseModel):
+    actor: str = Field(min_length=1, max_length=255)
+    state: str
+    claimed_at: Optional[datetime] = None
+    deployment_reference: Optional[str] = Field(default=None, max_length=2000)
+    categories: list[str] = Field(default_factory=list, max_length=20)
+    deviations: list[str] = Field(default_factory=list, max_length=50)
+    concurrent_changes: list[str] = Field(default_factory=list, max_length=50)
+    rollback_reference: Optional[str] = Field(default=None, max_length=2000)
+    notes: Optional[str] = Field(default=None, max_length=4000)
+    artifact_references: list[str] = Field(default_factory=list, max_length=50)
+
+
+class SEOOutcomeInput(BaseModel):
+    as_of: datetime
+    evidence_reference_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+
+
+class SEOMeasurementReviewInput(BaseModel):
+    artifact_type: str = Field(pattern="^(PLAN|IMPLEMENTATION|OUTCOME)$")
+    artifact_id: uuid.UUID
+    reviewer: str = Field(min_length=1, max_length=255)
+    decision: str
+    comment: Optional[str] = Field(default=None, max_length=4000)
+    follow_up: list[str] = Field(default_factory=list, max_length=50)
+
+
+class SEOMeasurementReopenInput(BaseModel):
+    actor: str = Field(min_length=1, max_length=255)
+    reason: str = Field(min_length=1, max_length=4000)
 
 
 @router.get("/connections/{connection_id}/rights", dependencies=[Depends(require_role(Role.READ))])
@@ -2379,6 +2422,195 @@ def transition_page_change_proposal(proposal_id: uuid.UUID,
     except ContentBriefError as exc:
         session.rollback()
         raise ApiError(409, "PAGE_CHANGE_ACTION_REJECTED", str(exc)) from exc
+
+
+@router.get("/page-change-proposals/{proposal_id}/measurement-eligibility",
+            dependencies=[Depends(require_role(Role.READ))])
+def seo_measurement_eligibility(proposal_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    return SEOMeasurementService(session).eligibility(proposal_id, tenant_id, site_id)
+
+
+@router.post("/page-change-proposals/{proposal_id}/measurement-plans",
+             dependencies=[Depends(require_role(Role.REVIEW))], status_code=201)
+def create_seo_measurement_plan(proposal_id: uuid.UUID, payload: SEOMeasurementPlanInput,
+    tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOMeasurementService(session)
+        plan = service.create_plan(proposal_id, tenant_id, site_id, actor=payload.actor,
+            baseline_start=payload.baseline_start, baseline_end=payload.baseline_end,
+            observation_start=payload.observation_start,
+            observation_end=payload.observation_end,
+            primary_signals=payload.primary_signals or None)
+        session.commit()
+        return service.plan_model(plan)
+    except SEOMeasurementError as exc:
+        session.rollback()
+        raise ApiError(409, "SEO_MEASUREMENT_PLAN_REJECTED", str(exc)) from exc
+
+
+@router.get("/seo-investigations/{resource_id}/measurement-plans",
+            dependencies=[Depends(require_role(Role.READ))])
+def seo_measurement_plans(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    service = SEOMeasurementService(session)
+    rows = service.plans(resource_id, tenant_id, site_id)
+    return {"items": [service.plan_model(row) for row in rows], "total": len(rows)}
+
+
+@router.get("/seo-measurement-plans/{plan_id}",
+            dependencies=[Depends(require_role(Role.READ))])
+def seo_measurement_plan(plan_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOMeasurementService(session)
+        return service.plan_model(service.scoped_plan(plan_id, tenant_id, site_id))
+    except SEOMeasurementError as exc:
+        raise ApiError(404, "SEO_MEASUREMENT_PLAN_NOT_FOUND", str(exc)) from exc
+
+
+@router.get("/seo-measurement-plans/{plan_id}/history",
+            dependencies=[Depends(require_role(Role.READ))])
+def seo_measurement_plan_history(plan_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOMeasurementService(session)
+        plan = service.scoped_plan(plan_id, tenant_id, site_id)
+        rows = service.plans(plan.investigation_id, tenant_id, site_id)
+        lineage = [row for row in rows if row.proposal_id == plan.proposal_id]
+        return {"items": [{"id": str(row.id), "status": row.status,
+            "previous_plan_id": str(row.previous_plan_id) if row.previous_plan_id else None,
+            "created_at": row.created_at.isoformat()} for row in lineage],
+            "total": len(lineage)}
+    except SEOMeasurementError as exc:
+        raise ApiError(404, "SEO_MEASUREMENT_PLAN_NOT_FOUND", str(exc)) from exc
+
+
+@router.get("/seo-measurement-plans/{plan_id}/baseline-readiness",
+            dependencies=[Depends(require_role(Role.READ))])
+def seo_measurement_baseline(plan_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOMeasurementService(session)
+        return service.baseline_readiness(service.scoped_plan(plan_id, tenant_id, site_id))
+    except SEOMeasurementError as exc:
+        raise ApiError(404, "SEO_MEASUREMENT_PLAN_NOT_FOUND", str(exc)) from exc
+
+
+@router.get("/seo-measurement-plans/{plan_id}/evidence",
+            dependencies=[Depends(require_role(Role.READ))])
+def seo_measurement_evidence(plan_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOMeasurementService(session)
+        plan = service.scoped_plan(plan_id, tenant_id, site_id)
+        rows = service.compatible_gsc(plan)
+        return {"items": [{"id": str(row.id), "date": row.observed_date.isoformat(),
+            "source": "GOOGLE_SEARCH_CONSOLE", "quality": row.quality_flag.value,
+            "clicks": str(row.clicks), "impressions": str(row.impressions),
+            "ctr": str(row.ctr), "position": str(row.position)} for row in rows],
+            "total": len(rows)}
+    except SEOMeasurementError as exc:
+        raise ApiError(404, "SEO_MEASUREMENT_PLAN_NOT_FOUND", str(exc)) from exc
+
+
+@router.post("/seo-measurement-plans/{plan_id}/implementations",
+             dependencies=[Depends(require_role(Role.REVIEW))], status_code=201)
+def record_seo_implementation(plan_id: uuid.UUID, payload: SEOImplementationInput,
+    tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOMeasurementService(session)
+        row = service.record_implementation(plan_id, tenant_id, site_id,
+            actor=payload.actor, state=payload.state, claimed_at=payload.claimed_at,
+            deployment_reference=payload.deployment_reference,
+            categories=payload.categories, deviations=payload.deviations,
+            concurrent_changes=payload.concurrent_changes,
+            rollback_reference=payload.rollback_reference, notes=payload.notes,
+            artifact_references=payload.artifact_references)
+        session.commit()
+        return {"id": str(row.id), "state": row.implementation_state,
+            "verification": row.verification_state}
+    except SEOMeasurementError as exc:
+        session.rollback()
+        raise ApiError(409, "SEO_IMPLEMENTATION_REJECTED", str(exc)) from exc
+
+
+@router.post("/seo-measurement-plans/{plan_id}/assessments",
+             dependencies=[Depends(require_role(Role.REVIEW))], status_code=201)
+def assess_seo_outcome(plan_id: uuid.UUID, payload: SEOOutcomeInput,
+    tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOMeasurementService(session)
+        row = service.assess(plan_id, tenant_id, site_id, as_of=payload.as_of,
+            evidence_reference_ids=payload.evidence_reference_ids)
+        session.commit()
+        return service.assessment_model(row)
+    except SEOMeasurementError as exc:
+        session.rollback()
+        raise ApiError(409, "SEO_OUTCOME_ASSESSMENT_REJECTED", str(exc)) from exc
+
+
+@router.get("/seo-measurement-plans/{plan_id}/assessments",
+            dependencies=[Depends(require_role(Role.READ))])
+def seo_outcome_assessments(plan_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOMeasurementService(session)
+        plan = service.scoped_plan(plan_id, tenant_id, site_id)
+        rows = service.assessments(plan)
+        return {"items": [service.assessment_model(row) for row in rows],
+            "total": len(rows)}
+    except SEOMeasurementError as exc:
+        raise ApiError(404, "SEO_MEASUREMENT_PLAN_NOT_FOUND", str(exc)) from exc
+
+
+@router.get("/seo-outcome-assessments/{assessment_id}",
+            dependencies=[Depends(require_role(Role.READ))])
+def seo_outcome_assessment(assessment_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOMeasurementService(session)
+        return service.assessment_model(service.scoped_assessment(
+            assessment_id, tenant_id, site_id))
+    except SEOMeasurementError as exc:
+        raise ApiError(404, "SEO_OUTCOME_ASSESSMENT_NOT_FOUND", str(exc)) from exc
+
+
+@router.post("/seo-measurement-plans/{plan_id}/reviews",
+             dependencies=[Depends(require_role(Role.REVIEW))], status_code=201)
+def review_seo_measurement(plan_id: uuid.UUID, payload: SEOMeasurementReviewInput,
+    tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOMeasurementService(session)
+        row = service.review(plan_id, tenant_id, site_id,
+            artifact_type=payload.artifact_type, artifact_id=payload.artifact_id,
+            reviewer=payload.reviewer, decision=payload.decision,
+            comment=payload.comment, follow_up=payload.follow_up)
+        session.commit()
+        return {"id": str(row.id), "decision": row.decision}
+    except SEOMeasurementError as exc:
+        session.rollback()
+        raise ApiError(409, "SEO_MEASUREMENT_REVIEW_REJECTED", str(exc)) from exc
+
+
+@router.post("/seo-measurement-plans/{plan_id}/reopen",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def reopen_seo_measurement(plan_id: uuid.UUID, payload: SEOMeasurementReopenInput,
+    tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOMeasurementService(session)
+        service.reopen(plan_id, tenant_id, site_id, actor=payload.actor,
+            reason=payload.reason)
+        session.commit()
+        return service.plan_model(service.scoped_plan(plan_id, tenant_id, site_id))
+    except SEOMeasurementError as exc:
+        session.rollback()
+        raise ApiError(409, "SEO_MEASUREMENT_REOPEN_REJECTED", str(exc)) from exc
 
 
 @router.get(
