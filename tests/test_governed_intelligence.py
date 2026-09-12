@@ -403,6 +403,7 @@ def test_migration_upgrades_pre_epic_27_schema_without_rebuilding_existing_table
             'ALTER TABLE gis_core."recommendation" DROP COLUMN IF EXISTS evidence_references_json'
         )
         for table in (
+            "seo_investigation_event", "seo_investigation",
             "evidence_gap_adjudication_review", "evidence_gap_adjudication_evidence",
             "evidence_gap_adjudication",
             "collection_requirement", "owned_surface_observation_detail", "exact_query_serp_snapshot_detail",

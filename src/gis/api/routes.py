@@ -69,6 +69,7 @@ from gis.intelligence.service import GovernedIntelligenceService, IntelligenceVa
 from gis.interventions.service import InterventionService
 from gis.investigations.service import InvestigationHandoffService
 from gis.models import (
+    CollectionPriorityTier,
     CollectionRequirement,
     DecompositionPlan,
     EvidenceGapAdjudication,
@@ -137,6 +138,7 @@ from gis.provider_control.service import ProviderControlService
 from gis.query_page_intent.service import IntentResolutionError, QueryPageIntentService
 from gis.recommendations.provider import FixtureRecommendationProvider
 from gis.recommendations.service import RecommendationService
+from gis.seo_investigations.service import SEOInvestigationError, SEOInvestigationService
 
 
 def database() -> Session:  # type: ignore[misc]
@@ -162,6 +164,27 @@ class EvidenceGapAdjudicationReviewInput(BaseModel):
     decision: str = Field(pattern="^(CONFIRM|DISAGREE|NEEDS_MORE_EVIDENCE)$")
     reviewer: str = Field(min_length=1, max_length=255)
     comment: Optional[str] = None
+
+
+class SEOInvestigationInput(BaseModel):
+    query_entity_id: uuid.UUID
+    candidate_page_entity_id: uuid.UUID
+    market_definition_id: uuid.UUID
+    exact_query: str = Field(min_length=1, max_length=500)
+    candidate_url: str = Field(min_length=1, max_length=2000)
+    title: str = Field(min_length=1, max_length=255)
+    question: str = Field(min_length=1, max_length=4000)
+    priority: str = Field(default="HIGH", pattern="^(CRITICAL|HIGH|MEDIUM|LOW)$")
+    actor: str = Field(min_length=1, max_length=255)
+    origin: str = Field(default="OPERATOR", max_length=50)
+    originating_proposal_id: Optional[uuid.UUID] = None
+    originating_recommendation_id: Optional[uuid.UUID] = None
+
+
+class SEOInvestigationActionInput(BaseModel):
+    action: str = Field(pattern="^(MARK_READY_FOR_RECOMMENDATION|CLOSE|CLOSE_NO_ACTION|REOPEN|REFRESH_READINESS)$")
+    actor: str = Field(min_length=1, max_length=255)
+    reason: str = Field(min_length=1, max_length=4000)
 
 
 @router.get("/connections/{connection_id}/rights", dependencies=[Depends(require_role(Role.READ))])
@@ -2100,6 +2123,117 @@ def evidence_gap_adjudications(tenant_id: uuid.UUID, site_id: uuid.UUID,
         items = [item for item in items
                  if item["reassessment"]["eligible"] is reassessment_eligible]
     return {"items": items, "total": len(items)}
+
+
+@router.post("/seo-investigations", dependencies=[Depends(require_role(Role.REVIEW))], status_code=201)
+def create_seo_investigation(payload: SEOInvestigationInput, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        row = SEOInvestigationService(session).create(
+            tenant_id=tenant_id, site_id=site_id,
+            query_entity_id=payload.query_entity_id,
+            candidate_page_entity_id=payload.candidate_page_entity_id,
+            market_definition_id=payload.market_definition_id,
+            exact_query=payload.exact_query, candidate_url=payload.candidate_url,
+            title=payload.title, question=payload.question,
+            priority=CollectionPriorityTier(payload.priority), actor=payload.actor,
+            origin=payload.origin, originating_proposal_id=payload.originating_proposal_id,
+            originating_recommendation_id=payload.originating_recommendation_id)
+        session.commit()
+        return SEOInvestigationService(session).read_model(row)
+    except SEOInvestigationError as exc:
+        session.rollback()
+        raise ApiError(409, "SEO_INVESTIGATION_REJECTED", str(exc)) from exc
+
+
+@router.get("/seo-investigations", dependencies=[Depends(require_role(Role.READ))])
+def seo_investigations(tenant_id: uuid.UUID, site_id: uuid.UUID,
+    page: int = Query(1, ge=1), limit: int = Query(25, ge=1, le=100),
+    search: Optional[str] = Query(default=None, max_length=200), stage: Optional[str] = None,
+    priority: Optional[str] = None, market_id: Optional[uuid.UUID] = None,
+    evidence_readiness: Optional[str] = None, human_review_required: Optional[bool] = None,
+    recommendation_eligible: Optional[bool] = None,
+    sort: str = Query("priority", pattern="^(priority|stage|updated_at|label)$"),
+    order: str = Query("asc", pattern="^(asc|desc)$"),
+    session: Session = Depends(database)) -> dict[str, Any]:
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    items = SEOInvestigationService(session).inventory(
+        tenant_id, site_id, search=search, stage=stage, priority=priority,
+        market_id=market_id, readiness=evidence_readiness,
+        human_review_required=human_review_required,
+        recommendation_eligible=recommendation_eligible, sort=sort, order=order)
+    return {"items": items[(page - 1) * limit:page * limit], "page": page,
+            "limit": limit, "total": len(items)}
+
+
+@router.get("/seo-investigations/options", dependencies=[Depends(require_role(Role.READ))])
+def seo_investigation_options(tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    markets = list(session.scalars(select(MarketDefinition).where(
+        MarketDefinition.tenant_id == tenant_id,
+        MarketDefinition.site_id == site_id).order_by(
+            MarketDefinition.name, MarketDefinition.version, MarketDefinition.id)))
+    return {"markets": [{"value": str(row.id), "label": row.name} for row in markets]}
+
+
+@router.get("/seo-investigations/action-queue", dependencies=[Depends(require_role(Role.READ))])
+def seo_investigation_action_queue(tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    WorkbenchQueries(session).site(tenant_id, site_id)
+    items = SEOInvestigationService(session).action_queue(tenant_id, site_id)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/seo-investigations/{resource_id}", dependencies=[Depends(require_role(Role.READ))])
+def seo_investigation_detail(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOInvestigationService(session)
+        return service.read_model(service.scoped(resource_id, tenant_id, site_id))
+    except SEOInvestigationError as exc:
+        raise ApiError(404, "SEO_INVESTIGATION_NOT_FOUND", str(exc)) from exc
+
+
+@router.get("/seo-investigations/{resource_id}/actions",
+            dependencies=[Depends(require_role(Role.READ))])
+def seo_investigation_actions(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOInvestigationService(session)
+        service.scoped(resource_id, tenant_id, site_id)
+        items = service.action_queue(tenant_id, site_id, resource_id)
+        return {"items": items, "total": len(items)}
+    except SEOInvestigationError as exc:
+        raise ApiError(404, "SEO_INVESTIGATION_NOT_FOUND", str(exc)) from exc
+
+
+@router.get("/seo-investigations/{resource_id}/history",
+            dependencies=[Depends(require_role(Role.READ))])
+def seo_investigation_history(resource_id: uuid.UUID, tenant_id: uuid.UUID,
+    site_id: uuid.UUID, session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOInvestigationService(session)
+        model = service.read_model(service.scoped(resource_id, tenant_id, site_id))
+        return {"items": model["history"], "total": len(model["history"])}
+    except SEOInvestigationError as exc:
+        raise ApiError(404, "SEO_INVESTIGATION_NOT_FOUND", str(exc)) from exc
+
+
+@router.post("/seo-investigations/{resource_id}/actions",
+             dependencies=[Depends(require_role(Role.REVIEW))])
+def apply_seo_investigation_action(resource_id: uuid.UUID,
+    payload: SEOInvestigationActionInput, tenant_id: uuid.UUID, site_id: uuid.UUID,
+    session: Session = Depends(database)) -> dict[str, Any]:
+    try:
+        service = SEOInvestigationService(session)
+        row = service.scoped(resource_id, tenant_id, site_id)
+        service.apply(row, payload.action, payload.actor, payload.reason)
+        session.commit()
+        return service.read_model(row)
+    except SEOInvestigationError as exc:
+        session.rollback()
+        raise ApiError(409, "SEO_INVESTIGATION_ACTION_REJECTED", str(exc)) from exc
 
 
 @router.get(

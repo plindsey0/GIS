@@ -4326,6 +4326,66 @@ class EvidenceGapAdjudicationReview(Base):
     reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class SEOInvestigation(Base, TimestampMixin):
+    __tablename__ = "seo_investigation"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "site_id"], [f"{SCHEMA}.site.tenant_id", f"{SCHEMA}.site.id"]
+        ),
+        Index("uq_seo_investigation_active_identity", "identity_hash", unique=True,
+              postgresql_where=text("closed_at IS NULL")),
+        Index("ix_seo_investigation_scope_stage", "tenant_id", "site_id", "lifecycle_state", "priority"),
+        Index("ix_seo_investigation_order", "tenant_id", "site_id", "updated_at", "id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    query_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
+    candidate_page_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.analytical_entity.id"), nullable=False)
+    market_definition_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.market_definition.id"), nullable=False)
+    exact_query: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_candidate_url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    lifecycle_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    priority: Mapped[CollectionPriorityTier] = mapped_column(enum_type(CollectionPriorityTier, "collection_priority_tier"), nullable=False)
+    origin: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    close_reason: Mapped[Optional[str]] = mapped_column(Text)
+    evidence_readiness_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    human_review_required: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    recommendation_generation_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    originating_proposal_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.experiment_proposal.id"))
+    originating_recommendation_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.recommendation.id"))
+    current_query_page_intent_assessment_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.query_page_intent_assessment.id"))
+    current_evidence_gap_adjudication_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_gap_adjudication.id"))
+
+
+class SEOInvestigationEvent(Base):
+    __tablename__ = "seo_investigation_event"
+    __table_args__ = (
+        Index("ix_seo_investigation_event_history", "investigation_id", "occurred_at", "id"),
+        {"schema": SCHEMA},
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    investigation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.seo_investigation.id", ondelete="CASCADE"), nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    previous_state: Mapped[Optional[str]] = mapped_column(String(50))
+    new_state: Mapped[str] = mapped_column(String(50), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_gap_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_gap.id"))
+    adjudication_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_gap_adjudication.id"))
+    assessment_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.query_page_intent_assessment.id"))
+    collection_requirement_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collection_requirement.id"))
+    review_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class OpportunityDetectorPolicy(Base, TimestampMixin):
     __tablename__ = "opportunity_detector_policy"
     __table_args__ = (
